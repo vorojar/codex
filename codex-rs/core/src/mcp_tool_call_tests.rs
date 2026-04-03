@@ -2097,7 +2097,7 @@ async fn custom_auto_mode_skips_approval_when_annotations_are_missing_in_never_m
         &turn_context,
         "call-custom-auto",
         &invocation,
-        None,
+        /*metadata*/ None,
         AppToolApproval::Auto,
     )
     .await;
@@ -2126,7 +2126,7 @@ async fn custom_auto_mode_skips_approval_when_annotations_are_missing_in_on_requ
                 &turn_context,
                 "call-custom-auto-on-request",
                 &invocation,
-                None,
+                /*metadata*/ None,
                 AppToolApproval::Auto,
             )
             .await
@@ -2188,7 +2188,7 @@ async fn custom_approve_mode_without_metadata_still_uses_arc_monitor() {
         &turn_context,
         "call-custom-approve-no-metadata",
         &invocation,
-        None,
+        /*metadata*/ None,
         AppToolApproval::Approve,
     )
     .await;
