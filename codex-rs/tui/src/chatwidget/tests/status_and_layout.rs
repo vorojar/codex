@@ -254,7 +254,7 @@ async fn subagent_panel_mounts_while_placeholder_active_cell_exists_snapshot() {
         .vt100()
         .screen()
         .contents()
-        .replace(crate::version::CODEX_CLI_VERSION, "<GIT-SHA-12>");
+        .replace(crate::version::CODEX_CLI_DISPLAY_VERSION, "<GIT-SHA-12>");
     assert_chatwidget_snapshot!(
         "subagent_panel_mounts_while_placeholder_active_cell_exists",
         contents

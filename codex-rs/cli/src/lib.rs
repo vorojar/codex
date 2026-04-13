@@ -5,6 +5,8 @@ pub(crate) mod login;
 use clap::Parser;
 use codex_utils_absolute_path::AbsolutePathBuf;
 use codex_utils_cli::CliConfigOverrides;
+pub use codex_utils_cli::version::CODEX_CLI_BUILD_GIT_SHA;
+pub use codex_utils_cli::version::CODEX_CLI_DISPLAY_VERSION;
 use std::path::PathBuf;
 
 pub use debug_sandbox::run_command_under_landlock;

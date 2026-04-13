@@ -40,6 +40,7 @@ use crate::text_formatting::truncate_text;
 use crate::tooltips;
 use crate::ui_consts::LIVE_PREFIX_COLS;
 use crate::update_action::UpdateAction;
+use crate::version::CODEX_CLI_DISPLAY_VERSION;
 use crate::version::CODEX_CLI_VERSION;
 use crate::wrapping::RtOptions;
 use crate::wrapping::adaptive_wrap_line;
@@ -1552,7 +1553,7 @@ pub(crate) fn new_session_info(
         reasoning_effort,
         show_fast_status,
         config.cwd.to_path_buf(),
-        CODEX_CLI_VERSION,
+        CODEX_CLI_DISPLAY_VERSION,
     )
     .with_yolo_mode(has_yolo_permissions(approval_policy, &permission_profile));
     let mut parts: Vec<Box<dyn HistoryCell>> = vec![Box::new(header)];
@@ -1749,12 +1750,12 @@ impl HistoryCell for SessionHeaderHistoryCell {
 
         let make_row = |spans: Vec<Span<'static>>| Line::from(spans);
 
-        // Title line rendered inside the box: ">_ OpenAI Codex (vX)"
+        // Title line rendered inside the box: ">_ OpenAI Codex (X)"
         let title_spans: Vec<Span<'static>> = vec![
             Span::from(">_ ").dim(),
             Span::from("OpenAI Codex").bold(),
             Span::from(" ").dim(),
-            Span::from(format!("(v{})", self.version)).dim(),
+            Span::from(format!("({})", self.version)).dim(),
         ];
 
         const CHANGE_MODEL_HINT_COMMAND: &str = "/model";
@@ -3630,7 +3631,9 @@ mod tests {
             /*show_fast_status*/ false,
         );
 
-        let rendered = render_transcript(&cell).join("\n");
+        let rendered = render_transcript(&cell)
+            .join("\n")
+            .replace(CODEX_CLI_DISPLAY_VERSION, "<GIT-SHA-12>");
         insta::assert_snapshot!(rendered);
     }
 

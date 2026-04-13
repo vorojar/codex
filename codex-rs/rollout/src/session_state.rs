@@ -434,7 +434,6 @@ fn subagent_metadata(session_source: &SessionSource) -> Option<SessionStateSubag
         | SessionSource::Mcp
         | SessionSource::Internal(_)
         | SessionSource::Custom(_)
-        | SessionSource::Internal(_)
         | SessionSource::SubAgent(_)
         | SessionSource::Unknown => None,
     }

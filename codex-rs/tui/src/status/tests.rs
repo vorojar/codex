@@ -8,6 +8,7 @@ use crate::legacy_core::config::ConfigBuilder;
 use crate::status::StatusAccountDisplay;
 use crate::test_support::PathBufExt;
 use crate::test_support::test_path_buf;
+use crate::version::CODEX_CLI_DISPLAY_VERSION;
 use chrono::Duration as ChronoDuration;
 use chrono::TimeZone;
 use chrono::Utc;
@@ -94,6 +95,18 @@ fn sanitize_directory(lines: Vec<String>) -> Vec<String> {
             }
         })
         .collect()
+}
+
+fn sanitize_display_version(lines: Vec<String>) -> Vec<String> {
+    let display_version = format!("({CODEX_CLI_DISPLAY_VERSION})");
+    lines
+        .into_iter()
+        .map(|line| line.replace(&display_version, "(<GIT-SHA-12>)"))
+        .collect()
+}
+
+fn sanitize_status_snapshot(lines: Vec<String>) -> Vec<String> {
+    sanitize_display_version(sanitize_directory(lines))
 }
 
 fn reset_at_from(captured_at: &chrono::DateTime<chrono::Local>, seconds: i64) -> i64 {
@@ -207,7 +220,7 @@ async fn status_snapshot_includes_reasoning_details() {
             *line = line.replace('\\', "/");
         }
     }
-    let sanitized = sanitize_directory(rendered_lines).join("\n");
+    let sanitized = sanitize_status_snapshot(rendered_lines).join("\n");
     assert_snapshot!(sanitized);
 }
 
@@ -335,7 +348,7 @@ async fn status_snapshot_includes_forked_from() {
             *line = line.replace('\\', "/");
         }
     }
-    let sanitized = sanitize_directory(rendered_lines).join("\n");
+    let sanitized = sanitize_status_snapshot(rendered_lines).join("\n");
     assert_snapshot!(sanitized);
 }
 
@@ -398,7 +411,7 @@ async fn status_snapshot_includes_monthly_limit() {
             *line = line.replace('\\', "/");
         }
     }
-    let sanitized = sanitize_directory(rendered_lines).join("\n");
+    let sanitized = sanitize_status_snapshot(rendered_lines).join("\n");
     assert_snapshot!(sanitized);
 }
 
@@ -705,7 +718,7 @@ async fn status_snapshot_truncates_in_narrow_terminal() {
             *line = line.replace('\\', "/");
         }
     }
-    let sanitized = sanitize_directory(rendered_lines).join("\n");
+    let sanitized = sanitize_status_snapshot(rendered_lines).join("\n");
 
     assert_snapshot!(sanitized);
 }
@@ -754,7 +767,7 @@ async fn status_snapshot_shows_missing_limits_message() {
             *line = line.replace('\\', "/");
         }
     }
-    let sanitized = sanitize_directory(rendered_lines).join("\n");
+    let sanitized = sanitize_status_snapshot(rendered_lines).join("\n");
     assert_snapshot!(sanitized);
 }
 
@@ -869,7 +882,7 @@ async fn status_snapshot_shows_refreshing_limits_notice() {
             *line = line.replace('\\', "/");
         }
     }
-    let sanitized = sanitize_directory(rendered_lines).join("\n");
+    let sanitized = sanitize_status_snapshot(rendered_lines).join("\n");
     assert_snapshot!(sanitized);
 }
 
@@ -939,7 +952,7 @@ async fn status_snapshot_includes_credits_and_limits() {
             *line = line.replace('\\', "/");
         }
     }
-    let sanitized = sanitize_directory(rendered_lines).join("\n");
+    let sanitized = sanitize_status_snapshot(rendered_lines).join("\n");
     assert_snapshot!(sanitized);
 }
 
@@ -997,7 +1010,7 @@ async fn status_snapshot_shows_unavailable_limits_message() {
             *line = line.replace('\\', "/");
         }
     }
-    let sanitized = sanitize_directory(rendered_lines).join("\n");
+    let sanitized = sanitize_status_snapshot(rendered_lines).join("\n");
     assert_snapshot!(sanitized);
 }
 
@@ -1122,7 +1135,7 @@ async fn status_snapshot_shows_stale_limits_message() {
             *line = line.replace('\\', "/");
         }
     }
-    let sanitized = sanitize_directory(rendered_lines).join("\n");
+    let sanitized = sanitize_status_snapshot(rendered_lines).join("\n");
     assert_snapshot!(sanitized);
 }
 
@@ -1193,7 +1206,7 @@ async fn status_snapshot_cached_limits_hide_credits_without_flag() {
             *line = line.replace('\\', "/");
         }
     }
-    let sanitized = sanitize_directory(rendered_lines).join("\n");
+    let sanitized = sanitize_status_snapshot(rendered_lines).join("\n");
     assert_snapshot!(sanitized);
 }
 
