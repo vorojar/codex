@@ -1840,9 +1840,7 @@ impl AuthManager {
             )));
         };
         if let Some(expected_workspace_ids) = forced_chatgpt_workspace_id.as_deref()
-            && !expected_workspace_ids
-                .iter()
-                .any(|expected| chatgpt_metadata.account_id == *expected)
+            && !expected_workspace_ids.contains(&chatgpt_metadata.account_id)
         {
             return Err(RefreshTokenError::Transient(std::io::Error::other(
                 format!(
