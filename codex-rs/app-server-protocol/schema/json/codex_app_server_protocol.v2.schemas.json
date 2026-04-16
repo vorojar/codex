@@ -3516,8 +3516,11 @@
           ]
         },
         "forced_chatgpt_workspace_id": {
+          "items": {
+            "type": "string"
+          },
           "type": [
-            "string",
+            "array",
             "null"
           ]
         },
