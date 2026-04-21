@@ -788,12 +788,14 @@ async fn run_review_on_session(
                     params.request.clone(),
                 )
                 .await?;
+                let initial_transcript_cursor =
+                    (!prompt_items.has_pending_tool_call).then_some(prompt_items.transcript_cursor);
                 (
                     GuardianApprovalPromptItems {
                         items: prompt_items.items,
                         reviewed_action_truncated: prompt_items.reviewed_action_truncated,
                     },
-                    Some(prompt_items.transcript_cursor),
+                    initial_transcript_cursor,
                 )
             } else {
                 sync_parent_transcript_to_session(review_session, params.parent_session.as_ref())
@@ -819,7 +821,7 @@ async fn run_review_on_session(
         Ok(prompt_items) => prompt_items,
         Err(err) => {
             return (
-                GuardianReviewSessionOutcome::PromptBuildFailed(err.into()),
+                GuardianReviewSessionOutcome::PromptBuildFailed(err),
                 false,
                 analytics_result,
             );
@@ -911,6 +913,9 @@ async fn sync_parent_transcript_to_session(
             super::prompt::GuardianPromptMode::Delta { cursor }
         });
     let prompt_items = build_guardian_transcript_sync_items(parent_session, prompt_mode).await;
+    if prompt_items.has_pending_tool_call {
+        return Ok(false);
+    }
     if Some(prompt_items.transcript_cursor) == last_synced_transcript_cursor {
         return Ok(false);
     }
@@ -954,7 +959,6 @@ fn response_item_from_text_inputs(
         id: None,
         role: "user".to_string(),
         content,
-        end_turn: None,
         phase: None,
     }
 }

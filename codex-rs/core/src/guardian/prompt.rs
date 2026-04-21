@@ -64,6 +64,7 @@ pub(crate) struct GuardianPromptItems {
     pub(crate) transcript_cursor: GuardianTranscriptCursor,
     pub(crate) reviewed_action_truncated: bool,
     pub(crate) has_transcript_update: bool,
+    pub(crate) has_pending_tool_call: bool,
 }
 
 pub(crate) struct GuardianApprovalPromptItems {
@@ -117,6 +118,7 @@ async fn build_guardian_transcript_items(
     delta_headings: GuardianPromptHeadings,
 ) -> GuardianPromptItems {
     let history = session.clone_history().await;
+    let has_pending_tool_call = has_pending_guardian_tool_call(history.raw_items());
     let transcript_entries = collect_guardian_transcript_entries(history.raw_items());
     let transcript_cursor = GuardianTranscriptCursor {
         parent_history_version: history.history_version(),
@@ -185,6 +187,7 @@ async fn build_guardian_transcript_items(
         transcript_cursor,
         reviewed_action_truncated: false,
         has_transcript_update,
+        has_pending_tool_call,
     }
 }
 
@@ -570,6 +573,27 @@ pub(crate) fn collect_guardian_transcript_entries(
     }
 
     entries
+}
+
+fn has_pending_guardian_tool_call(items: &[ResponseItem]) -> bool {
+    let mut call_ids = std::collections::HashSet::new();
+    let mut completed_call_ids = std::collections::HashSet::new();
+    for item in items {
+        match item {
+            ResponseItem::FunctionCall { call_id, .. }
+            | ResponseItem::CustomToolCall { call_id, .. } => {
+                call_ids.insert(call_id);
+            }
+            ResponseItem::FunctionCallOutput { call_id, .. }
+            | ResponseItem::CustomToolCallOutput { call_id, .. } => {
+                completed_call_ids.insert(call_id);
+            }
+            _ => {}
+        }
+    }
+    call_ids
+        .iter()
+        .any(|call_id| !completed_call_ids.contains(call_id))
 }
 
 pub(crate) fn guardian_truncate_text(content: &str, token_cap: usize) -> (String, bool) {

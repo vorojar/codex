@@ -723,6 +723,45 @@ fn collect_guardian_transcript_entries_excludes_dangling_tool_calls() {
     );
 }
 
+#[tokio::test(flavor = "current_thread")]
+async fn build_guardian_transcript_items_flags_pending_tool_calls() -> anyhow::Result<()> {
+    let (session, turn) = guardian_test_session_and_turn_with_base_url("http://localhost").await;
+    session
+        .record_into_history(
+            &[
+                ResponseItem::FunctionCall {
+                    id: None,
+                    name: "read_file".to_string(),
+                    namespace: None,
+                    arguments: "{\"path\":\"README.md\"}".to_string(),
+                    call_id: "pending-call".to_string(),
+                },
+                ResponseItem::FunctionCall {
+                    id: None,
+                    name: "read_file".to_string(),
+                    namespace: None,
+                    arguments: "{\"path\":\"Cargo.toml\"}".to_string(),
+                    call_id: "completed-call".to_string(),
+                },
+                ResponseItem::FunctionCallOutput {
+                    call_id: "completed-call".to_string(),
+                    output: codex_protocol::models::FunctionCallOutputPayload::from_text(
+                        "workspace manifest".to_string(),
+                    ),
+                },
+            ],
+            turn.as_ref(),
+        )
+        .await;
+
+    let prompt = build_guardian_transcript_sync_items(&session, GuardianPromptMode::Full).await;
+
+    assert!(prompt.has_pending_tool_call);
+    assert_eq!(prompt.transcript_cursor.transcript_entry_count, 2);
+
+    Ok(())
+}
+
 #[tokio::test]
 async fn build_guardian_approval_request_items_are_skinny() -> anyhow::Result<()> {
     let (session, _) = crate::session::tests::make_session_and_context().await;
@@ -1806,7 +1845,7 @@ async fn proactive_guardian_sync_compacts_trunk_before_review_request() -> anyho
 
     let (session, turn) =
         guardian_test_session_and_turn_with_config(server.uri().as_str(), |config| {
-            config.approvals_reviewer = ApprovalsReviewer::GuardianSubagent;
+            config.approvals_reviewer = ApprovalsReviewer::AutoReview;
             config.permissions.approval_policy = Constrained::allow_any(AskForApproval::OnRequest);
             config.model_provider.name = "OpenAI-compatible guardian compact test".to_string();
             config.compact_prompt = Some(SUMMARIZATION_PROMPT.to_string());
@@ -1831,7 +1870,7 @@ async fn proactive_guardian_sync_compacts_trunk_before_review_request() -> anyho
         /*external_cancel*/ None,
     )
     .await;
-    let GuardianReviewOutcome::Completed(Ok(first_assessment)) = first_outcome else {
+    let (GuardianReviewOutcome::Completed(first_assessment), _) = first_outcome else {
         panic!("expected first guardian assessment");
     };
     assert_eq!(first_assessment.outcome, GuardianAssessmentOutcome::Allow);
@@ -1860,7 +1899,6 @@ async fn proactive_guardian_sync_compacts_trunk_before_review_request() -> anyho
                     content: vec![ContentItem::InputText {
                         text: "Please push the docs fix now.".to_string(),
                     }],
-                    end_turn: None,
                     phase: None,
                 },
                 ResponseItem::Message {
@@ -1869,7 +1907,6 @@ async fn proactive_guardian_sync_compacts_trunk_before_review_request() -> anyho
                     content: vec![ContentItem::OutputText {
                         text: "I need approval to push the docs fix.".to_string(),
                     }],
-                    end_turn: None,
                     phase: None,
                 },
             ],
@@ -1911,7 +1948,7 @@ async fn proactive_guardian_sync_compacts_trunk_before_review_request() -> anyho
         /*external_cancel*/ None,
     )
     .await;
-    let GuardianReviewOutcome::Completed(Ok(second_assessment)) = second_outcome else {
+    let (GuardianReviewOutcome::Completed(second_assessment), _) = second_outcome else {
         panic!("expected second guardian assessment");
     };
     assert_eq!(second_assessment.outcome, GuardianAssessmentOutcome::Allow);
@@ -2150,7 +2187,6 @@ async fn guardian_parallel_reviews_fork_from_last_committed_trunk_history() -> a
                                     text: "Please inspect pending changes before pushing."
                                         .to_string(),
                                 }],
-                                end_turn: None,
                                 phase: None,
                             },
                             ResponseItem::Message {
@@ -2159,7 +2195,6 @@ async fn guardian_parallel_reviews_fork_from_last_committed_trunk_history() -> a
                                 content: vec![ContentItem::OutputText {
                                     text: "I need approval to run git diff.".to_string(),
                                 }],
-                                end_turn: None,
                                 phase: None,
                             },
                         ],
@@ -2221,7 +2256,6 @@ async fn guardian_parallel_reviews_fork_from_last_committed_trunk_history() -> a
                                 content: vec![ContentItem::InputText {
                                     text: "Now inspect whether pushing is safe.".to_string(),
                                 }],
-                                end_turn: None,
                                 phase: None,
                             },
                             ResponseItem::Message {
@@ -2231,7 +2265,6 @@ async fn guardian_parallel_reviews_fork_from_last_committed_trunk_history() -> a
                                     text: "I need approval to push after the diff check."
                                         .to_string(),
                                 }],
-                                end_turn: None,
                                 phase: None,
                             },
                         ],
