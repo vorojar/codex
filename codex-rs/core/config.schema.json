@@ -475,6 +475,9 @@
             "memory_tool": {
               "type": "boolean"
             },
+            "mentions_v2": {
+              "type": "boolean"
+            },
             "multi_agent": {
               "type": "boolean"
             },
@@ -3962,6 +3965,9 @@
           "type": "boolean"
         },
         "memory_tool": {
+          "type": "boolean"
+        },
+        "mentions_v2": {
           "type": "boolean"
         },
         "multi_agent": {
