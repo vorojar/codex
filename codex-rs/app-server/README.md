@@ -1672,14 +1672,14 @@ Field notes:
 
 Use `creditType: "credits"` when workspace credits are depleted, or `creditType: "usage_limit"` when the workspace usage limit has been reached. If the owner was already notified recently, the response status is `cooldown_active`.
 
-### 9) Track the workspace-owner nudge prompt
+### 9) Track a usage-limit banner
 
 ```json
-{ "method": "account/usageLimitBanner/track", "id": 9, "params": { "action": "shown", "creditType": "usage_limit" } }
+{ "method": "account/usageLimitBanner/track", "id": 9, "params": { "action": "shown", "bannerType": "workspace_member_usage_limit_reached" } }
 { "id": 9, "result": {} }
 ```
 
-Use `action: "shown"` when the prompt is displayed, and `action: "cta_clicked"` when the user confirms the prompt.
+Use `action: "shown"` when the banner is displayed, and `action: "cta_clicked"` when the user confirms it. The current workspace-owner nudge variants are `workspace_member_credits_depleted` and `workspace_member_usage_limit_reached`.
 
 ## Experimental API Opt-in
 

@@ -16930,13 +16930,13 @@
           "action": {
             "$ref": "#/definitions/v2/TrackUsageLimitBannerAction"
           },
-          "creditType": {
-            "$ref": "#/definitions/v2/AddCreditsNudgeCreditType"
+          "bannerType": {
+            "$ref": "#/definitions/v2/UsageLimitBannerType"
           }
         },
         "required": [
           "action",
-          "creditType"
+          "bannerType"
         ],
         "title": "TrackUsageLimitBannerParams",
         "type": "object"
@@ -17369,6 +17369,13 @@
         ],
         "title": "TurnSteerResponse",
         "type": "object"
+      },
+      "UsageLimitBannerType": {
+        "enum": [
+          "workspace_member_credits_depleted",
+          "workspace_member_usage_limit_reached"
+        ],
+        "type": "string"
       },
       "UserInput": {
         "oneOf": [

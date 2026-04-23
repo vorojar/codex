@@ -19,10 +19,10 @@ use crate::facts::TurnSteerRejectionReason;
 use crate::facts::TurnSteerResult;
 use crate::facts::TurnSubmissionType;
 use crate::now_unix_seconds;
-use codex_app_server_protocol::AddCreditsNudgeCreditType;
 use codex_app_server_protocol::CodexErrorInfo;
 use codex_app_server_protocol::TrackUsageLimitBannerAction;
 use codex_app_server_protocol::TrackUsageLimitBannerParams;
+use codex_app_server_protocol::UsageLimitBannerType;
 use codex_login::default_client::originator;
 use codex_plugin::PluginTelemetryMetadata;
 use codex_protocol::approvals::NetworkApprovalProtocol;
@@ -593,17 +593,19 @@ pub(crate) fn plugin_state_event_type(state: PluginState) -> &'static str {
 pub(crate) fn usage_limit_banner_event_request(
     params: TrackUsageLimitBannerParams,
 ) -> UsageLimitBannerEventRequest {
-    let limit_reason = match params.credit_type {
-        AddCreditsNudgeCreditType::Credits => "credits",
-        AddCreditsNudgeCreditType::UsageLimit => "usage_limit",
+    let limit_reason = match params.banner_type {
+        UsageLimitBannerType::WorkspaceMemberCreditsDepleted => "credits",
+        UsageLimitBannerType::WorkspaceMemberUsageLimitReached => "usage_limit",
     };
-    let banner_type = match params.credit_type {
-        AddCreditsNudgeCreditType::Credits => "workspace_member_credits_depleted",
-        AddCreditsNudgeCreditType::UsageLimit => "workspace_member_usage_limit_reached",
+    let banner_type = match params.banner_type {
+        UsageLimitBannerType::WorkspaceMemberCreditsDepleted => "workspace_member_credits_depleted",
+        UsageLimitBannerType::WorkspaceMemberUsageLimitReached => {
+            "workspace_member_usage_limit_reached"
+        }
     };
-    let cta_action = match params.credit_type {
-        AddCreditsNudgeCreditType::Credits => "notify_owner",
-        AddCreditsNudgeCreditType::UsageLimit => "request_increase",
+    let cta_action = match params.banner_type {
+        UsageLimitBannerType::WorkspaceMemberCreditsDepleted => "notify_owner",
+        UsageLimitBannerType::WorkspaceMemberUsageLimitReached => "request_increase",
     };
     let cta_action = match params.action {
         TrackUsageLimitBannerAction::Shown => None,

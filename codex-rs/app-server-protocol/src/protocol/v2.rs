@@ -2255,7 +2255,7 @@ pub struct SendAddCreditsNudgeEmailParams {
 #[ts(export_to = "v2/")]
 pub struct TrackUsageLimitBannerParams {
     pub action: TrackUsageLimitBannerAction,
-    pub credit_type: AddCreditsNudgeCreditType,
+    pub banner_type: UsageLimitBannerType,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, JsonSchema, TS)]
@@ -2264,6 +2264,14 @@ pub struct TrackUsageLimitBannerParams {
 pub enum TrackUsageLimitBannerAction {
     Shown,
     CtaClicked,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, JsonSchema, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export_to = "v2/", rename_all = "snake_case")]
+pub enum UsageLimitBannerType {
+    WorkspaceMemberCreditsDepleted,
+    WorkspaceMemberUsageLimitReached,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, JsonSchema, TS)]

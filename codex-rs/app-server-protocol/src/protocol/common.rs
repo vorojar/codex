@@ -1473,7 +1473,7 @@ mod tests {
             request_id: RequestId::Integer(2),
             params: v2::TrackUsageLimitBannerParams {
                 action: v2::TrackUsageLimitBannerAction::CtaClicked,
-                credit_type: v2::AddCreditsNudgeCreditType::UsageLimit,
+                banner_type: v2::UsageLimitBannerType::WorkspaceMemberUsageLimitReached,
             },
         };
         assert_eq!(request.id(), &RequestId::Integer(2));
@@ -1484,7 +1484,7 @@ mod tests {
                 "id": 2,
                 "params": {
                     "action": "cta_clicked",
-                    "creditType": "usage_limit",
+                    "bannerType": "workspace_member_usage_limit_reached",
                 },
             }),
             serde_json::to_value(&request)?,

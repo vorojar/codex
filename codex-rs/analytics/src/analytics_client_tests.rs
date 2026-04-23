@@ -55,7 +55,6 @@ use crate::facts::TurnTokenUsageFact;
 use crate::reducer::AnalyticsReducer;
 use crate::reducer::normalize_path_for_skill_id;
 use crate::reducer::skill_id_for_local_skill;
-use codex_app_server_protocol::AddCreditsNudgeCreditType;
 use codex_app_server_protocol::ApprovalsReviewer as AppServerApprovalsReviewer;
 use codex_app_server_protocol::AskForApproval as AppServerAskForApproval;
 use codex_app_server_protocol::ClientInfo;
@@ -77,6 +76,7 @@ use codex_app_server_protocol::ThreadStartResponse;
 use codex_app_server_protocol::ThreadStatus as AppServerThreadStatus;
 use codex_app_server_protocol::TrackUsageLimitBannerAction;
 use codex_app_server_protocol::TrackUsageLimitBannerParams;
+use codex_app_server_protocol::UsageLimitBannerType;
 use codex_app_server_protocol::Turn;
 use codex_app_server_protocol::TurnCompletedNotification;
 use codex_app_server_protocol::TurnError as AppServerTurnError;
@@ -2421,7 +2421,7 @@ async fn usage_limit_banner_shown_request_emits_credits_event() {
                     request_id: RequestId::Integer(1),
                     params: TrackUsageLimitBannerParams {
                         action: TrackUsageLimitBannerAction::Shown,
-                        credit_type: AddCreditsNudgeCreditType::Credits,
+                        banner_type: UsageLimitBannerType::WorkspaceMemberCreditsDepleted,
                     },
                 }),
             },
@@ -2457,7 +2457,7 @@ async fn usage_limit_banner_click_request_emits_usage_limit_event() {
                     request_id: RequestId::Integer(1),
                     params: TrackUsageLimitBannerParams {
                         action: TrackUsageLimitBannerAction::CtaClicked,
-                        credit_type: AddCreditsNudgeCreditType::UsageLimit,
+                        banner_type: UsageLimitBannerType::WorkspaceMemberUsageLimitReached,
                     },
                 }),
             },
