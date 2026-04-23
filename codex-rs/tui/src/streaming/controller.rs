@@ -71,6 +71,12 @@ impl StreamCore {
         false
     }
 
+    fn append_missing_suffix_from_final_message(&mut self, final_message: &str) {
+        self.state
+            .collector
+            .append_missing_suffix_from_final_message(final_message);
+    }
+
     fn finalize_remaining(&mut self) -> Vec<Line<'static>> {
         let remainder_source = self.state.collector.finalize_and_drain_source();
         if !remainder_source.is_empty() {
@@ -240,6 +246,12 @@ impl StreamController {
     /// was buffered; it only means no newly renderable complete line is ready for live emission.
     pub(crate) fn push(&mut self, delta: &str) -> bool {
         self.core.push_delta(delta)
+    }
+
+    /// Reconcile the streamed deltas with the finalized assistant message.
+    pub(crate) fn append_missing_suffix_from_final_message(&mut self, final_message: &str) {
+        self.core
+            .append_missing_suffix_from_final_message(final_message);
     }
 
     /// Finish the stream and return the final transient cell plus accumulated markdown source.

@@ -2187,67 +2187,50 @@ async fn final_reasoning_then_message_without_deltas_are_rendered() {
 }
 
 #[tokio::test]
-async fn deltas_then_same_final_message_are_rendered_snapshot() {
+async fn deltas_then_final_message_repairs_missing_tail_snapshot() {
     let (mut chat, mut rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
 
-    // Stream some reasoning deltas first.
     chat.handle_codex_event(Event {
-        id: "s1".into(),
-        msg: EventMsg::AgentReasoningDelta(AgentReasoningDeltaEvent {
-            delta: "I will ".into(),
-        }),
-    });
-    chat.handle_codex_event(Event {
-        id: "s1".into(),
-        msg: EventMsg::AgentReasoningDelta(AgentReasoningDeltaEvent {
-            delta: "first analyze the ".into(),
-        }),
-    });
-    chat.handle_codex_event(Event {
-        id: "s1".into(),
-        msg: EventMsg::AgentReasoningDelta(AgentReasoningDeltaEvent {
-            delta: "request.".into(),
-        }),
-    });
-    chat.handle_codex_event(Event {
-        id: "s1".into(),
-        msg: EventMsg::AgentReasoning(AgentReasoningEvent {
-            text: "request.".into(),
+        id: "turn-1".into(),
+        msg: EventMsg::TurnStarted(TurnStartedEvent {
+            turn_id: "turn-1".to_string(),
+            started_at: None,
+            model_context_window: None,
+            collaboration_mode_kind: ModeKind::Default,
         }),
     });
 
-    // Then stream answer deltas, followed by the exact same final message.
+    // Streamed deltas can be missing the response tail even though TurnComplete carries the full
+    // final assistant message.
     chat.handle_codex_event(Event {
         id: "s1".into(),
         msg: EventMsg::AgentMessageDelta(AgentMessageDeltaEvent {
             delta: "Here is the ".into(),
         }),
     });
+
     chat.handle_codex_event(Event {
-        id: "s1".into(),
-        msg: EventMsg::AgentMessageDelta(AgentMessageDeltaEvent {
-            delta: "result.".into(),
+        id: "turn-1".into(),
+        msg: EventMsg::TurnComplete(TurnCompleteEvent {
+            turn_id: "turn-1".to_string(),
+            last_agent_message: Some("Here is the result.".to_string()),
+            completed_at: None,
+            duration_ms: None,
+            time_to_first_token_ms: None,
         }),
     });
 
-    chat.handle_codex_event(Event {
-        id: "s1".into(),
-        msg: EventMsg::AgentMessage(AgentMessageEvent {
-            message: "Here is the result.".into(),
-            phase: None,
-            memory_citation: None,
-        }),
-    });
-
-    // Snapshot the combined visible content to ensure we render as expected
-    // when deltas are followed by the identical final message.
     let cells = drain_insert_history(&mut rx);
     let combined = cells
         .iter()
         .map(|lines| lines_to_single_string(lines))
         .collect::<String>();
+    assert!(
+        combined.contains("Here is the result."),
+        "missing reconciled final message tail: {combined}"
+    );
     assert_chatwidget_snapshot!(
-        "deltas_then_same_final_message_are_rendered_snapshot",
+        "deltas_then_final_message_repairs_missing_tail_snapshot",
         combined
     );
 }

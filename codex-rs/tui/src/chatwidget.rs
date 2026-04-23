@@ -2641,15 +2641,20 @@ impl ChatWidget {
         self.request_redraw();
     }
 
-    fn finalize_completed_assistant_message(&mut self, message: Option<&str>) {
-        // If we have a stream_controller, the finalized message payload is redundant because the
-        // visible content has already been accumulated through deltas.
-        if self.stream_controller.is_none()
-            && let Some(message) = message
+    fn reconcile_answer_stream_final_message(&mut self, message: Option<&str>) {
+        if let Some(message) = message
             && !message.is_empty()
         {
-            self.handle_streaming_delta(message.to_string());
+            if let Some(controller) = self.stream_controller.as_mut() {
+                controller.append_missing_suffix_from_final_message(message);
+            } else {
+                self.handle_streaming_delta(message.to_string());
+            }
         }
+    }
+
+    fn finalize_completed_assistant_message(&mut self, message: Option<&str>) {
+        self.reconcile_answer_stream_final_message(message);
         self.flush_answer_stream_with_separator();
         self.handle_stream_finished();
         self.request_redraw();
@@ -2851,6 +2856,12 @@ impl ChatWidget {
             .unwrap_or_default();
         self.saw_copy_source_this_turn = false;
         // If a stream is currently active, finalize it.
+        if let Some(message) = last_agent_message.as_deref()
+            && !message.is_empty()
+            && let Some(controller) = self.stream_controller.as_mut()
+        {
+            controller.append_missing_suffix_from_final_message(message);
+        }
         self.flush_answer_stream_with_separator();
         if let Some(mut controller) = self.plan_stream_controller.take() {
             let (cell, source) = controller.finalize();

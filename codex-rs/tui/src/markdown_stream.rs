@@ -79,6 +79,23 @@ impl MarkdownStreamCollector {
         self.buffer.push_str(delta);
     }
 
+    /// Append the suffix that is present in the finalized message but missing from streamed
+    /// deltas.
+    pub fn append_missing_suffix_from_final_message(&mut self, final_message: &str) {
+        if final_message.starts_with(&self.buffer) {
+            let suffix = &final_message[self.buffer.len()..];
+            if !suffix.is_empty() {
+                self.push_delta(suffix);
+            }
+        } else {
+            tracing::debug!(
+                streamed_len = self.buffer.len(),
+                final_len = final_message.len(),
+                "final assistant message did not extend streamed deltas"
+            );
+        }
+    }
+
     /// Commit newly completed raw markdown source up to the last newline.
     ///
     /// This returns only source that has not been returned by a previous commit. Calling it after a
