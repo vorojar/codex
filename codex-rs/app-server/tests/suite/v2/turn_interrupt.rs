@@ -22,6 +22,7 @@ use codex_app_server_protocol::TurnStartParams;
 use codex_app_server_protocol::TurnStartResponse;
 use codex_app_server_protocol::TurnStatus;
 use codex_app_server_protocol::UserInput as V2UserInput;
+use pretty_assertions::assert_eq;
 use tempfile::TempDir;
 use tokio::time::timeout;
 
@@ -110,7 +111,8 @@ async fn turn_interrupt_aborts_running_turn() -> Result<()> {
         mcp.read_stream_until_response_message(RequestId::Integer(interrupt_id)),
     )
     .await??;
-    let _resp: TurnInterruptResponse = to_response::<TurnInterruptResponse>(interrupt_resp)?;
+    let response: TurnInterruptResponse = to_response::<TurnInterruptResponse>(interrupt_resp)?;
+    assert_eq!(response, TurnInterruptResponse {});
 
     let completed_notif: JSONRPCNotification = timeout(
         DEFAULT_READ_TIMEOUT,
@@ -292,7 +294,8 @@ async fn turn_interrupt_resolves_pending_command_approval_request() -> Result<()
         mcp.read_stream_until_response_message(RequestId::Integer(interrupt_id)),
     )
     .await??;
-    let _resp: TurnInterruptResponse = to_response::<TurnInterruptResponse>(interrupt_resp)?;
+    let response: TurnInterruptResponse = to_response::<TurnInterruptResponse>(interrupt_resp)?;
+    assert_eq!(response, TurnInterruptResponse {});
 
     let resolved_notification = timeout(
         DEFAULT_READ_TIMEOUT,

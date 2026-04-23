@@ -7318,53 +7318,44 @@ impl CodexMessageProcessor {
         let result = async {
             let (thread_uuid, thread) = self.load_thread(&thread_id).await?;
 
-            // Record turn interrupts so we can reply when TurnAborted arrives. Startup
-            // interrupts do not have a turn and are acknowledged after submission.
+            // Reject stale turn interrupts up front. Accepted v2 interrupts are
+            // acknowledged immediately after submission below, so they do not need
+            // to enter the pending-interrupt queue.
             if !is_startup_interrupt {
                 let thread_state = self.thread_state_manager.thread_state(thread_uuid).await;
                 let is_running = matches!(thread.agent_status().await, AgentStatus::Running);
-                {
-                    let mut thread_state = thread_state.lock().await;
+                let interrupt_outcome = {
+                    let thread_state = thread_state.lock().await;
                     if let Some(active_turn) = thread_state.active_turn_snapshot() {
                         if active_turn.id != turn_id {
-                            return Err(invalid_request(format!(
+                            Err(format!(
                                 "expected active turn id {turn_id} but found {}",
                                 active_turn.id
-                            )));
+                            ))
+                        } else {
+                            Ok(())
                         }
                     } else if thread_state.last_terminal_turn_id.as_deref()
                         == Some(turn_id.as_str())
-                        || !is_running
                     {
-                        return Err(invalid_request("no active turn to interrupt"));
+                        Err("no active turn to interrupt".to_string())
+                    } else if is_running {
+                        Ok(())
+                    } else {
+                        Err("no active turn to interrupt".to_string())
                     }
-                    thread_state
-                        .pending_interrupts
-                        .push((request_id.clone(), ApiVersion::V2));
+                };
+                if let Err(message) = interrupt_outcome {
+                    return Err(invalid_request(message));
                 }
-
-                self.outgoing
-                    .record_request_turn_id(&request_id, &turn_id)
-                    .await;
             }
 
-            // Submit the interrupt. Turn interrupts respond upon TurnAborted; startup
-            // interrupts respond here because startup cancellation has no turn event.
             match self
                 .submit_core_op(&request_id, thread.as_ref(), Op::Interrupt)
                 .await
             {
-                Ok(_) if is_startup_interrupt => Ok(Some(TurnInterruptResponse {})),
-                Ok(_) => Ok(None),
+                Ok(_) => Ok(Some(TurnInterruptResponse {})),
                 Err(err) => {
-                    if !is_startup_interrupt {
-                        let thread_state =
-                            self.thread_state_manager.thread_state(thread_uuid).await;
-                        let mut thread_state = thread_state.lock().await;
-                        thread_state
-                            .pending_interrupts
-                            .retain(|(pending_request_id, _)| pending_request_id != &request_id);
-                    }
                     let interrupt_target = if is_startup_interrupt {
                         "startup"
                     } else {
