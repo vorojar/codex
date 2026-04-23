@@ -327,6 +327,7 @@ fn queued_message_edit_hint_binding(
 use crate::app_event::AppEvent;
 use crate::app_event::ConnectorsSnapshot;
 use crate::app_event::ExitMode;
+use crate::app_event::ForkTriggerSource;
 use crate::app_event::RateLimitRefreshOrigin;
 #[cfg(target_os = "windows")]
 use crate::app_event::WindowsSandboxEnableMode;
@@ -5922,6 +5923,14 @@ impl ChatWidget {
     #[cfg(test)]
     pub(crate) fn last_agent_markdown_text(&self) -> Option<&str> {
         self.last_agent_markdown.as_deref()
+    }
+
+    /// Return whether the Ctrl+O fork shortcut should be honored right now.
+    ///
+    /// Unlike slash-command gating, fork is allowed while a turn is running so
+    /// the user can split work without waiting for the active turn to finish.
+    pub(crate) fn can_run_ctrl_o_fork_now(&self) -> bool {
+        true
     }
 
     fn show_rename_prompt(&mut self) {

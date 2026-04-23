@@ -13,6 +13,7 @@ workspace = true
 
 [dependencies]
 anyhow = { workspace = true }
+bincode = { workspace = true }
 codex-apply-patch = { workspace = true }
 codex-exec-server = { workspace = true }
 codex-linux-sandbox = { workspace = true }
@@ -21,5 +22,10 @@ codex-shell-escalation = { workspace = true }
 codex-utils-absolute-path = { workspace = true }
 codex-utils-home-dir = { workspace = true }
 dotenvy = { workspace = true }
+serde = { workspace = true, features = ["derive"] }
 tempfile = { workspace = true }
 tokio = { workspace = true, features = ["rt-multi-thread"] }
+
+[dev-dependencies]
+pretty_assertions = { workspace = true }
+serial_test = { workspace = true }

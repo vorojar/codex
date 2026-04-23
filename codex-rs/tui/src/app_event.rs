@@ -87,6 +87,30 @@ pub(crate) enum WindowsSandboxEnableMode {
     Legacy,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ForkTriggerSource {
+    /// Triggered from the `/fork` slash command.
+    SlashCommand,
+    /// Triggered from the Ctrl+O keyboard shortcut.
+    Hotkey,
+}
+
+impl ForkTriggerSource {
+    pub(crate) fn telemetry_source(self) -> &'static str {
+        match self {
+            Self::SlashCommand => "slash_command",
+            Self::Hotkey => "hotkey",
+        }
+    }
+
+    pub(crate) fn trigger_label(self) -> &'static str {
+        match self {
+            Self::SlashCommand => "/fork",
+            Self::Hotkey => "Ctrl+O",
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 #[cfg_attr(not(target_os = "windows"), allow(dead_code))]
 pub(crate) struct ConnectorsSnapshot {
@@ -165,7 +189,11 @@ pub(crate) enum AppEvent {
     ResumeSessionByIdOrName(String),
 
     /// Fork the current session into a new thread.
+    #[allow(dead_code)]
     ForkCurrentSession,
+
+    /// Fork the current session by opening `codex fork <thread-id>` in an iTerm2 tab.
+    ForkCurrentSessionInItermTab(ForkTriggerSource),
 
     /// Request to exit the application.
     ///

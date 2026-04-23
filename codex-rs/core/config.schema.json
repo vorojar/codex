@@ -821,6 +821,44 @@
       ],
       "type": "string"
     },
+    "ForkTabExitBehavior": {
+      "description": "Controls what happens to a terminal tab opened by the TUI fork-tab action after the forked Codex process exits.",
+      "oneOf": [
+        {
+          "description": "Keep the tab open by replacing the forked Codex process with the user's login shell.",
+          "enum": [
+            "return-to-shell"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Let the tab close when the forked Codex process exits.",
+          "enum": [
+            "close-tab"
+          ],
+          "type": "string"
+        }
+      ]
+    },
+    "ForkTabOpenBehavior": {
+      "description": "Controls whether a terminal tab opened by the TUI fork-tab action is left selected or sent to the background after launch.",
+      "oneOf": [
+        {
+          "description": "Leave the forked tab selected after it opens.",
+          "enum": [
+            "foreground"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Restore focus to the source tab after the forked tab opens.",
+          "enum": [
+            "background"
+          ],
+          "type": "string"
+        }
+      ]
+    },
     "GhostSnapshotToml": {
       "additionalProperties": false,
       "properties": {
@@ -2325,6 +2363,24 @@
           "default": true,
           "description": "Enable animations (welcome screen, shimmer effects, spinners). Defaults to `true`.",
           "type": "boolean"
+        },
+        "fork_tab_exit_behavior": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/ForkTabExitBehavior"
+            }
+          ],
+          "default": "return-to-shell",
+          "description": "Controls what happens to a tab opened by the TUI fork-tab action after the forked Codex process exits.\n\n- `return-to-shell` (default): Keep the tab open and return to the user's login shell prompt. - `close-tab`: Preserve the legacy behavior and let the tab close when Codex exits."
+        },
+        "fork_tab_open_behavior": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/ForkTabOpenBehavior"
+            }
+          ],
+          "default": "foreground",
+          "description": "Controls whether a tab opened by the TUI fork-tab action is left selected or opened in the background.\n\n- `foreground` (default): Leave the forked tab selected after it opens. - `background`: Restore focus to the source tab after the forked tab opens."
         },
         "keymap": {
           "allOf": [

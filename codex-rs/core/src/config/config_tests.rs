@@ -34,6 +34,8 @@ use codex_config::types::AppToolApproval;
 use codex_config::types::ApprovalsReviewer;
 use codex_config::types::BundledSkillsConfig;
 use codex_config::types::FeedbackConfigToml;
+use codex_config::types::ForkTabExitBehavior;
+use codex_config::types::ForkTabOpenBehavior;
 use codex_config::types::HistoryPersistence;
 use codex_config::types::McpServerEnvVar;
 use codex_config::types::McpServerToolConfig;
@@ -591,6 +593,8 @@ fn config_toml_deserializes_model_availability_nux() {
         cfg.tui.expect("tui config should deserialize"),
         Tui {
             notification_settings: TuiNotificationSettings::default(),
+            fork_tab_exit_behavior: ForkTabExitBehavior::ReturnToShell,
+            fork_tab_open_behavior: ForkTabOpenBehavior::Foreground,
             animations: true,
             show_tooltips: true,
             alternate_screen: AltScreenMode::default(),
@@ -1981,6 +1985,8 @@ fn tui_config_missing_notifications_field_defaults_to_enabled() {
         tui,
         Tui {
             notification_settings: TuiNotificationSettings::default(),
+            fork_tab_exit_behavior: ForkTabExitBehavior::ReturnToShell,
+            fork_tab_open_behavior: ForkTabOpenBehavior::Foreground,
             animations: true,
             show_tooltips: true,
             alternate_screen: AltScreenMode::Auto,
@@ -6074,6 +6080,8 @@ async fn test_precedence_fixture_with_o3_profile() -> std::io::Result<()> {
             check_for_update_on_startup: true,
             disable_paste_burst: false,
             tui_notifications: Default::default(),
+            tui_fork_tab_exit_behavior: ForkTabExitBehavior::ReturnToShell,
+            tui_fork_tab_open_behavior: ForkTabOpenBehavior::Foreground,
             animations: true,
             show_tooltips: true,
             model_availability_nux: ModelAvailabilityNuxConfig::default(),
@@ -6271,6 +6279,8 @@ async fn test_precedence_fixture_with_gpt3_profile() -> std::io::Result<()> {
         check_for_update_on_startup: true,
         disable_paste_burst: false,
         tui_notifications: Default::default(),
+        tui_fork_tab_exit_behavior: ForkTabExitBehavior::ReturnToShell,
+        tui_fork_tab_open_behavior: ForkTabOpenBehavior::Foreground,
         animations: true,
         show_tooltips: true,
         model_availability_nux: ModelAvailabilityNuxConfig::default(),
@@ -6422,6 +6432,8 @@ async fn test_precedence_fixture_with_zdr_profile() -> std::io::Result<()> {
         check_for_update_on_startup: true,
         disable_paste_burst: false,
         tui_notifications: Default::default(),
+        tui_fork_tab_exit_behavior: ForkTabExitBehavior::ReturnToShell,
+        tui_fork_tab_open_behavior: ForkTabOpenBehavior::Foreground,
         animations: true,
         show_tooltips: true,
         model_availability_nux: ModelAvailabilityNuxConfig::default(),
@@ -6558,6 +6570,8 @@ async fn test_precedence_fixture_with_gpt5_profile() -> std::io::Result<()> {
         check_for_update_on_startup: true,
         disable_paste_burst: false,
         tui_notifications: Default::default(),
+        tui_fork_tab_exit_behavior: ForkTabExitBehavior::ReturnToShell,
+        tui_fork_tab_open_behavior: ForkTabOpenBehavior::Foreground,
         animations: true,
         show_tooltips: true,
         model_availability_nux: ModelAvailabilityNuxConfig::default(),
@@ -8667,6 +8681,10 @@ speaker = "Desk Speakers"
 struct TuiTomlTest {
     #[serde(default, flatten)]
     notifications: TuiNotificationSettings,
+    #[serde(default)]
+    fork_tab_exit_behavior: ForkTabExitBehavior,
+    #[serde(default)]
+    fork_tab_open_behavior: ForkTabOpenBehavior,
 }
 
 #[derive(Deserialize, Debug, PartialEq)]
@@ -8751,5 +8769,19 @@ fn test_tui_notification_condition_rejects_unknown_value() {
             && err.contains("unfocused")
             && err.contains("always"),
         "unexpected error: {err}"
+    );
+}
+
+#[test]
+fn test_tui_fork_tab_exit_behavior() {
+    let toml = r#"
+            [tui]
+            fork_tab_exit_behavior = "close-tab"
+        "#;
+    let parsed: RootTomlTest =
+        toml::from_str(toml).expect("deserialize fork_tab_exit_behavior=\"close-tab\"");
+    assert_eq!(
+        parsed.tui.fork_tab_exit_behavior,
+        ForkTabExitBehavior::CloseTab
     );
 }

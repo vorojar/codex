@@ -35,6 +35,8 @@ use codex_config::sandbox_mode_requirement_for_permission_profile;
 use codex_config::types::ApprovalsReviewer;
 use codex_config::types::AuthCredentialsStoreMode;
 use codex_config::types::DEFAULT_OTEL_ENVIRONMENT;
+use codex_config::types::ForkTabExitBehavior;
+use codex_config::types::ForkTabOpenBehavior;
 use codex_config::types::History;
 use codex_config::types::McpServerConfig;
 use codex_config::types::McpServerDisabledReason;
@@ -471,6 +473,14 @@ pub struct Config {
 
     /// TUI notification settings, including enabled events, delivery method, and focus condition.
     pub tui_notifications: TuiNotificationSettings,
+
+    /// Controls what happens to a tab opened by the TUI fork-tab action after
+    /// the forked Codex process exits.
+    pub tui_fork_tab_exit_behavior: ForkTabExitBehavior,
+
+    /// Controls whether a tab opened by the TUI fork-tab action is left
+    /// selected or opened in the background.
+    pub tui_fork_tab_open_behavior: ForkTabOpenBehavior,
 
     /// Enable ASCII animations and shimmer effects in the TUI.
     pub animations: bool,
@@ -2849,6 +2859,16 @@ impl Config {
                 .tui
                 .as_ref()
                 .map(|t| t.notification_settings.clone())
+                .unwrap_or_default(),
+            tui_fork_tab_exit_behavior: cfg
+                .tui
+                .as_ref()
+                .map(|t| t.fork_tab_exit_behavior)
+                .unwrap_or_default(),
+            tui_fork_tab_open_behavior: cfg
+                .tui
+                .as_ref()
+                .map(|t| t.fork_tab_open_behavior)
                 .unwrap_or_default(),
             animations: cfg.tui.as_ref().map(|t| t.animations).unwrap_or(true),
             show_tooltips: cfg.tui.as_ref().map(|t| t.show_tooltips).unwrap_or(true),

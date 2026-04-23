@@ -115,6 +115,10 @@ impl App {
                     }
                 }
             }
+            AppEvent::ForkCurrentSessionInItermTab(source) => {
+                self.handle_fork_current_session_in_iterm_tab(tui, source)
+                    .await?;
+            }
             AppEvent::ForkCurrentSession => {
                 self.session_telemetry.counter(
                     "codex.thread.fork",

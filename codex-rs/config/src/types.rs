@@ -581,6 +581,33 @@ pub struct TuiNotificationSettings {
     pub condition: NotificationCondition,
 }
 
+/// Controls what happens to a terminal tab opened by the TUI fork-tab action
+/// after the forked Codex process exits.
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, JsonSchema, Default)]
+#[serde(rename_all = "kebab-case")]
+pub enum ForkTabExitBehavior {
+    /// Keep the tab open by replacing the forked Codex process with the user's
+    /// login shell.
+    #[default]
+    ReturnToShell,
+
+    /// Let the tab close when the forked Codex process exits.
+    CloseTab,
+}
+
+/// Controls whether a terminal tab opened by the TUI fork-tab action is left
+/// selected or sent to the background after launch.
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, JsonSchema, Default)]
+#[serde(rename_all = "kebab-case")]
+pub enum ForkTabOpenBehavior {
+    /// Leave the forked tab selected after it opens.
+    #[default]
+    Foreground,
+
+    /// Restore focus to the source tab after the forked tab opens.
+    Background,
+}
+
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, Default, JsonSchema)]
 #[schemars(deny_unknown_fields)]
 pub struct ModelAvailabilityNuxConfig {
@@ -598,6 +625,24 @@ pub const DEFAULT_TERMINAL_RESIZE_REFLOW_FALLBACK_MAX_ROWS: usize = 1_000;
 pub struct Tui {
     #[serde(default, flatten)]
     pub notification_settings: TuiNotificationSettings,
+
+    /// Controls what happens to a tab opened by the TUI fork-tab action after
+    /// the forked Codex process exits.
+    ///
+    /// - `return-to-shell` (default): Keep the tab open and return to the
+    ///   user's login shell prompt.
+    /// - `close-tab`: Preserve the legacy behavior and let the tab close when
+    ///   Codex exits.
+    #[serde(default)]
+    pub fork_tab_exit_behavior: ForkTabExitBehavior,
+
+    /// Controls whether a tab opened by the TUI fork-tab action is left
+    /// selected or opened in the background.
+    ///
+    /// - `foreground` (default): Leave the forked tab selected after it opens.
+    /// - `background`: Restore focus to the source tab after the forked tab opens.
+    #[serde(default)]
+    pub fork_tab_open_behavior: ForkTabOpenBehavior,
 
     /// Enable animations (welcome screen, shimmer effects, spinners).
     /// Defaults to `true`.

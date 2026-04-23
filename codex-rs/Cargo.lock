@@ -2012,6 +2012,7 @@ name = "codex-arg0"
 version = "0.0.0"
 dependencies = [
  "anyhow",
+ "bincode",
  "codex-apply-patch",
  "codex-exec-server",
  "codex-linux-sandbox",
@@ -2020,6 +2021,9 @@ dependencies = [
  "codex-utils-absolute-path",
  "codex-utils-home-dir",
  "dotenvy",
+ "pretty_assertions",
+ "serde",
+ "serial_test",
  "tempfile",
  "tokio",
 ]

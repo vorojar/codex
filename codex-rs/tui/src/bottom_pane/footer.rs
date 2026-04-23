@@ -866,6 +866,7 @@ fn shortcut_overlay_lines(state: ShortcutsState) -> Vec<Line<'static>> {
     let mut file_paths = Line::from("");
     let mut paste_image = Line::from("");
     let mut external_editor = Line::from("");
+    let mut fork_iterm_tab = Line::from("");
     let mut edit_previous = Line::from("");
     let mut history_search = Line::from("");
     let mut quit = Line::from("");
@@ -884,6 +885,7 @@ fn shortcut_overlay_lines(state: ShortcutsState) -> Vec<Line<'static>> {
                 ShortcutId::FilePaths => file_paths = text,
                 ShortcutId::PasteImage => paste_image = text,
                 ShortcutId::ExternalEditor => external_editor = text,
+                ShortcutId::ForkItermTab => fork_iterm_tab = text,
                 ShortcutId::EditPrevious => edit_previous = text,
                 ShortcutId::HistorySearch => history_search = text,
                 ShortcutId::Quit => quit = text,
@@ -903,6 +905,7 @@ fn shortcut_overlay_lines(state: ShortcutsState) -> Vec<Line<'static>> {
         file_paths,
         paste_image,
         external_editor,
+        fork_iterm_tab,
         edit_previous,
         history_search,
         quit,
@@ -993,6 +996,7 @@ enum ShortcutId {
     FilePaths,
     PasteImage,
     ExternalEditor,
+    ForkItermTab,
     EditPrevious,
     HistorySearch,
     Quit,
@@ -1061,6 +1065,7 @@ impl ShortcutDescriptor {
             | ShortcutId::ShellCommands
             | ShortcutId::FilePaths
             | ShortcutId::PasteImage
+            | ShortcutId::ForkItermTab
             | ShortcutId::Quit
             | ShortcutId::ChangeMode => self.binding_for(state).map(|binding| binding.key),
         }?;
@@ -1160,6 +1165,15 @@ const SHORTCUTS: &[ShortcutDescriptor] = &[
         }],
         prefix: "",
         label: " to edit in external editor",
+    },
+    ShortcutDescriptor {
+        id: ShortcutId::ForkItermTab,
+        bindings: &[ShortcutBinding {
+            key: key_hint::ctrl(KeyCode::Char('o')),
+            condition: DisplayCondition::Always,
+        }],
+        prefix: "",
+        label: " to fork in iTerm2 tab",
     },
     ShortcutDescriptor {
         id: ShortcutId::EditPrevious,

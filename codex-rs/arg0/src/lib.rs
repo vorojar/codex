@@ -1,3 +1,5 @@
+mod fork_env;
+
 use std::fs::File;
 use std::future::Future;
 use std::path::Path;
@@ -10,6 +12,9 @@ use codex_utils_home_dir::find_codex_home;
 #[cfg(unix)]
 use std::os::unix::fs::symlink;
 use tempfile::TempDir;
+
+pub use fork_env::FORK_ENV_SNAPSHOT_PATH_ENV_VAR;
+pub use fork_env::ForkEnvSnapshotFile;
 
 const APPLY_PATCH_ARG0: &str = "apply_patch";
 const MISSPELLED_APPLY_PATCH_ARG0: &str = "applypatch";
@@ -136,7 +141,16 @@ pub fn arg0_dispatch() -> Option<Arg0PathEntryGuard> {
 
     // This modifies the environment, which is not thread-safe, so do this
     // before creating any threads/the Tokio runtime.
-    load_dotenv();
+    let inherited_fork_env = match fork_env::import_fork_env_from_snapshot_path_env() {
+        Ok(imported) => imported,
+        Err(err) => {
+            eprintln!("Error: failed to import fork environment snapshot: {err:#}");
+            std::process::exit(1);
+        }
+    };
+    if !inherited_fork_env {
+        load_dotenv();
+    }
 
     match prepend_path_entry_for_codex_aliases() {
         Ok(path_entry) => Some(path_entry),

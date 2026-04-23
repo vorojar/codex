@@ -364,17 +364,32 @@ fn create_watchdog_tools_namespace(tools: Vec<ToolSpec>) -> ToolSpec {
 
 fn strip_descriptions_schema(schema: &mut JsonSchema) {
     schema.description = None;
-    if let Some(items) = &mut schema.items {
+    if let Some(items) = schema.items.as_deref_mut() {
         strip_descriptions_schema(items);
     }
-    if let Some(properties) = &mut schema.properties {
+    if let Some(properties) = schema.properties.as_mut() {
         for value in properties.values_mut() {
             strip_descriptions_schema(value);
         }
     }
-    if let Some(AdditionalProperties::Schema(schema)) = &mut schema.additional_properties {
+    if let Some(AdditionalProperties::Schema(schema)) = schema.additional_properties.as_mut() {
         strip_descriptions_schema(schema);
     }
+    if let Some(any_of) = schema.any_of.as_mut() {
+        for variant in any_of {
+            strip_descriptions_schema(variant);
+        }
+    }
+}
+
+fn schema_object_parts<'a>(
+    schema: &'a JsonSchema,
+    expected_name: &str,
+) -> (&'a BTreeMap<String, JsonSchema>, Option<&'a Vec<String>>) {
+    let Some(properties) = schema.properties.as_ref() else {
+        panic!("{expected_name} should use object params");
+    };
+    (properties, schema.required.as_ref())
 }
 
 fn strip_descriptions_tool(spec: &mut ToolSpec) {
@@ -768,11 +783,7 @@ async fn test_build_specs_multi_agent_v2_uses_task_names_and_hides_resume() {
     else {
         panic!("spawn_agent should be a function tool");
     };
-    let properties = parameters
-        .properties
-        .as_ref()
-        .expect("spawn_agent should use object params");
-    let required = parameters.required.as_ref();
+    let (properties, required) = schema_object_parts(parameters, "spawn_agent");
     assert!(properties.contains_key("task_name"));
     assert_eq!(
         required,
@@ -790,11 +801,7 @@ async fn test_build_specs_multi_agent_v2_uses_task_names_and_hides_resume() {
     let ToolSpec::Function(ResponsesApiTool { parameters, .. }) = &send_message.spec else {
         panic!("send_message should be a function tool");
     };
-    let properties = parameters
-        .properties
-        .as_ref()
-        .expect("send_message should use object params");
-    let required = parameters.required.as_ref();
+    let (properties, required) = schema_object_parts(parameters, "send_message");
     assert!(properties.contains_key("target"));
     assert!(properties.contains_key("message"));
     assert!(!properties.contains_key("items"));
@@ -807,11 +814,7 @@ async fn test_build_specs_multi_agent_v2_uses_task_names_and_hides_resume() {
     let ToolSpec::Function(ResponsesApiTool { parameters, .. }) = &assign_task.spec else {
         panic!("assign_task should be a function tool");
     };
-    let properties = parameters
-        .properties
-        .as_ref()
-        .expect("assign_task should use object params");
-    let required = parameters.required.as_ref();
+    let (properties, required) = schema_object_parts(parameters, "assign_task");
     assert!(properties.contains_key("target"));
     assert!(properties.contains_key("message"));
     assert!(!properties.contains_key("items"));
@@ -829,11 +832,7 @@ async fn test_build_specs_multi_agent_v2_uses_task_names_and_hides_resume() {
     else {
         panic!("wait_agent should be a function tool");
     };
-    let properties = parameters
-        .properties
-        .as_ref()
-        .expect("wait_agent should use object params");
-    let required = parameters.required.as_ref();
+    let (properties, required) = schema_object_parts(parameters, "wait_agent");
     assert!(properties.contains_key("timeout_ms"));
     assert!(!properties.contains_key("targets"));
     assert_eq!(required, None);
@@ -854,11 +853,7 @@ async fn test_build_specs_multi_agent_v2_uses_task_names_and_hides_resume() {
     else {
         panic!("list_agents should be a function tool");
     };
-    let properties = parameters
-        .properties
-        .as_ref()
-        .expect("list_agents should use object params");
-    let required = parameters.required.as_ref();
+    let (properties, required) = schema_object_parts(parameters, "list_agents");
     assert!(properties.contains_key("path_prefix"));
     assert_eq!(required, None);
     let output_schema = output_schema
@@ -937,10 +932,7 @@ async fn view_image_tool_omits_detail_without_original_detail_feature() {
     let ToolSpec::Function(ResponsesApiTool { parameters, .. }) = &view_image.spec else {
         panic!("view_image should be a function tool");
     };
-    let properties = parameters
-        .properties
-        .as_ref()
-        .expect("view_image should use an object schema");
+    let (properties, _) = schema_object_parts(parameters, "view_image");
     assert!(!properties.contains_key("detail"));
 }
 
@@ -973,15 +965,12 @@ async fn view_image_tool_includes_detail_with_original_detail_feature() {
     let ToolSpec::Function(ResponsesApiTool { parameters, .. }) = &view_image.spec else {
         panic!("view_image should be a function tool");
     };
-    let properties = parameters
-        .properties
-        .as_ref()
-        .expect("view_image should use an object schema");
+    let (properties, _) = schema_object_parts(parameters, "view_image");
     assert!(properties.contains_key("detail"));
-    let Some(detail_schema) = properties.get("detail") else {
-        panic!("view_image detail should include a description");
-    };
-    let Some(description) = detail_schema.description.as_deref() else {
+    let Some(description) = properties
+        .get("detail")
+        .and_then(|schema| schema.description.as_ref())
+    else {
         panic!("view_image detail should include a description");
     };
     assert!(description.contains("only supported value is `original`"));

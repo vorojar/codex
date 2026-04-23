@@ -130,6 +130,7 @@ mod goal_display;
 mod history_cell;
 pub(crate) mod insert_history;
 pub use insert_history::insert_history_lines;
+mod iterm_fork_tab;
 mod key_hint;
 mod keymap;
 mod keymap_setup;

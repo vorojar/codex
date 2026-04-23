@@ -166,7 +166,6 @@ impl SlashCommand {
         match self {
             SlashCommand::New
             | SlashCommand::Resume
-            | SlashCommand::Fork
             | SlashCommand::Init
             | SlashCommand::Compact
             // | SlashCommand::Undo
@@ -192,6 +191,7 @@ impl SlashCommand {
             | SlashCommand::Mention
             | SlashCommand::Skills
             | SlashCommand::Status
+            | SlashCommand::Fork
             | SlashCommand::DebugConfig
             | SlashCommand::Ps
             | SlashCommand::Stop
