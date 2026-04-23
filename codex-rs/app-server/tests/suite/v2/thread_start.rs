@@ -9,6 +9,7 @@ use codex_app_server_protocol::AskForApproval;
 use codex_app_server_protocol::JSONRPCError;
 use codex_app_server_protocol::JSONRPCMessage;
 use codex_app_server_protocol::JSONRPCResponse;
+use codex_app_server_protocol::McpServerStartupCompletedNotification;
 use codex_app_server_protocol::McpServerStartupState;
 use codex_app_server_protocol::McpServerStatusUpdatedNotification;
 use codex_app_server_protocol::RequestId;
@@ -557,6 +558,31 @@ async fn thread_start_emits_mcp_server_status_updated_notifications() -> Result<
             .is_some_and(|error| error.contains("MCP client for `optional_broken` failed to start")),
         "unexpected MCP startup error: {:?}",
         failed.error
+    );
+
+    let completed = timeout(
+        DEFAULT_READ_TIMEOUT,
+        mcp.read_stream_until_matching_notification(
+            "mcpServer/startup/completed",
+            |notification| notification.method == "mcpServer/startup/completed",
+        ),
+    )
+    .await??;
+    let completed: ServerNotification = completed.try_into()?;
+    let ServerNotification::McpServerStartupCompleted(completed) = completed else {
+        anyhow::bail!("unexpected notification variant");
+    };
+    assert_eq!(
+        completed,
+        McpServerStartupCompletedNotification {
+            ready: Vec::new(),
+            failed: vec![codex_app_server_protocol::McpServerStartupFailure {
+                server: "optional_broken".to_string(),
+                error: "handshaking with MCP server failed: connection closed: initialize response"
+                    .to_string(),
+            }],
+            cancelled: Vec::new(),
+        }
     );
 
     Ok(())

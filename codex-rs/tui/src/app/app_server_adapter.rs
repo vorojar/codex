@@ -166,7 +166,8 @@ impl App {
                     self.chat_widget.dismiss_app_server_request(&request);
                 }
             }
-            ServerNotification::McpServerStatusUpdated(_) => {
+            ServerNotification::McpServerStatusUpdated(_)
+            | ServerNotification::McpServerStartupCompleted(_) => {
                 self.refresh_mcp_startup_expected_servers_from_config();
             }
             ServerNotification::AccountRateLimitsUpdated(notification) => {
@@ -437,6 +438,7 @@ fn server_notification_thread_target(
         ServerNotification::GuardianWarning(notification) => Some(notification.thread_id.as_str()),
         ServerNotification::SkillsChanged(_)
         | ServerNotification::McpServerStatusUpdated(_)
+        | ServerNotification::McpServerStartupCompleted(_)
         | ServerNotification::McpServerOauthLoginCompleted(_)
         | ServerNotification::AccountUpdated(_)
         | ServerNotification::AccountRateLimitsUpdated(_)

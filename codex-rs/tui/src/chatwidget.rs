@@ -6921,6 +6921,9 @@ impl ChatWidget {
             ServerNotification::McpServerStatusUpdated(notification) => {
                 self.on_mcp_server_status_updated(notification)
             }
+            ServerNotification::McpServerStartupCompleted(notification) => {
+                self.on_mcp_server_startup_completed(notification)
+            }
             ServerNotification::ItemGuardianApprovalReviewStarted(notification) => {
                 self.on_guardian_review_notification(
                     notification.review_id,

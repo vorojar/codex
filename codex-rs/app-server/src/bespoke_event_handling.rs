@@ -54,6 +54,8 @@ use codex_app_server_protocol::ItemStartedNotification;
 use codex_app_server_protocol::McpServerElicitationAction;
 use codex_app_server_protocol::McpServerElicitationRequestParams;
 use codex_app_server_protocol::McpServerElicitationRequestResponse;
+use codex_app_server_protocol::McpServerStartupCompletedNotification;
+use codex_app_server_protocol::McpServerStartupFailure as V2McpServerStartupFailure;
 use codex_app_server_protocol::McpServerStartupState;
 use codex_app_server_protocol::McpServerStatusUpdatedNotification;
 use codex_app_server_protocol::McpToolCallError;
@@ -303,6 +305,27 @@ pub(crate) async fn apply_bespoke_event_handling(
                 }
                 outgoing
                     .send_server_notification(ServerNotification::GuardianWarning(notification))
+                    .await;
+            }
+        }
+        EventMsg::McpStartupComplete(complete) => {
+            if let ApiVersion::V2 = api_version {
+                let notification = McpServerStartupCompletedNotification {
+                    ready: complete.ready,
+                    failed: complete
+                        .failed
+                        .into_iter()
+                        .map(|failure| V2McpServerStartupFailure {
+                            server: failure.server,
+                            error: failure.error,
+                        })
+                        .collect(),
+                    cancelled: complete.cancelled,
+                };
+                outgoing
+                    .send_server_notification(ServerNotification::McpServerStartupCompleted(
+                        notification,
+                    ))
                     .await;
             }
         }

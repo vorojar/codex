@@ -1113,6 +1113,7 @@ Because audio is intentionally separate from `ThreadItem`, clients can opt out o
 ### MCP server startup events
 
 - `mcpServer/startupStatus/updated` — `{ name, status, error }` when app-server observes an MCP server startup transition. `status` is one of `starting`, `ready`, `failed`, or `cancelled`. `error` is `null` except for `failed`.
+- `mcpServer/startup/completed` — `{ ready, failed, cancelled }` when app-server observes the end of an MCP startup round. `failed` entries include `{ server, error }`.
 
 ### Turn events
 
@@ -1563,6 +1564,7 @@ Codex supports these authentication modes. The current mode is surfaced in `acco
 - `account/sendAddCreditsNudgeEmail` — ask ChatGPT to email the workspace owner about depleted credits or a reached usage limit.
 - `mcpServer/oauthLogin/completed` (notify) — emitted after a `mcpServer/oauth/login` flow finishes for a server; payload includes `{ name, success, error? }`.
 - `mcpServer/startupStatus/updated` (notify) — emitted when a configured MCP server's startup status changes for a loaded thread; payload includes `{ name, status, error }` where `status` is `starting`, `ready`, `failed`, or `cancelled`.
+- `mcpServer/startup/completed` (notify) — emitted when a loaded thread's MCP startup round finishes; payload includes `{ ready, failed, cancelled }`, where `failed` entries include `{ server, error }`.
 
 ### 1) Check auth state
 

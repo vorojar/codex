@@ -1,4 +1,5 @@
 use super::*;
+use codex_app_server_protocol::McpServerStartupCompletedNotification;
 use codex_protocol::protocol::McpStartupCompleteEvent;
 use codex_protocol::protocol::McpStartupStatus;
 use codex_protocol::protocol::McpStartupUpdateEvent;
@@ -146,6 +147,118 @@ async fn app_server_mcp_startup_failure_renders_warning_history() {
         "app_server_mcp_startup_failure_renders_warning_history",
         normalize_snapshot_paths(term.backend().vt100().screen().contents())
     );
+}
+
+#[tokio::test]
+async fn app_server_mcp_startup_completed_settles_active_startup_round() {
+    let (mut chat, mut rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
+    chat.show_welcome_banner = false;
+    chat.set_mcp_startup_expected_servers(["codex_apps".to_string()]);
+
+    chat.handle_server_notification(
+        ServerNotification::McpServerStatusUpdated(McpServerStatusUpdatedNotification {
+            name: "codex_apps".to_string(),
+            status: McpServerStartupState::Starting,
+            error: None,
+        }),
+        /*replay_kind*/ None,
+    );
+
+    assert!(drain_insert_history(&mut rx).is_empty());
+    assert!(chat.bottom_pane.is_task_running());
+
+    chat.handle_server_notification(
+        ServerNotification::McpServerStartupCompleted(McpServerStartupCompletedNotification {
+            ready: vec!["codex_apps".to_string()],
+            failed: Vec::new(),
+            cancelled: Vec::new(),
+        }),
+        /*replay_kind*/ None,
+    );
+
+    assert!(drain_insert_history(&mut rx).is_empty());
+    assert!(!chat.bottom_pane.is_task_running());
+}
+
+#[tokio::test]
+async fn app_server_mcp_startup_completed_reports_missing_failure_update() {
+    let (mut chat, mut rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
+    chat.show_welcome_banner = false;
+    chat.set_mcp_startup_expected_servers(["alpha".to_string()]);
+
+    chat.handle_server_notification(
+        ServerNotification::McpServerStatusUpdated(McpServerStatusUpdatedNotification {
+            name: "alpha".to_string(),
+            status: McpServerStartupState::Starting,
+            error: None,
+        }),
+        /*replay_kind*/ None,
+    );
+
+    assert!(drain_insert_history(&mut rx).is_empty());
+    assert!(chat.bottom_pane.is_task_running());
+
+    chat.handle_server_notification(
+        ServerNotification::McpServerStartupCompleted(McpServerStartupCompletedNotification {
+            ready: Vec::new(),
+            failed: vec![codex_app_server_protocol::McpServerStartupFailure {
+                server: "alpha".to_string(),
+                error: "MCP client for `alpha` failed to start: handshake failed".to_string(),
+            }],
+            cancelled: Vec::new(),
+        }),
+        /*replay_kind*/ None,
+    );
+
+    let summary_text = drain_insert_history(&mut rx)
+        .iter()
+        .map(|lines| lines_to_single_string(lines))
+        .collect::<String>();
+    assert!(summary_text.contains("MCP client for `alpha` failed to start: handshake failed"));
+    assert!(summary_text.contains("MCP startup incomplete (failed: alpha)"));
+    assert!(!chat.bottom_pane.is_task_running());
+}
+
+#[tokio::test]
+async fn app_server_mcp_startup_completed_ignores_already_settled_round() {
+    let (mut chat, mut rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
+    chat.show_welcome_banner = false;
+    chat.set_mcp_startup_expected_servers(["alpha".to_string()]);
+
+    chat.handle_server_notification(
+        ServerNotification::McpServerStatusUpdated(McpServerStatusUpdatedNotification {
+            name: "alpha".to_string(),
+            status: McpServerStartupState::Starting,
+            error: None,
+        }),
+        /*replay_kind*/ None,
+    );
+    chat.handle_server_notification(
+        ServerNotification::McpServerStatusUpdated(McpServerStatusUpdatedNotification {
+            name: "alpha".to_string(),
+            status: McpServerStartupState::Ready,
+            error: None,
+        }),
+        /*replay_kind*/ None,
+    );
+
+    assert!(drain_insert_history(&mut rx).is_empty());
+    assert!(!chat.bottom_pane.is_task_running());
+
+    chat.handle_server_notification(
+        ServerNotification::McpServerStartupCompleted(McpServerStartupCompletedNotification {
+            ready: vec!["alpha".to_string()],
+            failed: vec![codex_app_server_protocol::McpServerStartupFailure {
+                server: "alpha".to_string(),
+                error: "late duplicate failure should not render".to_string(),
+            }],
+            cancelled: Vec::new(),
+        }),
+        /*replay_kind*/ None,
+    );
+
+    assert!(drain_insert_history(&mut rx).is_empty());
+    assert!(!chat.bottom_pane.is_task_running());
 }
 
 #[tokio::test]
