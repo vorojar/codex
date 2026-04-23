@@ -225,6 +225,7 @@ pub struct TestCodexBuilder {
     cloud_requirements: Option<CloudRequirementsLoader>,
     user_shell_override: Option<Shell>,
     exec_server_url: Option<String>,
+    session_source: SessionSource,
 }
 
 impl TestCodexBuilder {
@@ -283,6 +284,11 @@ impl TestCodexBuilder {
 
     pub fn with_exec_server_url(mut self, exec_server_url: impl Into<String>) -> Self {
         self.exec_server_url = Some(exec_server_url.into());
+        self
+    }
+
+    pub fn with_session_source(mut self, session_source: SessionSource) -> Self {
+        self.session_source = session_source;
         self
     }
 
@@ -428,7 +434,7 @@ impl TestCodexBuilder {
             ThreadManager::new(
                 &config,
                 codex_core::test_support::auth_manager_from_auth(auth.clone()),
-                SessionSource::Exec,
+                self.session_source.clone(),
                 config.model_catalog.clone(),
                 config.custom_models.clone(),
                 CollaborationModesConfig::default(),
@@ -436,11 +442,12 @@ impl TestCodexBuilder {
                 /*analytics_events_client*/ None,
             )
         } else {
-            codex_core::test_support::thread_manager_with_models_provider_and_home(
+            codex_core::test_support::thread_manager_with_models_provider_and_home_and_source(
                 auth.clone(),
                 config.model_provider.clone(),
                 config.codex_home.to_path_buf(),
                 Arc::clone(&environment_manager),
+                self.session_source.clone(),
             )
         };
         let thread_manager = Arc::new(thread_manager);
@@ -1023,6 +1030,7 @@ pub fn test_codex() -> TestCodexBuilder {
         cloud_requirements: None,
         user_shell_override: None,
         exec_server_url: None,
+        session_source: SessionSource::Exec,
     }
 }
 

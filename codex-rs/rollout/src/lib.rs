@@ -10,6 +10,7 @@ pub(crate) mod metadata;
 pub(crate) mod policy;
 pub(crate) mod recorder;
 pub(crate) mod session_index;
+pub(crate) mod session_state;
 pub mod state_db;
 
 pub(crate) mod default_client {
@@ -63,6 +64,14 @@ pub use session_index::append_thread_name;
 pub use session_index::find_thread_meta_by_name_str;
 pub use session_index::find_thread_name_by_id;
 pub use session_index::find_thread_names_by_ids;
+pub use session_state::SessionStateBackgroundExecProcess;
+pub use session_state::SessionStateOwnerWatchdogs;
+pub use session_state::SessionStateSidecar;
+pub use session_state::SessionStateTracker;
+pub use session_state::move_session_state_sidecar_if_present;
+pub use session_state::refresh_interactive_session_state_sidecar;
+pub use session_state::session_state_sidecar_path;
+pub use session_state::write_session_state_sidecar;
 pub use state_db::StateDbHandle;
 
 #[cfg(test)]

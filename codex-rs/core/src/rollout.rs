@@ -7,6 +7,9 @@ pub use codex_rollout::RolloutRecorder;
 pub use codex_rollout::RolloutRecorderParams;
 pub use codex_rollout::SESSIONS_SUBDIR;
 pub use codex_rollout::SessionMeta;
+pub use codex_rollout::SessionStateBackgroundExecProcess;
+pub use codex_rollout::SessionStateSidecar;
+pub use codex_rollout::SessionStateTracker;
 pub use codex_rollout::SortDirection;
 pub use codex_rollout::ThreadItem;
 pub use codex_rollout::ThreadSortKey;
@@ -20,11 +23,15 @@ pub use codex_rollout::find_thread_meta_by_name_str;
 pub use codex_rollout::find_thread_name_by_id;
 pub use codex_rollout::find_thread_names_by_ids;
 pub use codex_rollout::find_thread_path_by_id_str;
+pub use codex_rollout::move_session_state_sidecar_if_present;
 pub use codex_rollout::parse_cursor;
 pub use codex_rollout::read_head_for_summary;
 pub use codex_rollout::read_session_meta_line;
+pub use codex_rollout::refresh_interactive_session_state_sidecar;
 pub use codex_rollout::resolve_fork_reference_rollout_path;
 pub use codex_rollout::rollout_date_parts;
+pub use codex_rollout::session_state_sidecar_path;
+pub use codex_rollout::write_session_state_sidecar;
 
 impl codex_rollout::RolloutConfigView for Config {
     fn codex_home(&self) -> &std::path::Path {

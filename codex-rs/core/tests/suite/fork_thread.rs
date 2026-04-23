@@ -329,9 +329,9 @@ async fn fork_thread_session_configured_preserves_parent_and_history() {
                 text: "seed".to_string(),
                 text_elements: Vec::new(),
             }],
+            environments: None,
             final_output_json_schema: None,
             responsesapi_client_metadata: None,
-            environments: None,
         })
         .await
         .unwrap();

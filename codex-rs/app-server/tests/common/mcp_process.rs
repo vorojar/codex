@@ -94,6 +94,9 @@ use codex_app_server_protocol::WindowsSandboxSetupStartParams;
 use codex_login::default_client::CODEX_INTERNAL_ORIGINATOR_OVERRIDE_ENV_VAR;
 use tokio::process::Command;
 
+const MANAGED_PREFERENCES_BASE64_ENV_VAR: &str = "CODEX_APP_SERVER_MANAGED_PREFERENCES_BASE64";
+const MANAGED_REQUIREMENTS_BASE64_ENV_VAR: &str = "CODEX_APP_SERVER_MANAGED_REQUIREMENTS_BASE64";
+
 pub struct McpProcess {
     next_request_id: AtomicI64,
     /// Retain this child process until the client is dropped. The Tokio runtime
@@ -175,6 +178,8 @@ impl McpProcess {
             "CODEX_APP_SERVER_MANAGED_CONFIG_PATH",
             codex_home.join("managed_config.toml"),
         );
+        cmd.env(MANAGED_PREFERENCES_BASE64_ENV_VAR, "");
+        cmd.env(MANAGED_REQUIREMENTS_BASE64_ENV_VAR, "");
         cmd.env_remove(CODEX_INTERNAL_ORIGINATOR_OVERRIDE_ENV_VAR);
         cmd.args(args);
 

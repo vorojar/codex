@@ -24,6 +24,7 @@ pub(crate) struct Session {
     pub(crate) active_turn: Mutex<Option<ActiveTurn>>,
     pub(super) mailbox: Mailbox,
     pub(super) mailbox_rx: Mutex<MailboxReceiver>,
+    pub(super) session_state_tracker: SessionStateTracker,
     pub(super) idle_pending_input: Mutex<Vec<ResponseInputItem>>, // TODO (jif) merge with mailbox!
     pub(crate) goal_runtime: GoalRuntimeState,
     pub(crate) guardian_review_session: GuardianReviewSessionManager,
@@ -861,6 +862,11 @@ impl Session {
                 watch::channel(false);
 
             let (mailbox, mailbox_rx) = Mailbox::new();
+            let session_state_tracker = SessionStateTracker::new(
+                rollout_path.clone(),
+                &session_configuration.session_source,
+                terminal_attachment(),
+            );
             let sess = Arc::new(Session {
                 conversation_id,
                 tx_event: tx_event.clone(),
@@ -874,6 +880,7 @@ impl Session {
                 active_turn: Mutex::new(None),
                 mailbox,
                 mailbox_rx: Mutex::new(mailbox_rx),
+                session_state_tracker,
                 idle_pending_input: Mutex::new(Vec::new()),
                 goal_runtime: GoalRuntimeState::new(),
                 guardian_review_session: GuardianReviewSessionManager::default(),
@@ -885,6 +892,9 @@ impl Session {
             if let Some(network_policy_decider_session) = network_policy_decider_session {
                 let mut guard = network_policy_decider_session.write().await;
                 *guard = Arc::downgrade(&sess);
+            }
+            if let Err(err) = sess.session_state_tracker.write_current() {
+                warn!("failed to write session state sidecar: {err:#}");
             }
             // Dispatch the SessionConfiguredEvent first and then report any errors.
             // If resuming, include converted initial messages in the payload so UIs can render them immediately.

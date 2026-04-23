@@ -5034,6 +5034,20 @@ impl CodexMessageProcessor {
                     thread
                 };
 
+            if let Some(initial_messages) = session_configured.initial_messages.as_deref() {
+                if thread.preview.is_empty()
+                    && let Some(preview) = preview_from_event_messages(initial_messages)
+                {
+                    thread.preview = preview;
+                }
+                if include_turns && thread.turns.is_empty() {
+                    let turns = turns_from_event_messages(initial_messages);
+                    if !turns.is_empty() {
+                        thread.turns = turns;
+                    }
+                }
+            }
+
             self.thread_watch_manager
                 .upsert_thread_silently(thread.clone())
                 .await;
@@ -9400,11 +9414,7 @@ fn extract_conversation_summary(
             Some(TurnItem::UserMessage(user)) => Some(user.message()),
             _ => None,
         })?;
-
-    let preview = match preview.find(USER_MESSAGE_BEGIN) {
-        Some(idx) => preview[idx + USER_MESSAGE_BEGIN.len()..].trim(),
-        None => preview.as_str(),
-    };
+    let preview = strip_user_message_prefix(preview.as_str());
 
     let timestamp = if session_meta.timestamp.is_empty() {
         None
@@ -9431,6 +9441,34 @@ fn extract_conversation_summary(
         source: session_meta.source.clone(),
         git_info,
     })
+}
+
+fn strip_user_message_prefix(text: &str) -> &str {
+    match text.find(USER_MESSAGE_BEGIN) {
+        Some(idx) => text[idx + USER_MESSAGE_BEGIN.len()..].trim(),
+        None => text.trim(),
+    }
+}
+
+fn preview_from_event_messages(initial_messages: &[EventMsg]) -> Option<String> {
+    initial_messages.iter().find_map(|message| {
+        if let EventMsg::UserMessage(user) = message {
+            let preview = strip_user_message_prefix(user.message.as_str());
+            if !preview.is_empty() {
+                return Some(preview.to_string());
+            }
+        }
+        None
+    })
+}
+
+fn turns_from_event_messages(initial_messages: &[EventMsg]) -> Vec<Turn> {
+    let rollout_items: Vec<RolloutItem> = initial_messages
+        .iter()
+        .cloned()
+        .map(RolloutItem::EventMsg)
+        .collect();
+    build_turns_from_rollout_items(&rollout_items)
 }
 
 fn map_git_info(git_info: &CoreGitInfo) -> ConversationGitInfo {

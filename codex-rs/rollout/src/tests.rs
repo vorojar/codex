@@ -284,6 +284,34 @@ async fn find_thread_path_repairs_missing_db_row_after_filesystem_fallback() {
     assert_state_db_rollout_path(home, thread_id, Some(fs_rollout_path.as_path())).await;
 }
 
+#[tokio::test]
+async fn find_thread_path_ignores_session_state_sidecar_matches() {
+    let temp = TempDir::new().unwrap();
+    let home = temp.path();
+    let uuid = Uuid::from_u128(304);
+    let ts = "2025-01-03T13-00-00";
+    write_session_file(
+        home,
+        ts,
+        uuid,
+        /*num_records*/ 1,
+        Some(SessionSource::Cli),
+    )
+    .unwrap();
+    let rollout_path = home.join(format!("sessions/2025/01/03/rollout-{ts}-{uuid}.jsonl"));
+    let sidecar_path = crate::session_state_sidecar_path(&rollout_path);
+    std::fs::write(
+        sidecar_path,
+        r#"{"schema_version":1,"updated_at":"2026-03-09T13:03:00Z","terminal":null}"#,
+    )
+    .unwrap();
+
+    let found = crate::find_thread_path_by_id_str(home, &uuid.to_string())
+        .await
+        .expect("lookup should succeed");
+    assert_eq!(found, Some(rollout_path));
+}
+
 #[test]
 fn rollout_date_parts_extracts_directory_components() {
     let file_name = OsStr::new("rollout-2025-03-01T09-00-00-123.jsonl");

@@ -47,6 +47,18 @@ pub(super) async fn archive_thread(
             message: format!("failed to archive thread: {err}"),
         }
     })?;
+    if let Err(err) = codex_rollout::move_session_state_sidecar_if_present(
+        canonical_rollout_path.as_path(),
+        archived_path.as_path(),
+    )
+    .await
+    {
+        tracing::warn!(
+            "failed to move session state sidecar from {} to {}: {err}",
+            canonical_rollout_path.display(),
+            archived_path.display()
+        );
+    }
 
     if let Some(ctx) = codex_rollout::state_db::get_state_db(&store.config).await {
         let _ = ctx
@@ -62,6 +74,7 @@ mod tests {
     use codex_protocol::ThreadId;
     use codex_protocol::protocol::SessionSource;
     use codex_rollout::ARCHIVED_SESSIONS_SUBDIR;
+    use codex_rollout::session_state_sidecar_path;
     use pretty_assertions::assert_eq;
     use tempfile::TempDir;
     use uuid::Uuid;
@@ -82,6 +95,8 @@ mod tests {
         let thread_id = ThreadId::from_string(&uuid.to_string()).expect("valid thread id");
         let active_path =
             write_session_file(home.path(), "2025-01-03T12-00-00", uuid).expect("session file");
+        let active_sidecar_path = session_state_sidecar_path(active_path.as_path());
+        std::fs::write(active_sidecar_path.as_path(), b"sidecar").expect("sidecar file");
 
         store
             .archive_thread(ArchiveThreadParams { thread_id })
@@ -94,6 +109,8 @@ mod tests {
             .join(ARCHIVED_SESSIONS_SUBDIR)
             .join(active_path.file_name().expect("file name"));
         assert!(archived_path.exists());
+        assert!(!active_sidecar_path.exists());
+        assert!(session_state_sidecar_path(archived_path.as_path()).exists());
 
         let archived = store
             .list_threads(ListThreadsParams {

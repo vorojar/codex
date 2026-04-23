@@ -125,7 +125,7 @@ pub(crate) fn spawn_exit_watcher(
         let duration = Instant::now().saturating_duration_since(started_at);
         if let Some(message) = process.failure_message() {
             emit_failed_exec_end_for_unified_exec(
-                session_ref,
+                Arc::clone(&session_ref),
                 turn_ref,
                 call_id,
                 command,
@@ -140,7 +140,7 @@ pub(crate) fn spawn_exit_watcher(
         } else {
             let exit_code = process.exit_code().unwrap_or(-1);
             emit_exec_end_for_unified_exec(
-                session_ref,
+                Arc::clone(&session_ref),
                 turn_ref,
                 call_id,
                 command,
@@ -153,6 +153,11 @@ pub(crate) fn spawn_exit_watcher(
             )
             .await;
         }
+        session_ref
+            .services
+            .unified_exec_manager
+            .refresh_session_state_background_exec(&session_ref)
+            .await;
     });
 }
 

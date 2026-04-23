@@ -42,6 +42,7 @@ pub(crate) struct WatchdogRegistration {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct RemovedWatchdog {
+    pub(crate) owner_thread_id: ThreadId,
     pub(crate) target_thread_id: ThreadId,
     pub(crate) active_helper_id: Option<ThreadId>,
 }
@@ -131,6 +132,7 @@ impl WatchdogManager {
         for superseded_target in superseded_targets {
             if let Some(removed) = registrations.remove(&superseded_target) {
                 superseded.push(RemovedWatchdog {
+                    owner_thread_id: removed.registration.owner_thread_id,
                     target_thread_id: superseded_target,
                     active_helper_id: removed.active_helper_id,
                 });
@@ -501,6 +503,7 @@ impl WatchdogManager {
         registrations
             .remove(&target_thread_id)
             .map(|removed| RemovedWatchdog {
+                owner_thread_id: removed.registration.owner_thread_id,
                 target_thread_id,
                 active_helper_id: removed.active_helper_id,
             })
@@ -526,6 +529,14 @@ impl WatchdogManager {
             .collect()
     }
 
+    pub(crate) async fn active_count_for_owner(&self, owner_thread_id: ThreadId) -> usize {
+        let registrations = self.registrations.lock().await;
+        registrations
+            .values()
+            .filter(|entry| entry.registration.owner_thread_id == owner_thread_id)
+            .count()
+    }
+
     pub(crate) async fn take_for_owner(&self, owner_thread_id: ThreadId) -> Vec<RemovedWatchdog> {
         let mut registrations = self.registrations.lock().await;
         let removed_targets: Vec<ThreadId> = registrations
@@ -538,6 +549,7 @@ impl WatchdogManager {
         for removed_target in removed_targets {
             if let Some(entry) = registrations.remove(&removed_target) {
                 removed.push(RemovedWatchdog {
+                    owner_thread_id,
                     target_thread_id: removed_target,
                     active_helper_id: entry.active_helper_id,
                 });

@@ -17,6 +17,7 @@ use codex_app_server_protocol::TurnStartResponse;
 use codex_app_server_protocol::UserInput;
 use codex_core::find_archived_thread_path_by_id_str;
 use codex_core::find_thread_path_by_id_str;
+use codex_core::session_state_sidecar_path;
 use pretty_assertions::assert_eq;
 use serde_json::Value;
 use std::fs::FileTimes;
@@ -52,6 +53,7 @@ async fn thread_unarchive_moves_rollout_back_into_sessions_directory() -> Result
     let ThreadStartResponse { thread, .. } = to_response::<ThreadStartResponse>(start_resp)?;
 
     let rollout_path = thread.path.clone().expect("thread path");
+    let restored_sidecar_path = session_state_sidecar_path(&rollout_path);
 
     let turn_start_id = mcp
         .send_turn_start_request(TurnStartParams {
@@ -95,10 +97,16 @@ async fn thread_unarchive_moves_rollout_back_into_sessions_directory() -> Result
     let archived_path = find_archived_thread_path_by_id_str(codex_home.path(), &thread.id)
         .await?
         .expect("expected archived rollout path for thread id to exist");
+    let archived_sidecar_path = session_state_sidecar_path(&archived_path);
     let archived_path_display = archived_path.display();
     assert!(
         archived_path.exists(),
         "expected {archived_path_display} to exist"
+    );
+    assert!(
+        archived_sidecar_path.exists(),
+        "expected {} to exist",
+        archived_sidecar_path.display()
     );
     let old_time = SystemTime::UNIX_EPOCH + Duration::from_secs(1);
     let old_timestamp = old_time
@@ -162,6 +170,16 @@ async fn thread_unarchive_moves_rollout_back_into_sessions_directory() -> Result
     assert!(
         !archived_path.exists(),
         "expected archived rollout path {archived_path_display} to be moved"
+    );
+    assert!(
+        restored_sidecar_path.exists(),
+        "expected restored session state sidecar {} to exist",
+        restored_sidecar_path.display()
+    );
+    assert!(
+        !archived_sidecar_path.exists(),
+        "expected archived session state sidecar {} to be moved",
+        archived_sidecar_path.display()
     );
 
     Ok(())

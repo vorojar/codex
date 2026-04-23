@@ -261,13 +261,13 @@ async fn submit_turn_and_wait_for_spawn_attempt_events(
             approval_policy: AskForApproval::Never,
             approvals_reviewer: None,
             sandbox_policy: SandboxPolicy::DangerFullAccess,
+            permission_profile: None,
             model: test.session_configured.model.clone(),
             effort: None,
             summary: None,
             service_tier: None,
             collaboration_mode: None,
             personality: None,
-            permission_profile: None,
             environments: None,
         })
         .await?;

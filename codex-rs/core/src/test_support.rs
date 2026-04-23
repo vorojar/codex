@@ -20,6 +20,7 @@ use codex_models_manager::test_support::get_model_offline_for_tests;
 use codex_protocol::config_types::CollaborationModeMask;
 use codex_protocol::openai_models::ModelInfo;
 use codex_protocol::openai_models::ModelPreset;
+use codex_protocol::protocol::SessionSource;
 use codex_thread_store::ThreadStore;
 use once_cell::sync::Lazy;
 
@@ -71,6 +72,22 @@ pub fn thread_manager_with_models_provider_and_home(
         provider,
         codex_home,
         environment_manager,
+    )
+}
+
+pub fn thread_manager_with_models_provider_and_home_and_source(
+    auth: CodexAuth,
+    provider: ModelProviderInfo,
+    codex_home: PathBuf,
+    environment_manager: Arc<EnvironmentManager>,
+    session_source: SessionSource,
+) -> ThreadManager {
+    ThreadManager::with_models_provider_and_home_and_source_for_tests(
+        auth,
+        provider,
+        codex_home,
+        environment_manager,
+        session_source,
     )
 }
 

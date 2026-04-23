@@ -105,11 +105,16 @@ async fn exec_command_with_tty(
     let started_at = Instant::now();
     let process_started_alive = !process.has_exited() && process.exit_code().is_none();
     if process_started_alive {
+        let started_at_wall = chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
         let entry = ProcessEntry {
             process: Arc::clone(&process),
             call_id: context.call_id.clone(),
             process_id,
             hook_command: cmd.to_string(),
+            command: command.clone(),
+            cwd: cwd.clone(),
+            started_at: started_at_wall.clone(),
+            updated_at: started_at_wall,
             tty,
             network_approval: None,
             session: Arc::downgrade(session),

@@ -67,6 +67,18 @@ pub(super) async fn unarchive_thread(
             message: format!("failed to unarchive thread: {err}"),
         }
     })?;
+    if let Err(err) = codex_rollout::move_session_state_sidecar_if_present(
+        canonical_archived_path.as_path(),
+        restored_path.as_path(),
+    )
+    .await
+    {
+        tracing::warn!(
+            "failed to move session state sidecar from {} to {}: {err}",
+            canonical_archived_path.display(),
+            restored_path.display()
+        );
+    }
     touch_modified_time(restored_path.as_path()).map_err(|err| ThreadStoreError::Internal {
         message: format!("failed to update unarchived thread timestamp: {err}"),
     })?;
@@ -103,6 +115,7 @@ mod tests {
     use chrono::Utc;
     use codex_protocol::ThreadId;
     use codex_protocol::protocol::SessionSource;
+    use codex_rollout::session_state_sidecar_path;
     use pretty_assertions::assert_eq;
     use tempfile::TempDir;
     use uuid::Uuid;
@@ -121,6 +134,8 @@ mod tests {
         let thread_id = ThreadId::from_string(&uuid.to_string()).expect("valid thread id");
         let archived_path = write_archived_session_file(home.path(), "2025-01-03T13-00-00", uuid)
             .expect("archived session file");
+        let archived_sidecar_path = session_state_sidecar_path(archived_path.as_path());
+        std::fs::write(archived_sidecar_path.as_path(), b"sidecar").expect("sidecar file");
 
         let thread = store
             .unarchive_thread(ArchiveThreadParams { thread_id })
@@ -133,6 +148,8 @@ mod tests {
             .join("sessions/2025/01/03")
             .join(archived_path.file_name().expect("file name"));
         assert!(restored_path.exists());
+        assert!(!archived_sidecar_path.exists());
+        assert!(session_state_sidecar_path(restored_path.as_path()).exists());
         assert_eq!(thread.thread_id, thread_id);
         assert_eq!(thread.rollout_path, Some(restored_path));
         assert_eq!(thread.archived_at, None);

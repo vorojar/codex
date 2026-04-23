@@ -1287,7 +1287,7 @@ async fn find_thread_path_by_id_str_in_subdir(
     }
     // This is safe because we know the values are valid.
     #[allow(clippy::unwrap_used)]
-    let limit = NonZero::new(1).unwrap();
+    let limit = NonZero::new(8).unwrap();
     let options = file_search::FileSearchOptions {
         limit,
         compute_indices: false,
@@ -1298,7 +1298,11 @@ async fn find_thread_path_by_id_str_in_subdir(
     let results = file_search::run(id_str, vec![root], options, /*cancel_flag*/ None)
         .map_err(|e| io::Error::other(format!("file search failed: {e}")))?;
 
-    let found = results.matches.into_iter().next().map(|m| m.full_path());
+    let found = results
+        .matches
+        .into_iter()
+        .map(|matched| matched.full_path())
+        .find(|path| is_rollout_jsonl_path(path));
     if let Some(found_path) = found.as_ref() {
         tracing::debug!("state db missing rollout path for thread {id_str}");
         tracing::warn!(
@@ -1476,4 +1480,10 @@ pub fn rollout_date_parts(file_name: &OsStr) -> Option<(String, String, String)>
     let month = date.get(5..7)?.to_string();
     let day = date.get(8..10)?.to_string();
     Some((year, month, day))
+}
+
+fn is_rollout_jsonl_path(path: &Path) -> bool {
+    path.file_name()
+        .and_then(|value| value.to_str())
+        .is_some_and(|file_name| file_name.starts_with("rollout-") && file_name.ends_with(".jsonl"))
 }

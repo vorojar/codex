@@ -22,6 +22,7 @@ use codex_app_server_protocol::UserInput;
 use codex_core::ARCHIVED_SESSIONS_SUBDIR;
 use codex_core::find_archived_thread_path_by_id_str;
 use codex_core::find_thread_path_by_id_str;
+use codex_core::session_state_sidecar_path;
 use codex_protocol::ThreadId;
 use codex_state::DirectionalThreadSpawnEdgeStatus;
 use codex_state::StateRuntime;
@@ -57,10 +58,16 @@ async fn thread_archive_requires_materialized_rollout() -> Result<()> {
     assert!(!thread.id.is_empty());
 
     let rollout_path = thread.path.clone().expect("thread path");
+    let sidecar_path = session_state_sidecar_path(&rollout_path);
     assert!(
         !rollout_path.exists(),
         "fresh thread rollout should not exist yet at {}",
         rollout_path.display()
+    );
+    assert!(
+        sidecar_path.exists(),
+        "fresh thread sidecar should exist at {}",
+        sidecar_path.display()
     );
     assert!(
         find_thread_path_by_id_str(codex_home.path(), &thread.id)
@@ -151,6 +158,7 @@ async fn thread_archive_requires_materialized_rollout() -> Result<()> {
     // The archived file keeps the original filename (rollout-...-<id>.jsonl).
     let archived_rollout_path =
         archived_directory.join(rollout_path.file_name().expect("rollout file name"));
+    let archived_sidecar_path = session_state_sidecar_path(&archived_rollout_path);
     assert!(
         !rollout_path.exists(),
         "expected rollout path {} to be moved",
@@ -160,6 +168,16 @@ async fn thread_archive_requires_materialized_rollout() -> Result<()> {
         archived_rollout_path.exists(),
         "expected archived rollout path {} to exist",
         archived_rollout_path.display()
+    );
+    assert!(
+        !sidecar_path.exists(),
+        "expected session state sidecar {} to be moved",
+        sidecar_path.display()
+    );
+    assert!(
+        archived_sidecar_path.exists(),
+        "expected archived session state sidecar {} to exist",
+        archived_sidecar_path.display()
     );
 
     Ok(())

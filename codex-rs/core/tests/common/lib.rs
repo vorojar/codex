@@ -10,6 +10,7 @@ use tempfile::TempDir;
 
 use codex_config::CloudRequirementsLoader;
 use codex_config::ConfigRequirementsToml;
+use codex_config::LoaderOverrides;
 use codex_config::NetworkRequirementsToml;
 use codex_core::CodexThread;
 use codex_core::config::Config;
@@ -184,6 +185,7 @@ pub async fn load_default_config_for_test_with_cloud_requirements(
         .codex_home(codex_home.path().to_path_buf())
         .harness_overrides(default_test_overrides())
         .cloud_requirements(cloud_requirements)
+        .loader_overrides(hermetic_loader_overrides_for_tests(codex_home.path()))
         .build()
         .await
         .expect("defaults for test should always succeed")
@@ -200,6 +202,29 @@ pub fn managed_network_requirements_loader() -> CloudRequirementsLoader {
             ..Default::default()
         }))
     })
+}
+
+pub fn no_managed_config_for_tests() -> LoaderOverrides {
+    LoaderOverrides {
+        #[cfg(target_os = "macos")]
+        managed_preferences_base64: Some(String::new()),
+        macos_managed_config_requirements_base64: Some(String::new()),
+        ..Default::default()
+    }
+}
+
+pub fn hermetic_loader_overrides_for_tests(codex_home: &std::path::Path) -> LoaderOverrides {
+    let system_config_dir = codex_home.join("test-system-config");
+    LoaderOverrides {
+        system_config_path: Some(system_config_dir.join("config.toml")),
+        system_requirements_path: Some(system_config_dir.join("requirements.toml")),
+        managed_config_path: Some(system_config_dir.join("managed_config.toml")),
+        ignore_user_config: false,
+        ignore_user_and_project_exec_policy_rules: false,
+        #[cfg(target_os = "macos")]
+        managed_preferences_base64: Some(String::new()),
+        macos_managed_config_requirements_base64: Some(String::new()),
+    }
 }
 
 #[cfg(target_os = "linux")]

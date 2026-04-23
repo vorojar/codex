@@ -1,10 +1,12 @@
 use std::collections::HashMap;
 use std::ffi::OsStr;
 use std::fs;
+use std::path::Path;
 use std::sync::OnceLock;
 
 use anyhow::Context;
 use anyhow::Result;
+use codex_core::session_state_sidecar_path;
 use codex_exec_server::CreateDirectoryOptions;
 use codex_features::Feature;
 use codex_protocol::models::PermissionProfile;
@@ -15,6 +17,7 @@ use codex_protocol::protocol::ExecCommandSource;
 use codex_protocol::protocol::ExecCommandStatus;
 use codex_protocol::protocol::Op;
 use codex_protocol::protocol::SandboxPolicy;
+use codex_protocol::protocol::SessionSource;
 use codex_protocol::user_input::UserInput;
 use core_test_support::assert_regex_match;
 use core_test_support::process::process_is_alive;
@@ -50,6 +53,11 @@ fn extract_output_text(item: &Value) -> Option<&str> {
         Value::Object(obj) => obj.get("content").and_then(Value::as_str),
         _ => None,
     })
+}
+
+fn read_sidecar_json(path: &Path) -> Result<Value> {
+    let bytes = fs::read(path).with_context(|| format!("read sidecar {}", path.display()))?;
+    serde_json::from_slice(&bytes).context("parse session-state sidecar")
 }
 
 #[derive(Debug)]
@@ -2099,19 +2107,27 @@ async fn unified_exec_keeps_long_running_session_after_turn_end() -> Result<()> 
 
     let server = start_mock_server().await;
 
-    let mut builder = test_codex().with_config(|config| {
-        config.use_experimental_unified_exec_tool = true;
-        config
-            .features
-            .enable(Feature::UnifiedExec)
-            .expect("test config should allow feature update");
-    });
+    let mut builder = test_codex()
+        .with_session_source(SessionSource::Cli)
+        .with_config(|config| {
+            config.use_experimental_unified_exec_tool = true;
+            config
+                .features
+                .enable(Feature::UnifiedExec)
+                .expect("test config should allow feature update");
+        });
     let TestCodex {
         codex,
         cwd,
         session_configured,
         ..
     } = builder.build(&server).await?;
+    let sidecar_path = session_state_sidecar_path(
+        session_configured
+            .rollout_path
+            .as_deref()
+            .context("rollout path")?,
+    );
 
     let temp_dir = tempfile::tempdir()?;
     let pid_path = temp_dir.path().join("uexec_pid");
@@ -2168,7 +2184,7 @@ async fn unified_exec_keeps_long_running_session_after_turn_end() -> Result<()> 
     })
     .await;
 
-    let _begin_process_id = begin_event
+    let begin_process_id = begin_event
         .process_id
         .clone()
         .expect("expected process_id for long-running unified exec process");
@@ -2181,6 +2197,24 @@ async fn unified_exec_keeps_long_running_session_after_turn_end() -> Result<()> 
 
     wait_for_event(&codex, |event| matches!(event, EventMsg::TurnComplete(_))).await;
 
+    let sidecar = read_sidecar_json(&sidecar_path)?;
+    assert_eq!(sidecar["root_turn"]["status"], "completed");
+    let sidecar_processes = sidecar["background_exec"]["processes"]
+        .as_array()
+        .context("background_exec.processes")?;
+    assert_eq!(sidecar_processes.len(), 1);
+    assert_eq!(
+        sidecar_processes[0]["process_id"].as_str(),
+        Some(begin_process_id.as_str())
+    );
+    assert_eq!(sidecar_processes[0]["call_id"].as_str(), Some(call_id));
+    assert!(
+        sidecar_processes[0]["command"]
+            .as_str()
+            .context("sidecar background command")?
+            .contains("sleep 3000")
+    );
+
     assert!(
         process_is_alive(&pid)?,
         "expected unified exec process to remain alive after turn completion"
@@ -2189,6 +2223,8 @@ async fn unified_exec_keeps_long_running_session_after_turn_end() -> Result<()> 
     codex.submit(Op::Shutdown).await?;
     wait_for_event(&codex, |event| matches!(event, EventMsg::ShutdownComplete)).await;
     wait_for_process_exit(&pid).await?;
+    let sidecar = read_sidecar_json(&sidecar_path)?;
+    assert_eq!(sidecar["background_exec"]["processes"], json!([]));
 
     Ok(())
 }

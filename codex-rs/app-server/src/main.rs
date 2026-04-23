@@ -15,6 +15,11 @@ use std::path::PathBuf;
 // managed config file without writing to /etc.
 const MANAGED_CONFIG_PATH_ENV_VAR: &str = "CODEX_APP_SERVER_MANAGED_CONFIG_PATH";
 const DISABLE_MANAGED_CONFIG_ENV_VAR: &str = "CODEX_APP_SERVER_DISABLE_MANAGED_CONFIG";
+// Debug-only test hooks: let integration tests isolate themselves from
+// machine-specific managed preferences and requirements.
+#[cfg(target_os = "macos")]
+const MANAGED_PREFERENCES_BASE64_ENV_VAR: &str = "CODEX_APP_SERVER_MANAGED_PREFERENCES_BASE64";
+const MANAGED_REQUIREMENTS_BASE64_ENV_VAR: &str = "CODEX_APP_SERVER_MANAGED_REQUIREMENTS_BASE64";
 
 #[derive(Debug, Parser)]
 struct AppServerArgs {
@@ -52,9 +57,18 @@ fn main() -> anyhow::Result<()> {
         let loader_overrides = if disable_managed_config_from_debug_env() {
             LoaderOverrides::without_managed_config_for_tests()
         } else {
-            managed_config_path_from_debug_env()
+            let mut loader_overrides = managed_config_path_from_debug_env()
                 .map(LoaderOverrides::with_managed_config_path_for_tests)
-                .unwrap_or_default()
+                .unwrap_or_default();
+            #[cfg(target_os = "macos")]
+            if let Some(value) = managed_string_from_debug_env(MANAGED_PREFERENCES_BASE64_ENV_VAR) {
+                loader_overrides.managed_preferences_base64 = Some(value);
+            }
+            if let Some(value) = managed_string_from_debug_env(MANAGED_REQUIREMENTS_BASE64_ENV_VAR)
+            {
+                loader_overrides.macos_managed_config_requirements_base64 = Some(value);
+            }
+            loader_overrides
         };
         let transport = args.listen;
         let session_source = args.session_source;
@@ -100,6 +114,17 @@ fn managed_config_path_from_debug_env() -> Option<PathBuf> {
             } else {
                 Some(PathBuf::from(value))
             };
+        }
+    }
+
+    None
+}
+
+fn managed_string_from_debug_env(name: &str) -> Option<String> {
+    #[cfg(debug_assertions)]
+    {
+        if let Ok(value) = std::env::var(name) {
+            return Some(value);
         }
     }
 

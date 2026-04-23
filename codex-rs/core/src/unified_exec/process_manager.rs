@@ -14,8 +14,10 @@ use tokio_util::sync::CancellationToken;
 use crate::exec_env::CODEX_THREAD_ID_ENV_VAR;
 use crate::exec_env::create_env;
 use crate::exec_policy::ExecApprovalRequest;
+use crate::rollout::SessionStateBackgroundExecProcess;
 use crate::sandboxing::ExecRequest;
 use crate::sandboxing::ExecServerEnvConfig;
+use crate::session::session::Session;
 use crate::tools::context::ExecCommandToolOutput;
 use crate::tools::events::ToolEmitter;
 use crate::tools::events::ToolEventCtx;
@@ -362,7 +364,11 @@ impl UnifiedExecProcessManager {
             store.remove(process_id)
         };
         if let Some(entry) = removed {
+            let session = entry.session.upgrade();
             unregister_network_approval_for_entry(&entry).await;
+            if let Some(session) = session {
+                self.refresh_session_state_background_exec(&session).await;
+            }
         }
     }
 
@@ -739,7 +745,7 @@ impl UnifiedExecProcessManager {
     }
 
     async fn refresh_process_state(&self, process_id: i32) -> ProcessStatus {
-        {
+        let status = {
             let mut store = self.process_store.lock().await;
             let Some(entry) = store.processes.get(&process_id) else {
                 return ProcessStatus::Unknown;
@@ -763,7 +769,14 @@ impl UnifiedExecProcessManager {
                     process_id,
                 }
             }
+        };
+        if let ProcessStatus::Exited { entry, .. } = &status {
+            unregister_network_approval_for_entry(entry).await;
+            if let Some(session) = entry.session.upgrade() {
+                self.refresh_session_state_background_exec(&session).await;
+            }
         }
+        status
     }
 
     async fn prepare_process_handles(
@@ -776,6 +789,7 @@ impl UnifiedExecProcessManager {
             .get_mut(&process_id)
             .ok_or(UnifiedExecError::UnknownProcessId { process_id })?;
         entry.last_used = Instant::now();
+        entry.updated_at = session_state_timestamp();
         let OutputHandles {
             output_buffer,
             output_notify,
@@ -819,11 +833,16 @@ impl UnifiedExecProcessManager {
         network_approval: Option<DeferredNetworkApproval>,
         transcript: Arc<tokio::sync::Mutex<HeadTailBuffer>>,
     ) {
+        let started_at_wall = session_state_timestamp();
         let entry = ProcessEntry {
             process: Arc::clone(&process),
             call_id: context.call_id.clone(),
             process_id,
             hook_command,
+            command: command.to_vec(),
+            cwd: cwd.clone(),
+            started_at: started_at_wall.clone(),
+            updated_at: started_at_wall,
             tty,
             network_approval,
             session: Arc::downgrade(&context.session),
@@ -838,9 +857,18 @@ impl UnifiedExecProcessManager {
         // prune_processes_if_needed runs while holding process_store; do async
         // network-approval cleanup only after dropping that lock.
         if let Some(pruned_entry) = pruned_entry {
+            let pruned_session = pruned_entry.session.upgrade();
             unregister_network_approval_for_entry(&pruned_entry).await;
             pruned_entry.process.terminate();
+            if let Some(pruned_session) = pruned_session
+                && !Arc::ptr_eq(&pruned_session, &context.session)
+            {
+                self.refresh_session_state_background_exec(&pruned_session)
+                    .await;
+            }
         }
+        self.refresh_session_state_background_exec(&context.session)
+            .await;
 
         if number_processes >= WARNING_UNIFIED_EXEC_PROCESSES {
             context
@@ -1253,11 +1281,62 @@ impl UnifiedExecProcessManager {
             entries
         };
 
+        let sessions = entries
+            .iter()
+            .filter_map(|entry| entry.session.upgrade())
+            .collect::<Vec<_>>();
+
         for entry in entries {
             unregister_network_approval_for_entry(&entry).await;
             entry.process.terminate();
         }
+
+        for session in sessions {
+            self.refresh_session_state_background_exec(&session).await;
+        }
     }
+
+    pub(crate) async fn refresh_session_state_background_exec(&self, session: &Arc<Session>) {
+        let processes = self.session_state_background_processes(session).await;
+        session.set_session_state_background_exec_processes(processes);
+    }
+
+    async fn session_state_background_processes(
+        &self,
+        session: &Arc<Session>,
+    ) -> Vec<SessionStateBackgroundExecProcess> {
+        let store = self.process_store.lock().await;
+        store
+            .processes
+            .values()
+            .filter(|entry| {
+                !entry.process.has_exited()
+                    && entry
+                        .session
+                        .upgrade()
+                        .is_some_and(|entry_session| Arc::ptr_eq(&entry_session, session))
+            })
+            .map(ProcessEntry::session_state_background_exec_process)
+            .collect()
+    }
+}
+
+impl ProcessEntry {
+    fn session_state_background_exec_process(&self) -> SessionStateBackgroundExecProcess {
+        SessionStateBackgroundExecProcess {
+            process_id: self.process_id.to_string(),
+            call_id: self.call_id.clone(),
+            command: self.command.join(" "),
+            cwd: self.cwd.to_path_buf(),
+            started_at: self.started_at.clone(),
+            updated_at: self.updated_at.clone(),
+            tty: self.tty,
+        }
+    }
+}
+
+fn session_state_timestamp() -> String {
+    chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true)
 }
 
 enum ProcessStatus {

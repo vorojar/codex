@@ -39,6 +39,8 @@ use crate::installation_id::resolve_installation_id;
 use crate::parse_turn_item;
 use crate::path_utils::normalize_for_native_workdir;
 use crate::realtime_conversation::RealtimeConversationManager;
+use crate::rollout::SessionStateBackgroundExecProcess;
+use crate::rollout::SessionStateTracker;
 use crate::rollout::find_thread_name_by_id;
 use crate::session_prefix::format_subagent_notification_message;
 use crate::skills::SkillRenderSideEffects;
@@ -130,6 +132,7 @@ use codex_rollout_trace::ThreadStartedTraceMetadata;
 use codex_rollout_trace::ThreadTraceContext;
 use codex_sandboxing::policy_transforms::intersect_permission_profiles;
 use codex_shell_command::parse_command::parse_command;
+use codex_terminal_detection::terminal_attachment;
 use codex_terminal_detection::user_agent;
 use codex_thread_store::CreateThreadParams;
 use codex_thread_store::LiveThread;
@@ -1633,6 +1636,7 @@ impl Session {
         self.services
             .rollout_thread_trace
             .record_tool_call_event(turn_context.sub_id.clone(), &legacy_source);
+        self.note_session_state_event(turn_context, &legacy_source);
         let event = Event {
             id: turn_context.sub_id.clone(),
             msg,
@@ -1652,6 +1656,47 @@ impl Session {
                 msg: legacy,
             };
             self.send_event_raw(legacy_event).await;
+        }
+    }
+
+    fn note_session_state_event(&self, turn_context: &TurnContext, msg: &EventMsg) {
+        let result = match msg {
+            EventMsg::TurnStarted(_) => self
+                .session_state_tracker
+                .note_root_turn_started(&turn_context.sub_id),
+            EventMsg::TurnComplete(_) => self
+                .session_state_tracker
+                .note_root_turn_completed(&turn_context.sub_id),
+            EventMsg::TurnAborted(event) => self
+                .session_state_tracker
+                .note_root_turn_aborted(event.turn_id.as_deref().unwrap_or(&turn_context.sub_id)),
+            _ => self
+                .session_state_tracker
+                .note_root_turn_observed(&turn_context.sub_id),
+        };
+        if let Err(err) = result {
+            warn!("failed to update session state sidecar: {err:#}");
+        }
+    }
+
+    pub(crate) fn set_session_state_background_exec_processes(
+        &self,
+        processes: Vec<SessionStateBackgroundExecProcess>,
+    ) {
+        if let Err(err) = self
+            .session_state_tracker
+            .set_background_exec_processes(processes)
+        {
+            warn!("failed to update background exec session state sidecar: {err:#}");
+        }
+    }
+
+    pub(crate) fn set_session_state_owner_watchdog_count(&self, active_count: usize) {
+        if let Err(err) = self
+            .session_state_tracker
+            .set_owner_watchdog_count(active_count)
+        {
+            warn!("failed to update owner watchdog session state sidecar: {err:#}");
         }
     }
 

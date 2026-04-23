@@ -55,6 +55,18 @@ fn terminal_info(
     }
 }
 
+fn terminal_attachment(
+    provider: TerminalAttachmentProvider,
+    session_id: Option<&str>,
+    tty: Option<&str>,
+) -> TerminalAttachment {
+    TerminalAttachment {
+        provider,
+        session_id: session_id.map(ToString::to_string),
+        tty: tty.map(ToString::to_string),
+    }
+}
+
 #[test]
 fn detects_term_program() {
     let env = FakeEnvironment::new()
@@ -163,6 +175,41 @@ fn detects_iterm2() {
         "iTerm.app",
         "iterm_session_id_user_agent"
     );
+}
+
+#[test]
+fn terminal_attachment_detects_iterm2_session_id_and_tty() {
+    let env = FakeEnvironment::new().with_var("ITERM_SESSION_ID", "w0t1p0");
+    let attachment = detect_terminal_attachment_from_env(&env, Some("/dev/ttys015".to_string()));
+    assert_eq!(
+        attachment,
+        Some(terminal_attachment(
+            TerminalAttachmentProvider::Iterm2,
+            Some("w0t1p0"),
+            Some("/dev/ttys015"),
+        ))
+    );
+}
+
+#[test]
+fn terminal_attachment_preserves_tty_without_provider_session_id() {
+    let env = FakeEnvironment::new().with_var("TERM_PROGRAM", "vscode");
+    let attachment = detect_terminal_attachment_from_env(&env, Some("/dev/pts/3".to_string()));
+    assert_eq!(
+        attachment,
+        Some(terminal_attachment(
+            TerminalAttachmentProvider::VsCode,
+            /*session_id*/ None,
+            Some("/dev/pts/3"),
+        ))
+    );
+}
+
+#[test]
+fn terminal_attachment_returns_none_without_attachment_data() {
+    let env = FakeEnvironment::new().with_var("TERM_PROGRAM", "Apple_Terminal");
+    let attachment = detect_terminal_attachment_from_env(&env, /*tty*/ None);
+    assert_eq!(attachment, None);
 }
 
 #[test]

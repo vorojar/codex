@@ -365,6 +365,22 @@ impl ThreadManager {
         codex_home: PathBuf,
         environment_manager: Arc<EnvironmentManager>,
     ) -> Self {
+        Self::with_models_provider_and_home_and_source_for_tests(
+            auth,
+            provider,
+            codex_home,
+            environment_manager,
+            SessionSource::Exec,
+        )
+    }
+
+    pub(crate) fn with_models_provider_and_home_and_source_for_tests(
+        auth: CodexAuth,
+        provider: ModelProviderInfo,
+        codex_home: PathBuf,
+        environment_manager: Arc<EnvironmentManager>,
+        session_source: SessionSource,
+    ) -> Self {
         set_thread_manager_test_mode_for_tests(/*enabled*/ true);
         let auth_manager = AuthManager::from_auth_for_testing(auth);
         let skills_codex_home = match AbsolutePathBuf::from_absolute_path_checked(&codex_home) {
@@ -372,7 +388,7 @@ impl ThreadManager {
             Err(err) => panic!("test codex_home should be absolute: {err}"),
         };
         let (thread_created_tx, _) = broadcast::channel(THREAD_CREATED_CHANNEL_CAPACITY);
-        let restriction_product = SessionSource::Exec.restriction_product();
+        let restriction_product = session_source.restriction_product();
         let plugins_manager = Arc::new(PluginsManager::new_with_restriction_product(
             codex_home.clone(),
             restriction_product,
@@ -401,7 +417,7 @@ impl ThreadManager {
                 mcp_manager,
                 skills_watcher,
                 auth_manager,
-                session_source: SessionSource::Exec,
+                session_source,
                 analytics_events_client: None,
                 ops_log: should_use_test_thread_manager_behavior()
                     .then(|| Arc::new(std::sync::Mutex::new(Vec::new()))),

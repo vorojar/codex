@@ -893,12 +893,14 @@ impl AgentControl {
     /// persisted spawn-edge state.
     pub(crate) async fn shutdown_live_agent(&self, agent_id: ThreadId) -> CodexResult<String> {
         let state = self.upgrade()?;
-        if let Some(removed_watchdog) = self.watchdogs.unregister(agent_id).await
-            && let Some(helper_id) = removed_watchdog.active_helper_id
-        {
-            let _ = state.send_op(helper_id, Op::Shutdown {}).await;
-            let _ = state.remove_thread(&helper_id).await;
-            self.state.release_spawned_thread(helper_id);
+        if let Some(removed_watchdog) = self.watchdogs.unregister(agent_id).await {
+            self.refresh_owner_watchdog_session_state(removed_watchdog.owner_thread_id)
+                .await;
+            if let Some(helper_id) = removed_watchdog.active_helper_id {
+                let _ = state.send_op(helper_id, Op::Shutdown {}).await;
+                let _ = state.remove_thread(&helper_id).await;
+                self.state.release_spawned_thread(helper_id);
+            }
         }
         let result = if let Ok(thread) = state.get_thread(agent_id).await {
             thread.codex.session.ensure_rollout_materialized().await;
@@ -940,10 +942,12 @@ impl AgentControl {
         let descendant_ids = self.live_thread_spawn_descendants(agent_id).await?;
         let result = self.shutdown_live_agent(agent_id).await;
         for descendant_id in descendant_ids {
-            if let Some(removed_watchdog) = self.watchdogs.unregister(descendant_id).await
-                && let Some(helper_id) = removed_watchdog.active_helper_id
-            {
-                let _ = self.shutdown_live_agent(helper_id).await;
+            if let Some(removed_watchdog) = self.watchdogs.unregister(descendant_id).await {
+                self.refresh_owner_watchdog_session_state(removed_watchdog.owner_thread_id)
+                    .await;
+                if let Some(helper_id) = removed_watchdog.active_helper_id {
+                    let _ = self.shutdown_live_agent(helper_id).await;
+                }
             }
             match self.shutdown_live_agent(descendant_id).await {
                 Ok(_) | Err(CodexErr::ThreadNotFound(_)) | Err(CodexErr::InternalAgentDied) => {}
@@ -1241,14 +1245,35 @@ impl AgentControl {
         &self,
         registration: WatchdogRegistration,
     ) -> CodexResult<Vec<RemovedWatchdog>> {
-        self.watchdogs.register(registration).await
+        let owner_thread_id = registration.owner_thread_id;
+        let removed = self.watchdogs.register(registration).await?;
+        self.refresh_owner_watchdog_session_state(owner_thread_id)
+            .await;
+        Ok(removed)
     }
 
     pub(crate) async fn unregister_watchdogs_for_owner(
         &self,
         owner_thread_id: ThreadId,
     ) -> Vec<RemovedWatchdog> {
-        self.watchdogs.take_for_owner(owner_thread_id).await
+        let removed = self.watchdogs.take_for_owner(owner_thread_id).await;
+        self.refresh_owner_watchdog_session_state(owner_thread_id)
+            .await;
+        removed
+    }
+
+    async fn refresh_owner_watchdog_session_state(&self, owner_thread_id: ThreadId) {
+        let active_count = self.watchdogs.active_count_for_owner(owner_thread_id).await;
+        let Ok(state) = self.upgrade() else {
+            return;
+        };
+        let Ok(owner_thread) = state.get_thread(owner_thread_id).await else {
+            return;
+        };
+        owner_thread
+            .codex
+            .session
+            .set_session_state_owner_watchdog_count(active_count);
     }
 
     pub(crate) async fn compact_parent_for_watchdog_helper(

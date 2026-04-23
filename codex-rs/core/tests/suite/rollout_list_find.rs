@@ -17,6 +17,7 @@ use codex_protocol::models::BaseInstructions;
 use codex_protocol::protocol::SessionSource;
 use codex_state::StateRuntime;
 use codex_state::ThreadMetadataBuilder;
+use core_test_support::hermetic_loader_overrides_for_tests;
 use pretty_assertions::assert_eq;
 use tempfile::TempDir;
 use uuid::Uuid;
@@ -164,6 +165,7 @@ async fn find_locates_rollout_file_written_by_recorder() -> std::io::Result<()> 
     let home = TempDir::new().unwrap();
     let config = ConfigBuilder::default()
         .codex_home(home.path().to_path_buf())
+        .loader_overrides(hermetic_loader_overrides_for_tests(home.path()))
         .build()
         .await?;
     let thread_id = ThreadId::new();

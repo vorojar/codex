@@ -27,6 +27,7 @@ use core_test_support::skip_if_no_network;
 use core_test_support::test_codex::test_codex;
 use core_test_support::test_codex::turn_permission_fields;
 use pretty_assertions::assert_eq;
+use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
 use std::sync::Arc;
@@ -241,7 +242,7 @@ async fn list_skills_skips_cwd_roots_when_environment_disabled() -> Result<()> {
         codex_core::test_support::auth_manager_from_auth(CodexAuth::from_api_key("dummy")),
         SessionSource::Exec,
         /*model_catalog*/ None,
-        std::collections::HashMap::new(),
+        HashMap::new(),
         CollaborationModesConfig::default(),
         Arc::new(EnvironmentManager::disabled_for_tests(
             ExecServerRuntimePaths::new(

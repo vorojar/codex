@@ -44,6 +44,7 @@ use serde_json::Value;
 use serde_json::json;
 use std::env;
 use std::fs;
+use std::path::Path;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
@@ -70,13 +71,25 @@ impl TargetPath {
                 (path, name.to_string())
             }
             TargetPath::OutsideWorkspace(name) => {
-                let path = env::current_dir()
-                    .expect("current dir should be available")
-                    .join(name);
+                let path = outside_workspace_scratch_dir().join(name);
                 (path.clone(), path.display().to_string())
             }
         }
     }
+}
+
+fn outside_workspace_scratch_dir() -> PathBuf {
+    let base = if cfg!(unix) && Path::new("/var/tmp").is_dir() {
+        PathBuf::from("/var/tmp")
+    } else {
+        env::temp_dir()
+    };
+    let path = base.join(format!(
+        "codex-approval-matrix-outside-{}",
+        std::process::id()
+    ));
+    fs::create_dir_all(&path).expect("outside workspace scratch directory should be writable");
+    path
 }
 
 #[derive(Clone)]

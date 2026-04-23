@@ -3,6 +3,8 @@
 //! This module feeds terminal metadata into OpenTelemetry user-agent logging and into
 //! terminal-specific configuration choices in the TUI.
 
+use serde::Deserialize;
+use serde::Serialize;
 use std::sync::OnceLock;
 
 /// Structured terminal identification data.
@@ -18,6 +20,37 @@ pub struct TerminalInfo {
     pub term: Option<String>,
     /// Multiplexer metadata when a terminal multiplexer is active.
     pub multiplexer: Option<Multiplexer>,
+}
+
+/// Supported terminal providers for persisted attachment metadata.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TerminalAttachmentProvider {
+    /// Apple Terminal (Terminal.app).
+    AppleTerminal,
+    /// iTerm2 terminal emulator.
+    Iterm2,
+    /// kitty terminal emulator.
+    Kitty,
+    /// Visual Studio Code integrated terminal.
+    VsCode,
+    /// Warp terminal emulator.
+    WarpTerminal,
+    /// WezTerm terminal emulator.
+    WezTerm,
+}
+
+/// Current terminal attachment metadata persisted in rollout sibling sidecars.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct TerminalAttachment {
+    /// The detected terminal provider.
+    pub provider: TerminalAttachmentProvider,
+    /// Provider-specific stable session identifier when one is available.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub session_id: Option<String>,
+    /// The current controlling TTY when it can be resolved.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tty: Option<String>,
 }
 
 /// Known terminal name categories derived from environment variables.
@@ -271,6 +304,11 @@ pub fn terminal_info() -> TerminalInfo {
         .clone()
 }
 
+/// Returns the current terminal attachment when Codex can identify a supported provider.
+pub fn terminal_attachment() -> Option<TerminalAttachment> {
+    detect_terminal_attachment_from_env(&ProcessEnvironment, current_tty())
+}
+
 /// Detects structured terminal metadata from an injectable environment.
 ///
 /// Detection order favors explicit identifiers before falling back to capability strings:
@@ -372,6 +410,59 @@ fn detect_terminal_info_from_env(env: &dyn Environment) -> TerminalInfo {
     }
 
     TerminalInfo::unknown(multiplexer)
+}
+
+fn detect_terminal_attachment_from_env(
+    env: &dyn Environment,
+    tty: Option<String>,
+) -> Option<TerminalAttachment> {
+    let provider = terminal_attachment_provider_from_name(detect_terminal_info_from_env(env).name)?;
+    let session_id = terminal_attachment_session_id(env, &provider);
+
+    if session_id.is_none() && tty.is_none() {
+        return None;
+    }
+
+    Some(TerminalAttachment {
+        provider,
+        session_id,
+        tty,
+    })
+}
+
+fn terminal_attachment_provider_from_name(
+    name: TerminalName,
+) -> Option<TerminalAttachmentProvider> {
+    match name {
+        TerminalName::AppleTerminal => Some(TerminalAttachmentProvider::AppleTerminal),
+        TerminalName::Iterm2 => Some(TerminalAttachmentProvider::Iterm2),
+        TerminalName::WarpTerminal => Some(TerminalAttachmentProvider::WarpTerminal),
+        TerminalName::VsCode => Some(TerminalAttachmentProvider::VsCode),
+        TerminalName::WezTerm => Some(TerminalAttachmentProvider::WezTerm),
+        TerminalName::Kitty => Some(TerminalAttachmentProvider::Kitty),
+        TerminalName::Ghostty
+        | TerminalName::Alacritty
+        | TerminalName::Konsole
+        | TerminalName::GnomeTerminal
+        | TerminalName::Vte
+        | TerminalName::WindowsTerminal
+        | TerminalName::Dumb
+        | TerminalName::Unknown => None,
+    }
+}
+
+fn terminal_attachment_session_id(
+    env: &dyn Environment,
+    provider: &TerminalAttachmentProvider,
+) -> Option<String> {
+    match provider {
+        TerminalAttachmentProvider::AppleTerminal => env.var_non_empty("TERM_SESSION_ID"),
+        TerminalAttachmentProvider::Iterm2 => env.var_non_empty("ITERM_SESSION_ID"),
+        TerminalAttachmentProvider::Kitty => env.var_non_empty("KITTY_WINDOW_ID"),
+        TerminalAttachmentProvider::VsCode => None,
+        TerminalAttachmentProvider::WarpTerminal => env.var_non_empty("WARP_SESSION_ID"),
+        TerminalAttachmentProvider::WezTerm => env.var_non_empty("WEZTERM_PANE"),
+    }
 }
 
 fn detect_multiplexer(env: &dyn Environment) -> Option<Multiplexer> {
@@ -503,6 +594,27 @@ fn format_terminal_version(name: &str, version: &Option<String>) -> String {
 
 fn none_if_whitespace(value: String) -> Option<String> {
     (!value.trim().is_empty()).then_some(value)
+}
+
+#[cfg(unix)]
+fn current_tty() -> Option<String> {
+    [0, 1, 2].into_iter().find_map(current_tty_for_fd)
+}
+
+#[cfg(unix)]
+fn current_tty_for_fd(fd: i32) -> Option<String> {
+    let link = std::fs::read_link(format!("/dev/fd/{fd}")).ok()?;
+    let tty = link.to_string_lossy().into_owned();
+    if tty.starts_with("/dev/tty") || tty.starts_with("/dev/pts/") {
+        Some(tty)
+    } else {
+        None
+    }
+}
+
+#[cfg(not(unix))]
+fn current_tty() -> Option<String> {
+    None
 }
 
 #[cfg(test)]
