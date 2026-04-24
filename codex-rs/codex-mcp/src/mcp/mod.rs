@@ -259,6 +259,7 @@ pub async fn read_mcp_resource(
         config.codex_home.clone(),
         codex_apps_tools_cache_key(auth),
         tool_plugin_provenance(config),
+        /*elicitation_reviewer*/ None,
         auth,
     )
     .await;
@@ -324,6 +325,7 @@ pub async fn collect_mcp_server_status_snapshot_with_detail(
         config.codex_home.clone(),
         codex_apps_tools_cache_key(auth),
         tool_plugin_provenance,
+        /*elicitation_reviewer*/ None,
         auth,
     )
     .await;

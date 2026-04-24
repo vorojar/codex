@@ -10,6 +10,9 @@ pub use mcp::ToolPluginProvenance;
 
 pub use codex_apps::CodexAppsToolsCacheKey;
 pub use codex_apps::codex_apps_tools_cache_key;
+pub use elicitation::McpElicitationReviewRequest;
+pub use elicitation::McpElicitationReviewer;
+pub use elicitation::protocol_request_id;
 
 pub use mcp::configured_mcp_servers;
 pub use mcp::effective_mcp_servers;

@@ -24,6 +24,7 @@ use codex_protocol::protocol::Event;
 use codex_protocol::protocol::EventMsg;
 use codex_rmcp_client::ElicitationResponse;
 use codex_rmcp_client::SendElicitation;
+use futures::future::BoxFuture;
 use futures::future::FutureExt;
 use rmcp::model::CreateElicitationRequestParams;
 use rmcp::model::ElicitationAction;
@@ -31,22 +32,43 @@ use rmcp::model::RequestId;
 use tokio::sync::Mutex;
 use tokio::sync::oneshot;
 
+/// Elicitation data offered to an out-of-band reviewer before Codex prompts the user.
+#[derive(Clone)]
+pub struct McpElicitationReviewRequest {
+    /// MCP server that issued the elicitation request.
+    pub server_name: String,
+    /// Protocol-level request id used by Codex UI surfaces.
+    pub request_id: ProtocolRequestId,
+    /// Elicitation payload sent by the MCP server.
+    pub request: ElicitationRequest,
+}
+
+/// Optional hook that can resolve an MCP elicitation before it is surfaced to the user.
+pub type McpElicitationReviewer = Arc<
+    dyn Fn(McpElicitationReviewRequest) -> BoxFuture<'static, Option<ElicitationResponse>>
+        + Send
+        + Sync,
+>;
+
 #[derive(Clone)]
 pub(crate) struct ElicitationRequestManager {
     requests: Arc<Mutex<ResponderMap>>,
     pub(crate) approval_policy: Arc<StdMutex<AskForApproval>>,
     pub(crate) permission_profile: Arc<StdMutex<PermissionProfile>>,
+    reviewer: Option<McpElicitationReviewer>,
 }
 
 impl ElicitationRequestManager {
     pub(crate) fn new(
         approval_policy: AskForApproval,
         permission_profile: PermissionProfile,
+        reviewer: Option<McpElicitationReviewer>,
     ) -> Self {
         Self {
             requests: Arc::new(Mutex::new(HashMap::new())),
             approval_policy: Arc::new(StdMutex::new(approval_policy)),
             permission_profile: Arc::new(StdMutex::new(permission_profile)),
+            reviewer,
         }
     }
 
@@ -73,12 +95,14 @@ impl ElicitationRequestManager {
         let elicitation_requests = self.requests.clone();
         let approval_policy = self.approval_policy.clone();
         let permission_profile = self.permission_profile.clone();
+        let reviewer = self.reviewer.clone();
         Box::new(move |id, elicitation| {
             let elicitation_requests = elicitation_requests.clone();
             let tx_event = tx_event.clone();
             let server_name = server_name.clone();
             let approval_policy = approval_policy.clone();
             let permission_profile = permission_profile.clone();
+            let reviewer = reviewer.clone();
             async move {
                 let approval_policy = approval_policy
                     .lock()
@@ -109,6 +133,7 @@ impl ElicitationRequestManager {
                     });
                 }
 
+                let protocol_id = protocol_request_id(id.clone());
                 let request = match elicitation {
                     CreateElicitationRequestParams::FormElicitationParams {
                         meta,
@@ -138,6 +163,16 @@ impl ElicitationRequestManager {
                         elicitation_id,
                     },
                 };
+                if let Some(reviewer) = reviewer
+                    && let Some(response) = reviewer(McpElicitationReviewRequest {
+                        server_name: server_name.clone(),
+                        request_id: protocol_id.clone(),
+                        request: request.clone(),
+                    })
+                    .await
+                {
+                    return Ok(response);
+                }
                 let (tx, rx) = oneshot::channel();
                 {
                     let mut lock = elicitation_requests.lock().await;
@@ -149,14 +184,7 @@ impl ElicitationRequestManager {
                         msg: EventMsg::ElicitationRequest(ElicitationRequestEvent {
                             turn_id: None,
                             server_name,
-                            id: match id.clone() {
-                                rmcp::model::NumberOrString::String(value) => {
-                                    ProtocolRequestId::String(value.to_string())
-                                }
-                                rmcp::model::NumberOrString::Number(value) => {
-                                    ProtocolRequestId::Integer(value)
-                                }
-                            },
+                            id: protocol_id,
                             request,
                         }),
                     })
@@ -166,6 +194,14 @@ impl ElicitationRequestManager {
             }
             .boxed()
         })
+    }
+}
+
+/// Convert an RMCP request id into the protocol id used by Codex UI surfaces.
+pub fn protocol_request_id(id: RequestId) -> ProtocolRequestId {
+    match id {
+        rmcp::model::NumberOrString::String(value) => ProtocolRequestId::String(value.to_string()),
+        rmcp::model::NumberOrString::Number(value) => ProtocolRequestId::Integer(value),
     }
 }
 
