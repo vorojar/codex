@@ -344,6 +344,7 @@ async fn test_fuzzy_file_search_accepts_cancellation_token() -> Result<()> {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[cfg_attr(windows, ignore = "temporary shard-15 bisection for #19606")]
 async fn test_fuzzy_file_search_session_streams_updates() -> Result<()> {
     let codex_home = TempDir::new()?;
     let root = TempDir::new()?;

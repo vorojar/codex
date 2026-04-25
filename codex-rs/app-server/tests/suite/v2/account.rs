@@ -954,6 +954,7 @@ async fn login_account_api_key_rejected_when_forced_chatgpt() -> Result<()> {
 }
 
 #[tokio::test]
+#[cfg_attr(windows, ignore = "temporary shard-15 bisection for #19606")]
 async fn login_account_chatgpt_rejected_when_forced_api() -> Result<()> {
     let codex_home = TempDir::new()?;
     create_config_toml(
@@ -1122,6 +1123,7 @@ async fn login_account_chatgpt_device_code_succeeds_and_notifies() -> Result<()>
 }
 
 #[tokio::test]
+#[cfg_attr(windows, ignore = "temporary shard-15 bisection for #19606")]
 async fn login_account_chatgpt_device_code_failure_notifies_without_account_update() -> Result<()> {
     let codex_home = TempDir::new()?;
     let mock_server = MockServer::start().await;

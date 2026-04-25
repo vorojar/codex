@@ -173,6 +173,7 @@ view_image = false
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[cfg_attr(windows, ignore = "temporary shard-15 bisection for #19606")]
 async fn config_read_includes_nested_web_search_tool_config() -> Result<()> {
     let codex_home = TempDir::new()?;
     write_config(
@@ -660,6 +661,7 @@ model = "gpt-old"
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[cfg_attr(windows, ignore = "temporary shard-15 bisection for #19606")]
 async fn config_batch_write_applies_multiple_edits() -> Result<()> {
     let tmp_dir = TempDir::new()?;
     let codex_home = tmp_dir.path().canonicalize()?;

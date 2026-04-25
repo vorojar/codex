@@ -156,6 +156,7 @@ async fn experimental_feature_list_marks_apps_and_plugins_disabled_by_workspace_
 }
 
 #[tokio::test]
+#[cfg_attr(windows, ignore = "temporary shard-15 bisection for #19606")]
 async fn experimental_feature_enablement_set_applies_to_global_and_thread_config_reads()
 -> Result<()> {
     let codex_home = TempDir::new()?;

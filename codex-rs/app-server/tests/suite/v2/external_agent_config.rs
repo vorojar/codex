@@ -123,6 +123,7 @@ async fn external_agent_config_import_sends_completion_notification_for_local_pl
 }
 
 #[tokio::test]
+#[cfg_attr(windows, ignore = "temporary shard-15 bisection for #19606")]
 async fn external_agent_config_import_sends_completion_notification_after_pending_plugins_finish()
 -> Result<()> {
     let codex_home = TempDir::new()?;
