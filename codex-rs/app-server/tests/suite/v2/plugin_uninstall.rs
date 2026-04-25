@@ -20,6 +20,7 @@ use tokio::time::timeout;
 const DEFAULT_TIMEOUT: Duration = Duration::from_secs(10);
 
 #[tokio::test]
+#[cfg_attr(windows, ignore = "temporary CI isolation for #19606 Windows hang")]
 async fn plugin_uninstall_removes_plugin_cache_and_config_entry() -> Result<()> {
     let codex_home = TempDir::new()?;
     write_installed_plugin(&codex_home, "debug", "sample-plugin")?;

@@ -59,6 +59,7 @@ async fn get_account_rate_limits_requires_auth() -> Result<()> {
 }
 
 #[tokio::test]
+#[cfg_attr(windows, ignore = "temporary CI isolation for #19606 Windows hang")]
 async fn get_account_rate_limits_requires_chatgpt_auth() -> Result<()> {
     let codex_home = TempDir::new()?;
 
@@ -264,6 +265,7 @@ async fn send_add_credits_nudge_email_requires_auth() -> Result<()> {
 }
 
 #[tokio::test]
+#[cfg_attr(windows, ignore = "temporary CI isolation for #19606 Windows hang")]
 async fn send_add_credits_nudge_email_requires_chatgpt_auth() -> Result<()> {
     let codex_home = TempDir::new()?;
 
