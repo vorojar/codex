@@ -278,6 +278,7 @@ async fn plugin_install_writes_remote_plugin_to_cloud_when_remote_plugin_enabled
 }
 
 #[tokio::test]
+#[cfg_attr(windows, ignore = "temporary CI isolation for #19606 Windows hang")]
 async fn plugin_install_rejects_invalid_remote_plugin_name() -> Result<()> {
     let codex_home = TempDir::new()?;
     write_remote_plugin_catalog_config(codex_home.path(), "https://example.invalid/backend-api/")?;
