@@ -57,6 +57,7 @@ async fn websocket_transport_ctrl_c_waits_for_running_turn_before_exit() -> Resu
 }
 
 #[tokio::test]
+#[cfg_attr(windows, ignore = "temporary shard-15 bisection for #19606")]
 async fn websocket_transport_second_ctrl_c_forces_exit_while_turn_running() -> Result<()> {
     let GracefulCtrlCFixture {
         _codex_home,

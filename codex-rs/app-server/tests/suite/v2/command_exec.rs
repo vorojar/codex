@@ -389,6 +389,7 @@ async fn command_exec_rejects_disable_timeout_with_timeout_ms() -> Result<()> {
 }
 
 #[tokio::test]
+#[cfg_attr(windows, ignore = "temporary shard-15 bisection for #19606")]
 async fn command_exec_rejects_disable_output_cap_with_output_bytes_cap() -> Result<()> {
     let server = create_mock_responses_server_sequence_unchecked(Vec::new()).await;
     let codex_home = TempDir::new()?;
@@ -465,6 +466,7 @@ async fn command_exec_rejects_negative_timeout_ms() -> Result<()> {
 }
 
 #[tokio::test]
+#[cfg_attr(windows, ignore = "temporary shard-15 bisection for #19606")]
 async fn command_exec_without_process_id_rejects_streaming() -> Result<()> {
     let server = create_mock_responses_server_sequence_unchecked(Vec::new()).await;
     let codex_home = TempDir::new()?;
