@@ -1,15 +1,15 @@
-pub use mcp_connection_manager::MCP_SANDBOX_STATE_META_CAPABILITY;
-pub use mcp_connection_manager::McpConnectionManager;
-pub use mcp_connection_manager::McpRuntimeEnvironment;
-pub use mcp_connection_manager::SandboxState;
-pub use mcp_connection_manager::ToolInfo;
+pub use manager::McpConnectionManager;
+pub use mcp_connection::MCP_SANDBOX_STATE_META_CAPABILITY;
+pub use mcp_connection::McpRuntimeEnvironment;
+pub use mcp_connection::SandboxState;
+pub use mcp_connection::ToolInfo;
 
 pub use mcp::CODEX_APPS_MCP_SERVER_NAME;
 pub use mcp::McpConfig;
 pub use mcp::ToolPluginProvenance;
 
-pub use mcp_connection_manager::CodexAppsToolsCacheKey;
-pub use mcp_connection_manager::codex_apps_tools_cache_key;
+pub use mcp_connection::CodexAppsToolsCacheKey;
+pub use mcp_connection::codex_apps_tools_cache_key;
 
 pub use mcp::configured_mcp_servers;
 pub use mcp::effective_mcp_servers;
@@ -35,9 +35,10 @@ pub use mcp::should_retry_without_scopes;
 
 pub use mcp::mcp_permission_prompt_is_auto_approved;
 pub use mcp::qualified_mcp_tool_name_prefix;
-pub use mcp_connection_manager::declared_openai_file_input_param_names;
-pub use mcp_connection_manager::filter_non_codex_apps_mcp_tools_only;
+pub use mcp_connection::declared_openai_file_input_param_names;
+pub use mcp_connection::filter_non_codex_apps_mcp_tools_only;
 
+pub(crate) mod manager;
 pub(crate) mod mcp;
-pub(crate) mod mcp_connection_manager;
+pub(crate) mod mcp_connection;
 pub(crate) mod mcp_tool_names;

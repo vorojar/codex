@@ -8,7 +8,7 @@ use sha1::Sha1;
 use tracing::warn;
 
 use crate::mcp::sanitize_responses_api_tool_name;
-use crate::mcp_connection_manager::ToolInfo;
+use crate::mcp_connection::ToolInfo;
 
 const MCP_TOOL_NAME_DELIMITER: &str = "__";
 const MAX_TOOL_NAME_LENGTH: usize = 64;
