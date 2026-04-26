@@ -1,6 +1,7 @@
 use anyhow::Context;
 use anyhow::Result;
 use anyhow::bail;
+use app_test_support::TEST_DISABLE_PLUGIN_STARTUP_TASKS_ENV_VAR;
 use app_test_support::create_mock_responses_server_sequence_unchecked;
 use app_test_support::to_response;
 use base64::Engine;
@@ -394,7 +395,8 @@ pub(super) async fn spawn_websocket_server_with_args(
         .stdout(Stdio::null())
         .stderr(Stdio::piped())
         .env("CODEX_HOME", codex_home)
-        .env("RUST_LOG", "debug");
+        .env("RUST_LOG", "warn")
+        .env(TEST_DISABLE_PLUGIN_STARTUP_TASKS_ENV_VAR, "1");
     let mut process = cmd
         .kill_on_drop(true)
         .spawn()
@@ -529,7 +531,8 @@ async fn run_websocket_server_to_completion_with_args(
         .stdout(Stdio::null())
         .stderr(Stdio::piped())
         .env("CODEX_HOME", codex_home)
-        .env("RUST_LOG", "debug");
+        .env("RUST_LOG", "warn")
+        .env(TEST_DISABLE_PLUGIN_STARTUP_TASKS_ENV_VAR, "1");
     timeout(DEFAULT_READ_TIMEOUT, cmd.output())
         .await
         .context("timed out waiting for websocket app-server to exit")?
