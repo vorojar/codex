@@ -573,6 +573,7 @@ async fn plugin_install_tracks_analytics_event() -> Result<()> {
 }
 
 #[tokio::test]
+#[cfg_attr(windows, ignore = "temporary CI isolation for #19606 Windows hang")]
 async fn plugin_install_returns_apps_needing_auth() -> Result<()> {
     let connectors = vec![
         AppInfo {

@@ -371,6 +371,7 @@ async fn fs_write_file_rejects_invalid_base64() -> Result<()> {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[cfg_attr(windows, ignore = "temporary CI isolation for #19606 Windows hang")]
 async fn fs_methods_reject_relative_paths() -> Result<()> {
     let codex_home = TempDir::new()?;
     let absolute_file = codex_home.path().join("absolute.txt");

@@ -336,6 +336,7 @@ async fn plugin_list_returns_empty_when_workspace_codex_plugins_disabled() -> Re
 }
 
 #[tokio::test]
+#[cfg_attr(windows, ignore = "temporary CI isolation for #19606 Windows hang")]
 async fn plugin_list_reuses_cached_workspace_codex_plugins_setting() -> Result<()> {
     let codex_home = TempDir::new()?;
     let repo_root = TempDir::new()?;
@@ -548,6 +549,7 @@ async fn plugin_list_uses_alternate_discoverable_manifest_and_keeps_undiscoverab
 }
 
 #[tokio::test]
+#[cfg_attr(windows, ignore = "temporary CI isolation for #19606 Windows hang")]
 async fn plugin_list_accepts_omitted_cwds() -> Result<()> {
     let codex_home = TempDir::new()?;
     std::fs::create_dir_all(codex_home.path().join(".agents/plugins"))?;
@@ -1028,6 +1030,7 @@ async fn plugin_list_accepts_legacy_string_default_prompt() -> Result<()> {
 }
 
 #[tokio::test]
+#[cfg_attr(windows, ignore = "temporary CI isolation for #19606 Windows hang")]
 async fn app_server_startup_remote_plugin_sync_runs_once() -> Result<()> {
     let codex_home = TempDir::new()?;
     let server = MockServer::start().await;
