@@ -144,17 +144,82 @@ pub async fn get_git_remote_urls_assume_git_repo(cwd: &Path) -> Option<BTreeMap<
 
 /// Return the current HEAD commit hash without checking whether `cwd` is in a git repo.
 pub async fn get_head_commit_hash(cwd: &Path) -> Option<GitSha> {
-    let output = run_git_command_with_timeout(&["rev-parse", "HEAD"], cwd).await?;
-    if !output.status.success() {
+    if let Some(output) = run_git_command_with_timeout(&["rev-parse", "HEAD"], cwd).await
+        && output.status.success()
+        && let Ok(stdout) = String::from_utf8(output.stdout)
+    {
+        let hash = stdout.trim();
+        if !hash.is_empty() {
+            return Some(GitSha::new(hash));
+        }
+    }
+
+    get_head_commit_hash_from_git_filesystem(cwd)
+}
+
+fn get_head_commit_hash_from_git_filesystem(cwd: &Path) -> Option<GitSha> {
+    let base = if cwd.is_dir() { cwd } else { cwd.parent()? };
+    let (repo_root, dot_git) = find_ancestor_git_entry(base)?;
+    let git_dir = if dot_git.is_dir() {
+        dot_git
+    } else {
+        let git_dir_rel = std::fs::read_to_string(&dot_git).ok()?;
+        let git_dir_rel = git_dir_rel.trim().strip_prefix("gitdir:")?.trim();
+        if git_dir_rel.is_empty() {
+            return None;
+        }
+        repo_root.join(git_dir_rel)
+    };
+
+    let head = std::fs::read_to_string(git_dir.join("HEAD")).ok()?;
+    let head = head.trim();
+    if head.is_empty() {
         return None;
     }
 
-    let stdout = String::from_utf8(output.stdout).ok()?;
-    let hash = stdout.trim();
-    if hash.is_empty() {
+    if let Some(reference) = head.strip_prefix("ref:").map(str::trim) {
+        let mut reference_roots = vec![git_dir.clone()];
+        if let Ok(common_dir) = std::fs::read_to_string(git_dir.join("commondir")) {
+            let common_dir = common_dir.trim();
+            if !common_dir.is_empty() {
+                reference_roots.push(git_dir.join(common_dir));
+            }
+        }
+
+        for reference_root in &reference_roots {
+            if let Ok(reference_value) = std::fs::read_to_string(reference_root.join(reference)) {
+                let hash = reference_value.trim();
+                if !hash.is_empty() {
+                    return Some(GitSha::new(hash));
+                }
+            }
+        }
+
+        for reference_root in &reference_roots {
+            let Ok(packed_refs) = std::fs::read_to_string(reference_root.join("packed-refs"))
+            else {
+                continue;
+            };
+            for line in packed_refs.lines() {
+                if line.is_empty() || line.starts_with('#') || line.starts_with('^') {
+                    continue;
+                }
+
+                let Some((hash, name)) = line.split_once(' ') else {
+                    continue;
+                };
+                if name == reference {
+                    let hash = hash.trim();
+                    if !hash.is_empty() {
+                        return Some(GitSha::new(hash));
+                    }
+                }
+            }
+        }
+
         None
     } else {
-        Some(GitSha::new(hash))
+        Some(GitSha::new(head))
     }
 }
 
@@ -723,4 +788,83 @@ pub async fn current_branch_name(cwd: &Path) -> Option<String> {
         .ok()
         .map(|s| s.trim().to_string())
         .filter(|name| !name.is_empty())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::get_head_commit_hash;
+    use crate::GitSha;
+    use pretty_assertions::assert_eq;
+    use tempfile::TempDir;
+
+    #[tokio::test]
+    async fn get_head_commit_hash_reads_loose_ref_without_git_cli() {
+        let temp_dir = TempDir::new().expect("temp dir");
+        let repo_root = temp_dir.path().join("repo");
+        let git_dir = repo_root.join(".git");
+        let expected = "d26ffaa2ecee28de8f3e2a8fe73c3d07921dfffe";
+
+        std::fs::create_dir_all(git_dir.join("refs/heads")).expect("create refs");
+        std::fs::write(git_dir.join("HEAD"), "ref: refs/heads/main\n").expect("write HEAD");
+        std::fs::write(git_dir.join("refs/heads/main"), format!("{expected}\n"))
+            .expect("write ref");
+
+        assert_eq!(
+            get_head_commit_hash(&repo_root).await,
+            Some(GitSha::new(expected))
+        );
+    }
+
+    #[tokio::test]
+    async fn get_head_commit_hash_reads_packed_ref_without_git_cli() {
+        let temp_dir = TempDir::new().expect("temp dir");
+        let repo_root = temp_dir.path().join("repo");
+        let git_dir = repo_root.join(".git");
+        let expected = "d26ffaa2ecee28de8f3e2a8fe73c3d07921dfffe";
+
+        std::fs::create_dir_all(&git_dir).expect("create git dir");
+        std::fs::write(git_dir.join("HEAD"), "ref: refs/heads/main\n").expect("write HEAD");
+        std::fs::write(
+            git_dir.join("packed-refs"),
+            format!("{expected} refs/heads/main\n"),
+        )
+        .expect("write packed refs");
+
+        assert_eq!(
+            get_head_commit_hash(&repo_root).await,
+            Some(GitSha::new(expected))
+        );
+    }
+
+    #[tokio::test]
+    async fn get_head_commit_hash_reads_worktree_common_dir_without_git_cli() {
+        let temp_dir = TempDir::new().expect("temp dir");
+        let repo_root = temp_dir.path().join("repo");
+        let common_git_dir = repo_root.join(".git");
+        let worktree_root = temp_dir.path().join("worktree");
+        let worktree_git_dir = common_git_dir.join("worktrees/feature-x");
+        let expected = "d26ffaa2ecee28de8f3e2a8fe73c3d07921dfffe";
+
+        std::fs::create_dir_all(common_git_dir.join("refs/heads")).expect("create common refs");
+        std::fs::create_dir_all(&worktree_root).expect("create worktree");
+        std::fs::create_dir_all(&worktree_git_dir).expect("create worktree git dir");
+        std::fs::write(
+            worktree_root.join(".git"),
+            format!("gitdir: {}\n", worktree_git_dir.display()),
+        )
+        .expect("write worktree .git");
+        std::fs::write(worktree_git_dir.join("HEAD"), "ref: refs/heads/feature-x\n")
+            .expect("write worktree HEAD");
+        std::fs::write(worktree_git_dir.join("commondir"), "../..\n").expect("write commondir");
+        std::fs::write(
+            common_git_dir.join("refs/heads/feature-x"),
+            format!("{expected}\n"),
+        )
+        .expect("write common ref");
+
+        assert_eq!(
+            get_head_commit_hash(&worktree_root).await,
+            Some(GitSha::new(expected))
+        );
+    }
 }
