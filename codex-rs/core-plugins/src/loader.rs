@@ -693,7 +693,9 @@ pub fn load_plugin_hooks(
     match &manifest_paths.hooks {
         Some(PluginManifestHooks::Paths(paths)) => {
             for path in paths {
-                append_plugin_hook_file(plugin_root, plugin_id, path, &mut sources);
+                if let Some(source) = load_plugin_hook_file(plugin_root, plugin_id, path) {
+                    sources.push(source);
+                }
             }
         }
         Some(PluginManifestHooks::Inline(hooks_files)) => {
@@ -715,8 +717,10 @@ pub fn load_plugin_hooks(
         }
         None => {
             let default_path = plugin_root.join(DEFAULT_HOOKS_CONFIG_FILE);
-            if default_path.as_path().is_file() {
-                append_plugin_hook_file(plugin_root, plugin_id, &default_path, &mut sources);
+            if default_path.as_path().is_file()
+                && let Some(source) = load_plugin_hook_file(plugin_root, plugin_id, &default_path)
+            {
+                sources.push(source);
             }
         }
     }
@@ -725,12 +729,11 @@ pub fn load_plugin_hooks(
 
 // Load one resolved plugin hook file and keep source metadata with its parsed
 // hook events so runtime discovery can report plugin-originated hook runs.
-fn append_plugin_hook_file(
+fn load_plugin_hook_file(
     plugin_root: &AbsolutePathBuf,
     plugin_id: &PluginId,
     path: &AbsolutePathBuf,
-    sources: &mut Vec<PluginHookSource>,
-) {
+) -> Option<PluginHookSource> {
     let contents = match fs::read_to_string(path.as_path()) {
         Ok(contents) => contents,
         Err(err) => {
@@ -738,7 +741,7 @@ fn append_plugin_hook_file(
                 path = %path.display(),
                 "failed to read plugin hooks config: {err}"
             );
-            return;
+            return None;
         }
     };
     let parsed = match serde_json::from_str::<HooksFile>(&contents) {
@@ -748,20 +751,20 @@ fn append_plugin_hook_file(
                 path = %path.display(),
                 "failed to parse plugin hooks config: {err}"
             );
-            return;
+            return None;
         }
     };
     if parsed.hooks.is_empty() {
-        return;
+        return None;
     }
 
-    sources.push(PluginHookSource {
+    Some(PluginHookSource {
         plugin_id: plugin_id.clone(),
         plugin_root: plugin_root.clone(),
         source_path: path.clone(),
         source_relative_path: plugin_relative_path(plugin_root.as_path(), path.as_path()),
         hooks: parsed.hooks,
-    });
+    })
 }
 
 fn plugin_relative_path(plugin_root: &Path, path: &Path) -> String {
