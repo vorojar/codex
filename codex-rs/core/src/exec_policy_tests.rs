@@ -110,6 +110,10 @@ fn read_only_file_system_sandbox_policy() -> FileSystemSandboxPolicy {
     }])
 }
 
+fn workspace_write_file_system_sandbox_policy() -> FileSystemSandboxPolicy {
+    FileSystemSandboxPolicy::from_legacy_sandbox_policy(&SandboxPolicy::new_workspace_write_policy())
+}
+
 fn unrestricted_file_system_sandbox_policy() -> FileSystemSandboxPolicy {
     FileSystemSandboxPolicy::unrestricted()
 }
@@ -1585,7 +1589,7 @@ prefix_rule(pattern=["cat"], decision="allow")
                 command: command.clone(),
                 approval_policy,
                 sandbox_policy: SandboxPolicy::new_workspace_write_policy(),
-                file_system_sandbox_policy: read_only_file_system_sandbox_policy(),
+                file_system_sandbox_policy: workspace_write_file_system_sandbox_policy(),
                 sandbox_permissions: SandboxPermissions::UseDefault,
                 prefix_rule: None,
             },
