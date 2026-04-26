@@ -945,21 +945,7 @@ pub(crate) fn build_prompt(
     turn_context: &TurnContext,
     base_instructions: BaseInstructions,
 ) -> Prompt {
-    let deferred_dynamic_tools = turn_context
-        .dynamic_tools
-        .iter()
-        .filter(|tool| tool.defer_loading)
-        .map(|tool| ToolName::new(tool.namespace.clone(), tool.name.clone()))
-        .collect::<HashSet<_>>();
-    let tools = if deferred_dynamic_tools.is_empty() {
-        router.model_visible_specs()
-    } else {
-        router
-            .model_visible_specs()
-            .into_iter()
-            .filter_map(|spec| filter_deferred_dynamic_tool_spec(spec, &deferred_dynamic_tools))
-            .collect()
-    };
+    let tools = model_visible_specs_for_prompt(router, turn_context);
 
     Prompt {
         input,
@@ -971,6 +957,36 @@ pub(crate) fn build_prompt(
         output_schema_strict: !crate::guardian::is_guardian_reviewer_source(
             &turn_context.session_source,
         ),
+    }
+}
+
+pub(crate) fn model_visible_specs_for_prompt(
+    router: &ToolRouter,
+    turn_context: &TurnContext,
+) -> Vec<ToolSpec> {
+    filter_deferred_dynamic_tool_specs(
+        router.model_visible_specs(),
+        turn_context.dynamic_tools.as_slice(),
+    )
+}
+
+fn filter_deferred_dynamic_tool_specs(
+    specs: Vec<ToolSpec>,
+    dynamic_tools: &[codex_protocol::dynamic_tools::DynamicToolSpec],
+) -> Vec<ToolSpec> {
+    let deferred_dynamic_tools = dynamic_tools
+        .iter()
+        .filter(|tool| tool.defer_loading)
+        .map(|tool| ToolName::new(tool.namespace.clone(), tool.name.clone()))
+        .collect::<HashSet<_>>();
+
+    if deferred_dynamic_tools.is_empty() {
+        specs
+    } else {
+        specs
+            .into_iter()
+            .filter_map(|spec| filter_deferred_dynamic_tool_spec(spec, &deferred_dynamic_tools))
+            .collect()
     }
 }
 
@@ -1000,6 +1016,99 @@ fn filter_deferred_dynamic_tool_spec(
             }
         }
         spec => Some(spec),
+    }
+}
+
+#[cfg(test)]
+mod prompt_tool_filter_tests {
+    use super::*;
+    use codex_protocol::dynamic_tools::DynamicToolSpec;
+    use codex_tools::AdditionalProperties;
+    use codex_tools::JsonSchema;
+    use codex_tools::ResponsesApiNamespace;
+    use codex_tools::ResponsesApiTool;
+    use serde_json::json;
+    use std::collections::BTreeMap;
+
+    #[test]
+    fn filters_deferred_dynamic_tools_from_prompt_specs() {
+        let dynamic_tools = vec![DynamicToolSpec {
+            namespace: Some("codex_app".to_string()),
+            name: "automation_update".to_string(),
+            description: "Create, update, view, or delete recurring automations.".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "mode": { "type": "string" },
+                },
+                "required": ["mode"],
+                "additionalProperties": false,
+            }),
+            defer_loading: true,
+        }];
+        let specs = vec![
+            ToolSpec::ToolSearch {
+                execution: "sync".to_string(),
+                description: "Search deferred tools".to_string(),
+                parameters: object_schema(),
+            },
+            ToolSpec::Namespace(ResponsesApiNamespace {
+                name: "codex_app".to_string(),
+                description: "Tools in the codex_app namespace.".to_string(),
+                tools: vec![
+                    ResponsesApiNamespaceTool::Function(function_tool(
+                        "automation_update",
+                        Some(true),
+                    )),
+                    ResponsesApiNamespaceTool::Function(function_tool(
+                        "visible_tool",
+                        /*defer_loading*/ None,
+                    )),
+                ],
+            }),
+            ToolSpec::Function(function_tool("plain_tool", /*defer_loading*/ None)),
+        ];
+
+        let filtered = filter_deferred_dynamic_tool_specs(specs, &dynamic_tools);
+
+        assert_eq!(
+            filtered,
+            vec![
+                ToolSpec::ToolSearch {
+                    execution: "sync".to_string(),
+                    description: "Search deferred tools".to_string(),
+                    parameters: object_schema(),
+                },
+                ToolSpec::Namespace(ResponsesApiNamespace {
+                    name: "codex_app".to_string(),
+                    description: "Tools in the codex_app namespace.".to_string(),
+                    tools: vec![ResponsesApiNamespaceTool::Function(function_tool(
+                        "visible_tool",
+                        /*defer_loading*/ None,
+                    ))],
+                }),
+                ToolSpec::Function(function_tool("plain_tool", /*defer_loading*/ None)),
+            ]
+        );
+    }
+
+    fn function_tool(name: &str, defer_loading: Option<bool>) -> ResponsesApiTool {
+        ResponsesApiTool {
+            name: name.to_string(),
+            description: format!("{name} description"),
+            strict: false,
+            defer_loading,
+            parameters: object_schema(),
+            output_schema: None,
+        }
+    }
+
+    fn object_schema() -> JsonSchema {
+        JsonSchema::object(
+            BTreeMap::new(),
+            /*required*/ None,
+            Some(AdditionalProperties::Boolean(false)),
+        )
     }
 }
 
