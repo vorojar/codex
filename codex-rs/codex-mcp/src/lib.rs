@@ -38,6 +38,7 @@ pub use mcp::qualified_mcp_tool_name_prefix;
 pub use mcp_connection::declared_openai_file_input_param_names;
 pub use mcp_connection::filter_non_codex_apps_mcp_tools_only;
 
+pub(crate) mod client;
 pub(crate) mod manager;
 pub(crate) mod mcp;
 pub(crate) mod mcp_connection;
