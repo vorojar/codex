@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use std::time::Instant;
 
 use crate::mcp::CODEX_APPS_MCP_SERVER_NAME;
-use crate::mcp_connection::emit_duration;
+use crate::runtime::emit_duration;
 use crate::tools::MCP_TOOLS_CACHE_WRITE_DURATION_METRIC;
 use crate::tools::ToolInfo;
 use codex_login::CodexAuth;

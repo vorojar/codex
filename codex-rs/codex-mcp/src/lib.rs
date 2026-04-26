@@ -1,7 +1,7 @@
 pub use client::MCP_SANDBOX_STATE_META_CAPABILITY;
 pub use manager::McpConnectionManager;
-pub use mcp_connection::McpRuntimeEnvironment;
-pub use mcp_connection::SandboxState;
+pub use runtime::McpRuntimeEnvironment;
+pub use runtime::SandboxState;
 pub use tools::ToolInfo;
 
 pub use mcp::CODEX_APPS_MCP_SERVER_NAME;
@@ -43,5 +43,5 @@ pub(crate) mod client;
 pub(crate) mod elicitation;
 pub(crate) mod manager;
 pub(crate) mod mcp;
-pub(crate) mod mcp_connection;
+pub(crate) mod runtime;
 pub(crate) mod tools;

@@ -1,4 +1,4 @@
-//! Connection support for Model Context Protocol (MCP) servers.
+//! Runtime support for Model Context Protocol (MCP) servers.
 //!
 //! This module contains shared types and helpers used by [`McpConnectionManager`].
 
