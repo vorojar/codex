@@ -98,9 +98,7 @@ async fn status_snapshot_includes_reasoning_details() {
     config.model_provider_id = "openai".to_string();
     config.model_reasoning_summary = Some(ReasoningSummary::Detailed);
     config
-        .permissions
-        .sandbox_policy
-        .set(SandboxPolicy::WorkspaceWrite {
+        .set_legacy_sandbox_policy(SandboxPolicy::WorkspaceWrite {
             writable_roots: Vec::new(),
             network_access: false,
             exclude_tmpdir_env_var: false,
@@ -183,9 +181,7 @@ async fn status_permissions_non_default_workspace_write_is_custom() {
         .set(AskForApproval::OnRequest)
         .expect("set approval policy");
     config
-        .permissions
-        .sandbox_policy
-        .set(SandboxPolicy::WorkspaceWrite {
+        .set_legacy_sandbox_policy(SandboxPolicy::WorkspaceWrite {
             writable_roots: Vec::new(),
             network_access: true,
             exclude_tmpdir_env_var: false,
