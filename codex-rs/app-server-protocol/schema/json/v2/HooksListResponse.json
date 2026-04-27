@@ -60,10 +60,19 @@
         "handlerType": {
           "$ref": "#/definitions/HookHandlerType"
         },
+        "isManaged": {
+          "type": "boolean"
+        },
         "key": {
           "type": "string"
         },
         "matcher": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "pluginDescription": {
           "type": [
             "string",
             "null"
@@ -104,6 +113,7 @@
         "enabled",
         "eventName",
         "handlerType",
+        "isManaged",
         "key",
         "source",
         "sourcePath",

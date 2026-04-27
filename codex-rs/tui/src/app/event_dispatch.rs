@@ -380,6 +380,9 @@ impl App {
             AppEvent::FetchPluginsList { cwd } => {
                 self.fetch_plugins_list(app_server, cwd);
             }
+            AppEvent::FetchHooksList { cwd } => {
+                self.fetch_hooks_list(app_server, cwd);
+            }
             AppEvent::OpenPluginDetailLoading {
                 plugin_display_name,
             } => {
@@ -400,6 +403,9 @@ impl App {
             }
             AppEvent::PluginsLoaded { cwd, result } => {
                 self.chat_widget.on_plugins_loaded(cwd, result);
+            }
+            AppEvent::HooksLoaded { cwd, result } => {
+                self.chat_widget.on_hooks_loaded(cwd, result);
             }
             AppEvent::FetchPluginDetail { cwd, params } => {
                 self.fetch_plugin_detail(app_server, cwd, params);
@@ -1546,6 +1552,14 @@ impl App {
                             "Failed to update app config for {id}: {err}"
                         ));
                     }
+                }
+            }
+            AppEvent::SetHookEnabled { key, enabled } => {
+                self.set_hook_enabled(app_server, key, enabled);
+            }
+            AppEvent::HookEnabledSet { result } => {
+                if let Err(err) = result {
+                    self.chat_widget.add_error_message(err);
                 }
             }
             AppEvent::OpenPermissionsPopup => {

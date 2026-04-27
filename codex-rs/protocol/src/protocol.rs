@@ -13,6 +13,8 @@ use std::path::PathBuf;
 use std::str::FromStr;
 use std::time::Duration;
 
+use strum_macros::EnumIter;
+
 use crate::AgentPath;
 use crate::ThreadId;
 use crate::approvals::ElicitationRequestEvent;
@@ -1604,7 +1606,7 @@ pub enum EventMsg {
     CollabResumeEnd(CollabResumeEndEvent),
 }
 
-#[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq, JsonSchema, TS)]
+#[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq, JsonSchema, TS, EnumIter)]
 #[serde(rename_all = "snake_case")]
 pub enum HookEventName {
     PreToolUse,

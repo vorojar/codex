@@ -35,6 +35,7 @@ pub struct PluginHookSource {
     pub plugin_root: AbsolutePathBuf,
     pub source_path: AbsolutePathBuf,
     pub source_relative_path: String,
+    pub plugin_description: Option<String>,
     pub hooks: HookEventsToml,
 }
 

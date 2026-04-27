@@ -65,6 +65,7 @@ async fn hooks_list_shows_discovered_hook() -> Result<()> {
     assert_eq!(hook.timeout_sec, 5);
     assert_eq!(hook.status_message.as_deref(), Some("running listed hook"));
     assert_eq!(hook.source, HookSource::User);
+    assert!(!hook.is_managed);
     Ok(())
 }
 

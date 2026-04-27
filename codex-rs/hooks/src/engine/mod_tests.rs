@@ -118,6 +118,15 @@ with Path(r"{log_path}").open("a", encoding="utf-8") as handle:
     assert!(engine.warnings().is_empty());
     assert_eq!(engine.handlers.len(), 1);
     assert!(engine.handlers[0].is_managed);
+    let listed = crate::list_hooks(crate::HooksConfig {
+        legacy_notify_argv: None,
+        feature_enabled: true,
+        config_layer_stack: Some(config_layer_stack.clone()),
+        plugin_hook_sources: Vec::new(),
+        shell_program: None,
+        shell_args: Vec::new(),
+    });
+    assert!(listed.hooks[0].is_managed);
     let cwd = cwd();
     let preview = engine.preview_pre_tool_use(&PreToolUseRequest {
         session_id: ThreadId::new(),
@@ -473,6 +482,7 @@ Path(r"{log_path}").write_text(json.dumps({{
         plugin_root: plugin_root.clone(),
         source_path: source_path.clone(),
         source_relative_path: "hooks/hooks.json".to_string(),
+        plugin_description: Some("Demo plugin hook support.".to_string()),
         hooks: HookEventsToml {
             pre_tool_use: vec![MatcherGroup {
                 matcher: Some("Bash".to_string()),
@@ -489,7 +499,7 @@ Path(r"{log_path}").write_text(json.dumps({{
     let engine = ClaudeHooksEngine::new(
         /*enabled*/ true,
         /*config_layer_stack*/ None,
-        plugin_hook_sources,
+        plugin_hook_sources.clone(),
         CommandShell {
             program: String::new(),
             args: Vec::new(),
@@ -511,6 +521,18 @@ Path(r"{log_path}").write_text(json.dumps({{
     assert_eq!(preview.len(), 1);
     assert_eq!(preview[0].source, HookSource::Plugin);
     assert_eq!(preview[0].source_path, source_path);
+    let listed = crate::list_hooks(crate::HooksConfig {
+        legacy_notify_argv: None,
+        feature_enabled: true,
+        config_layer_stack: None,
+        plugin_hook_sources,
+        shell_program: None,
+        shell_args: Vec::new(),
+    });
+    assert_eq!(
+        listed.hooks[0].plugin_description.as_deref(),
+        Some("Demo plugin hook support.")
+    );
 
     let outcome = engine
         .run_pre_tool_use(PreToolUseRequest {

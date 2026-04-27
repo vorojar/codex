@@ -1474,6 +1474,7 @@ Use `hooks/list` to fetch the discovered hooks for one or more `cwds`. Disabled 
         "key": "path:/Users/me/.codex/config.toml:pre_tool_use:0:0",
         "eventName": "pre_tool_use",
         "handlerType": "command",
+        "isManaged": false,
         "matcher": "Bash",
         "command": "python3 /Users/me/hook.py",
         "timeoutSec": 5,
@@ -1481,6 +1482,7 @@ Use `hooks/list` to fetch the discovered hooks for one or more `cwds`. Disabled 
         "sourcePath": "/Users/me/.codex/config.toml",
         "source": "user",
         "pluginId": null,
+        "pluginDescription": null,
         "sourceRelativePath": null,
         "displayOrder": 0,
         "enabled": true

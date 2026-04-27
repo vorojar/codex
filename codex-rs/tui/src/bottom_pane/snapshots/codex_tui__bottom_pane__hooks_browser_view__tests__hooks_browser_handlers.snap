@@ -1,0 +1,19 @@
+---
+source: tui/src/bottom_pane/hooks_browser_view.rs
+expression: "render_lines(&view, 112)"
+---
+                                                                                                                
+  PreToolUse hooks                                                                                              
+  Turn hooks on or off. Your changes are saved automatically.                                                   
+                                                                                                                
+  [x] Hook 1 - superpowers@openai-curated                                                                       
+  [ ] Hook 2 - [Config]                                                                                         
+                                                                                                                
+  Event     PreToolUse                                                                                          
+  Matcher   Bash                                                                                                
+  Source    [Plugin] superpowers@openai-curated                                                                 
+  File      /tmp/hooks.json                                                                                     
+  Command   ${CODEX_PLUGIN_ROOT}/hooks/pre-tool-use-check.sh                                                    
+  Timeout   30s                                                                                                 
+                                                                                                                
+  Press space or enter to toggle; esc to go back

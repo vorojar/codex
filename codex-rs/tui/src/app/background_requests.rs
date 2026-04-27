@@ -89,6 +89,17 @@ impl App {
         });
     }
 
+    pub(super) fn fetch_hooks_list(&mut self, app_server: &AppServerSession, cwd: PathBuf) {
+        let request_handle = app_server.request_handle();
+        let app_event_tx = self.app_event_tx.clone();
+        tokio::spawn(async move {
+            let result = fetch_hooks_list(request_handle, cwd.clone())
+                .await
+                .map_err(|err| err.to_string());
+            app_event_tx.send(AppEvent::HooksLoaded { cwd, result });
+        });
+    }
+
     pub(super) fn fetch_plugin_detail(
         &mut self,
         app_server: &AppServerSession,
@@ -195,6 +206,23 @@ impl App {
                 enabled,
                 result,
             });
+        });
+    }
+
+    pub(super) fn set_hook_enabled(
+        &mut self,
+        app_server: &AppServerSession,
+        key: String,
+        enabled: bool,
+    ) {
+        let request_handle = app_server.request_handle();
+        let app_event_tx = self.app_event_tx.clone();
+        tokio::spawn(async move {
+            let result = write_hook_enabled(request_handle, key, enabled)
+                .await
+                .map(|_| ())
+                .map_err(|err| format!("Failed to update hook config: {err}"));
+            app_event_tx.send(AppEvent::HookEnabledSet { result });
         });
     }
 
@@ -490,6 +518,20 @@ pub(super) async fn fetch_plugins_list(
     Ok(response)
 }
 
+pub(super) async fn fetch_hooks_list(
+    request_handle: AppServerRequestHandle,
+    cwd: PathBuf,
+) -> Result<HooksListResponse> {
+    let request_id = RequestId::String(format!("hooks-list-{}", Uuid::new_v4()));
+    request_handle
+        .request_typed(ClientRequest::HooksList {
+            request_id,
+            params: HooksListParams { cwds: vec![cwd] },
+        })
+        .await
+        .wrap_err("hooks/list failed in TUI")
+}
+
 const CLI_HIDDEN_PLUGIN_MARKETPLACES: &[&str] = &["openai-bundled"];
 
 pub(super) fn hide_cli_only_plugin_marketplaces(response: &mut PluginListResponse) {
@@ -561,6 +603,21 @@ pub(super) async fn write_plugin_enabled(
         })
         .await
         .wrap_err("config/value/write failed while updating plugin enablement in TUI")
+}
+
+pub(super) async fn write_hook_enabled(
+    request_handle: AppServerRequestHandle,
+    key: String,
+    enabled: bool,
+) -> Result<codex_app_server_protocol::HooksConfigWriteResponse> {
+    let request_id = RequestId::String(format!("hooks-config-write-{}", Uuid::new_v4()));
+    request_handle
+        .request_typed(ClientRequest::HooksConfigWrite {
+            request_id,
+            params: HooksConfigWriteParams { key, enabled },
+        })
+        .await
+        .wrap_err("hooks/config/write failed while updating hook enablement in TUI")
 }
 
 pub(super) fn build_feedback_upload_params(
