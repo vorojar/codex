@@ -10589,7 +10589,8 @@ mod tests {
     fn requested_permissions_trust_project_uses_permission_profile_intent() {
         let cwd = test_path_buf("/tmp/project").abs();
         let full_access_profile = codex_protocol::models::PermissionProfile::Disabled;
-        let workspace_write_profile = codex_protocol::models::PermissionProfile::workspace_write();
+        let workspace_write_profile =
+            codex_protocol::models::PermissionProfile::legacy_workspace_write_template();
         let read_only_profile = codex_protocol::models::PermissionProfile::read_only();
         let split_write_profile =
             codex_protocol::models::PermissionProfile::from_runtime_permissions(

@@ -2212,7 +2212,7 @@ async fn inactive_thread_approval_bubbles_into_active_view() -> Result<()> {
             ThreadSessionState {
                 approval_policy: AskForApproval::OnRequest,
                 sandbox_policy: SandboxPolicy::new_workspace_write_policy(),
-                permission_profile: Some(PermissionProfile::workspace_write()),
+                permission_profile: Some(PermissionProfile::legacy_workspace_write_template()),
                 rollout_path: Some(test_path_buf("/tmp/agent-rollout.jsonl")),
                 ..test_thread_session(agent_thread_id, test_path_buf("/tmp/agent"))
             },
@@ -2372,7 +2372,7 @@ async fn side_defers_subagent_approval_overlay_until_side_exits() -> Result<()> 
             ThreadSessionState {
                 approval_policy: AskForApproval::OnRequest,
                 sandbox_policy: SandboxPolicy::new_workspace_write_policy(),
-                permission_profile: Some(PermissionProfile::workspace_write()),
+                permission_profile: Some(PermissionProfile::legacy_workspace_write_template()),
                 rollout_path: Some(test_path_buf("/tmp/agent-rollout.jsonl")),
                 ..test_thread_session(agent_thread_id, test_path_buf("/tmp/agent"))
             },
@@ -2664,7 +2664,7 @@ async fn inactive_thread_approval_badge_clears_after_turn_completion_notificatio
             ThreadSessionState {
                 approval_policy: AskForApproval::OnRequest,
                 sandbox_policy: SandboxPolicy::new_workspace_write_policy(),
-                permission_profile: Some(PermissionProfile::workspace_write()),
+                permission_profile: Some(PermissionProfile::legacy_workspace_write_template()),
                 rollout_path: Some(test_path_buf("/tmp/agent-rollout.jsonl")),
                 ..test_thread_session(agent_thread_id, test_path_buf("/tmp/agent"))
             },
@@ -2718,7 +2718,7 @@ async fn inactive_thread_started_notification_initializes_replay_session() -> Re
     let primary_session = ThreadSessionState {
         approval_policy: AskForApproval::OnRequest,
         sandbox_policy: SandboxPolicy::new_workspace_write_policy(),
-        permission_profile: Some(PermissionProfile::workspace_write()),
+        permission_profile: Some(PermissionProfile::legacy_workspace_write_template()),
         ..test_thread_session(main_thread_id, test_path_buf("/tmp/main"))
     };
 
@@ -2831,7 +2831,7 @@ async fn inactive_thread_started_notification_preserves_primary_model_when_path_
     let primary_session = ThreadSessionState {
         approval_policy: AskForApproval::OnRequest,
         sandbox_policy: SandboxPolicy::new_workspace_write_policy(),
-        permission_profile: Some(PermissionProfile::workspace_write()),
+        permission_profile: Some(PermissionProfile::legacy_workspace_write_template()),
         ..test_thread_session(main_thread_id, test_path_buf("/tmp/main"))
     };
 
@@ -2900,7 +2900,7 @@ async fn thread_read_session_state_does_not_reuse_primary_permission_profile() {
     let primary_session = ThreadSessionState {
         approval_policy: AskForApproval::OnRequest,
         sandbox_policy: SandboxPolicy::new_workspace_write_policy(),
-        permission_profile: Some(PermissionProfile::workspace_write()),
+        permission_profile: Some(PermissionProfile::legacy_workspace_write_template()),
         ..test_thread_session(main_thread_id, test_path_buf("/tmp/main"))
     };
     app.primary_session_configured = Some(primary_session);

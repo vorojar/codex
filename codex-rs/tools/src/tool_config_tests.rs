@@ -60,7 +60,7 @@ fn unified_exec_is_blocked_for_windows_managed_profiles_only() {
     ));
     assert!(!unified_exec_allowed_in_environment(
         /*is_windows*/ true,
-        &PermissionProfile::workspace_write(),
+        &PermissionProfile::legacy_workspace_write_template(),
         WindowsSandboxLevel::RestrictedToken,
     ));
     assert!(unified_exec_allowed_in_environment(

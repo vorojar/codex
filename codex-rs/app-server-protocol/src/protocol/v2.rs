@@ -1434,7 +1434,7 @@ v2_enum_from_core!(
 pub enum FileSystemSpecialPath {
     Root,
     Minimal,
-    CurrentWorkingDirectory,
+    #[serde(alias = "current_working_directory")]
     ProjectRoots {
         subpath: Option<PathBuf>,
     },
@@ -1451,7 +1451,6 @@ impl From<CoreFileSystemSpecialPath> for FileSystemSpecialPath {
         match value {
             CoreFileSystemSpecialPath::Root => Self::Root,
             CoreFileSystemSpecialPath::Minimal => Self::Minimal,
-            CoreFileSystemSpecialPath::CurrentWorkingDirectory => Self::CurrentWorkingDirectory,
             CoreFileSystemSpecialPath::ProjectRoots { subpath } => Self::ProjectRoots { subpath },
             CoreFileSystemSpecialPath::Tmpdir => Self::Tmpdir,
             CoreFileSystemSpecialPath::SlashTmp => Self::SlashTmp,
@@ -1465,7 +1464,6 @@ impl From<FileSystemSpecialPath> for CoreFileSystemSpecialPath {
         match value {
             FileSystemSpecialPath::Root => Self::Root,
             FileSystemSpecialPath::Minimal => Self::Minimal,
-            FileSystemSpecialPath::CurrentWorkingDirectory => Self::CurrentWorkingDirectory,
             FileSystemSpecialPath::ProjectRoots { subpath } => Self::ProjectRoots { subpath },
             FileSystemSpecialPath::Tmpdir => Self::Tmpdir,
             FileSystemSpecialPath::SlashTmp => Self::SlashTmp,
@@ -8016,6 +8014,28 @@ mod tests {
         assert_eq!(
             CoreFileSystemPermissions::from(permissions),
             core_permissions
+        );
+    }
+
+    #[test]
+    fn legacy_current_working_directory_special_path_deserializes_as_project_roots() {
+        let entry: FileSystemSandboxEntry = serde_json::from_value(json!({
+            "path": {
+                "type": "special",
+                "value": { "kind": "current_working_directory" },
+            },
+            "access": "write",
+        }))
+        .expect("legacy cwd special path should deserialize");
+
+        assert_eq!(
+            entry,
+            FileSystemSandboxEntry {
+                path: FileSystemPath::Special {
+                    value: FileSystemSpecialPath::ProjectRoots { subpath: None },
+                },
+                access: FileSystemAccessMode::Write,
+            }
         );
     }
 

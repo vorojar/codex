@@ -2855,7 +2855,7 @@ fn turn_environments_for_tests(
 }
 
 #[tokio::test]
-async fn session_configuration_apply_preserves_profile_file_system_policy_on_cwd_only_update() {
+async fn session_configuration_apply_materializes_project_roots_on_cwd_only_update() {
     let mut session_configuration = make_session_configuration_for_tests().await;
     let workspace = tempfile::tempdir().expect("create temp dir");
     let project_root = workspace.path().join("project");
@@ -2874,7 +2874,7 @@ async fn session_configuration_apply_preserves_profile_file_system_policy_on_cwd
     let file_system_sandbox_policy = FileSystemSandboxPolicy::restricted(vec![
         FileSystemSandboxEntry {
             path: FileSystemPath::Special {
-                value: FileSystemSpecialPath::CurrentWorkingDirectory,
+                value: FileSystemSpecialPath::project_roots(/*subpath*/ None),
             },
             access: FileSystemAccessMode::Write,
         },
@@ -2899,9 +2899,23 @@ async fn session_configuration_apply_preserves_profile_file_system_policy_on_cwd
         })
         .expect("cwd-only update should succeed");
 
+    let expected_file_system_policy =
+        file_system_sandbox_policy.materialize_project_roots_with_cwd(original_cwd.as_path());
     assert_eq!(
         updated.file_system_sandbox_policy(),
-        file_system_sandbox_policy
+        expected_file_system_policy
+    );
+    assert!(
+        updated
+            .file_system_sandbox_policy()
+            .can_write_path_with_cwd(original_cwd.as_path(), updated.cwd.as_path()),
+        "project root grant should remain anchored to the original root"
+    );
+    assert!(
+        !updated
+            .file_system_sandbox_policy()
+            .can_write_path_with_cwd(updated.cwd.as_path(), updated.cwd.as_path()),
+        "cwd-only update must not rebind :project_roots to the new cwd"
     );
 }
 
@@ -3090,7 +3104,7 @@ enabled = false
 }
 
 #[tokio::test]
-async fn session_configuration_apply_rederives_legacy_file_system_policy_on_cwd_update() {
+async fn session_configuration_apply_keeps_legacy_project_root_anchored_on_cwd_update() {
     let mut session_configuration = make_session_configuration_for_tests().await;
     let workspace = tempfile::tempdir().expect("create temp dir");
     let project_root = workspace.path().join("project");
@@ -3121,15 +3135,17 @@ async fn session_configuration_apply_rederives_legacy_file_system_policy_on_cwd_
         })
         .expect("cwd-only update should succeed");
 
-    let expected_file_system_policy = FileSystemSandboxPolicy::from_legacy_sandbox_policy_for_cwd(
-        &updated.sandbox_policy(),
-        &project_root,
+    let expected_file_system_policy =
+        file_system_sandbox_policy.materialize_project_roots_with_cwd(original_cwd.as_path());
+    assert_eq!(
+        updated.file_system_sandbox_policy(),
+        expected_file_system_policy
     );
     assert!(
-        updated
+        !updated
             .file_system_sandbox_policy()
-            .is_semantically_equivalent_to(&expected_file_system_policy, &project_root),
-        "cwd-only update should rederive the legacy filesystem policy for the new cwd"
+            .can_write_path_with_cwd(project_root.as_path(), project_root.as_path()),
+        "cwd-only update should not grant write access to the new cwd"
     );
 }
 
@@ -3187,7 +3203,7 @@ async fn session_configuration_apply_preserves_absolute_cwd_write_root_on_cwd_up
         !updated
             .file_system_sandbox_policy()
             .can_write_path_with_cwd(next_cwd.as_path(), updated.cwd.as_path()),
-        "cwd-only update must not reinterpret an absolute old-cwd grant as :cwd"
+        "cwd-only update must not reinterpret an absolute old-cwd grant as :project_roots"
     );
 }
 
@@ -3850,7 +3866,7 @@ async fn request_permissions_response_materializes_session_cwd_grants_before_rec
         file_system: Some(FileSystemPermissions {
             entries: vec![FileSystemSandboxEntry {
                 path: FileSystemPath::Special {
-                    value: FileSystemSpecialPath::CurrentWorkingDirectory,
+                    value: FileSystemSpecialPath::project_roots(/*subpath*/ None),
                 },
                 access: FileSystemAccessMode::Write,
             }],

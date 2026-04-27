@@ -309,7 +309,7 @@ async fn model_provided_unified_exec_is_blocked_for_windows_sandboxed_policies()
         image_generation_tool_auth_allowed: true,
         web_search_mode: Some(WebSearchMode::Cached),
         session_source: SessionSource::Cli,
-        permission_profile: &PermissionProfile::workspace_write(),
+        permission_profile: &PermissionProfile::legacy_workspace_write_template(),
         windows_sandbox_level: WindowsSandboxLevel::RestrictedToken,
     });
 
