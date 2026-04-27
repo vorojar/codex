@@ -257,7 +257,7 @@ impl HooksBrowserView {
                 if hook.is_managed {
                     line = line.dim();
                 }
-                if self.state.selected_idx == Some(idx) && !hook.is_managed {
+                if self.state.selected_idx == Some(idx) {
                     line = line.cyan().bold();
                 }
                 line
@@ -466,7 +466,12 @@ impl Renderable for HooksBrowserView {
                 ])
                 .areas(content_area);
                 Paragraph::new(lines.clone()).render(header_area, buf);
-                Paragraph::new(rows).render(list_area, buf);
+                let visible_rows = rows
+                    .into_iter()
+                    .skip(self.state.scroll_top)
+                    .take(list_height as usize)
+                    .collect::<Vec<_>>();
+                Paragraph::new(visible_rows).render(list_area, buf);
                 let mut detail_lines = vec![Line::default()];
                 detail_lines.extend(self.detail_lines(event_name, width));
                 Paragraph::new(detail_lines).render(detail_area, buf);
@@ -679,6 +684,70 @@ mod tests {
         view.handle_key_event(KeyEvent::from(KeyCode::Enter));
         assert_snapshot!(
             "hooks_browser_managed_handler",
+            render_lines(&view, /*width*/ 112)
+        );
+    }
+
+    #[test]
+    fn renders_selected_managed_handler() {
+        let (tx_raw, _rx) = unbounded_channel::<AppEvent>();
+        let mut view = HooksBrowserView::new(
+            vec![
+                hook(
+                    "path:managed-1",
+                    HookEventName::PreToolUse,
+                    HookSource::System,
+                    None,
+                    "/enterprise/hooks/pre-tool-use-1.sh",
+                    /*enabled*/ true,
+                    /*is_managed*/ true,
+                    /*display_order*/ 0,
+                ),
+                hook(
+                    "path:managed-2",
+                    HookEventName::PreToolUse,
+                    HookSource::System,
+                    None,
+                    "/enterprise/hooks/pre-tool-use-2.sh",
+                    /*enabled*/ true,
+                    /*is_managed*/ true,
+                    /*display_order*/ 1,
+                ),
+            ],
+            AppEventSender::new(tx_raw),
+        );
+        view.handle_key_event(KeyEvent::from(KeyCode::Enter));
+        view.handle_key_event(KeyEvent::from(KeyCode::Down));
+        assert_snapshot!(
+            "hooks_browser_selected_managed_handler",
+            render_lines(&view, /*width*/ 112)
+        );
+    }
+
+    #[test]
+    fn renders_scrolled_handler_window() {
+        let (tx_raw, _rx) = unbounded_channel::<AppEvent>();
+        let hooks = (0..=MAX_POPUP_ROWS)
+            .map(|idx| {
+                hook(
+                    &format!("path:hook-{idx}"),
+                    HookEventName::PreToolUse,
+                    HookSource::User,
+                    None,
+                    &format!("/tmp/hook-{idx}.sh"),
+                    /*enabled*/ true,
+                    /*is_managed*/ false,
+                    idx as i64,
+                )
+            })
+            .collect();
+        let mut view = HooksBrowserView::new(hooks, AppEventSender::new(tx_raw));
+        view.handle_key_event(KeyEvent::from(KeyCode::Enter));
+        for _ in 0..MAX_POPUP_ROWS {
+            view.handle_key_event(KeyEvent::from(KeyCode::Down));
+        }
+        assert_snapshot!(
+            "hooks_browser_scrolled_handlers",
             render_lines(&view, /*width*/ 112)
         );
     }
