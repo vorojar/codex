@@ -136,6 +136,30 @@ fn load_sources(plugin_root: &AbsolutePathBuf) -> Vec<PluginHookSource> {
     load_plugin_hooks(plugin_root, &plugin_id(), &manifest.paths)
 }
 
+fn assert_sources(sources: &[PluginHookSource], expected_relative_paths: &[&str]) {
+    assert_eq!(
+        sources
+            .iter()
+            .map(|source| source.plugin_id.clone())
+            .collect::<Vec<_>>(),
+        vec![plugin_id(); expected_relative_paths.len()]
+    );
+    assert_eq!(
+        sources
+            .iter()
+            .map(|source| source.source_relative_path.as_str())
+            .collect::<Vec<_>>(),
+        expected_relative_paths
+    );
+    assert_eq!(
+        sources
+            .iter()
+            .map(|source| source.hooks.handler_count())
+            .collect::<Vec<_>>(),
+        vec![1; expected_relative_paths.len()]
+    );
+}
+
 #[test]
 fn load_plugin_hooks_discovers_default_hooks_file() {
     let (_tmp, plugin_root) = plugin_root();
@@ -157,10 +181,7 @@ fn load_plugin_hooks_discovers_default_hooks_file() {
 
     let sources = load_sources(&plugin_root);
 
-    assert_eq!(sources.len(), 1);
-    assert_eq!(sources[0].plugin_id, plugin_id());
-    assert_eq!(sources[0].source_relative_path, "hooks/hooks.json");
-    assert_eq!(sources[0].hooks.handler_count(), 1);
+    assert_sources(&sources, &["hooks/hooks.json"]);
 }
 
 #[test]
@@ -177,14 +198,7 @@ fn load_plugin_hooks_supports_manifest_hook_path() {
 
     let sources = load_sources(&plugin_root);
 
-    assert_eq!(
-        sources
-            .iter()
-            .map(|source| source.source_relative_path.as_str())
-            .collect::<Vec<_>>(),
-        vec!["hooks/one.json"]
-    );
-    assert_eq!(sources[0].hooks.handler_count(), 1);
+    assert_sources(&sources, &["hooks/one.json"]);
 }
 
 #[test]
@@ -208,20 +222,7 @@ fn load_plugin_hooks_manifest_paths_replace_default_hooks_file() {
 
     let sources = load_sources(&plugin_root);
 
-    assert_eq!(
-        sources
-            .iter()
-            .map(|source| source.source_relative_path.as_str())
-            .collect::<Vec<_>>(),
-        vec!["hooks/one.json", "hooks/two.json"]
-    );
-    assert_eq!(
-        sources
-            .iter()
-            .map(|source| source.hooks.handler_count())
-            .collect::<Vec<_>>(),
-        vec![1, 1]
-    );
+    assert_sources(&sources, &["hooks/one.json", "hooks/two.json"]);
 }
 
 #[test]
@@ -246,9 +247,7 @@ fn load_plugin_hooks_supports_inline_manifest_hooks() {
 
     let sources = load_sources(&plugin_root);
 
-    assert_eq!(sources.len(), 1);
-    assert_eq!(sources[0].source_relative_path, "plugin.json#hooks[0]");
-    assert_eq!(sources[0].hooks.handler_count(), 1);
+    assert_sources(&sources, &["plugin.json#hooks[0]"]);
 }
 
 #[test]
@@ -283,20 +282,7 @@ fn load_plugin_hooks_supports_inline_manifest_hook_list() {
 
     let sources = load_sources(&plugin_root);
 
-    assert_eq!(
-        sources
-            .iter()
-            .map(|source| source.source_relative_path.as_str())
-            .collect::<Vec<_>>(),
-        vec!["plugin.json#hooks[0]", "plugin.json#hooks[1]"]
-    );
-    assert_eq!(
-        sources
-            .iter()
-            .map(|source| source.hooks.handler_count())
-            .collect::<Vec<_>>(),
-        vec![1, 1]
-    );
+    assert_sources(&sources, &["plugin.json#hooks[0]", "plugin.json#hooks[1]"]);
 }
 
 #[test]
