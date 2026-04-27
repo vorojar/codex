@@ -65,12 +65,18 @@ fn main() -> anyhow::Result<()> {
         let transport = args.listen;
         let session_source = args.session_source;
         let auth = args.auth.try_into_settings()?;
-        let mut runtime_options = AppServerRuntimeOptions::default();
-        runtime_options.identity_key = args.identity_key.map(IdentityKey::from_os_string);
         #[cfg(debug_assertions)]
-        if args.disable_plugin_startup_tasks_for_tests {
-            runtime_options.plugin_startup_tasks = PluginStartupTasks::Skip;
-        }
+        let plugin_startup_tasks = if args.disable_plugin_startup_tasks_for_tests {
+            PluginStartupTasks::Skip
+        } else {
+            PluginStartupTasks::Start
+        };
+        #[cfg(not(debug_assertions))]
+        let plugin_startup_tasks = PluginStartupTasks::Start;
+        let runtime_options = AppServerRuntimeOptions {
+            plugin_startup_tasks,
+            identity_key: args.identity_key.map(IdentityKey::from_os_string),
+        };
 
         run_main_with_transport_options(
             arg0_paths,
