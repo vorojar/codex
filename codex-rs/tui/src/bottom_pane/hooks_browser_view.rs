@@ -409,7 +409,7 @@ impl Renderable for HooksBrowserView {
         let content_width = width.saturating_sub(4) as usize;
         let height = match self.page {
             HooksBrowserPage::Events => {
-                Self::event_header_lines().len() + 2 + self.event_table_lines().len()
+                Self::event_header_lines().len() + 1 + self.event_table_lines().len()
             }
             HooksBrowserPage::Handlers(event_name) => {
                 let row_count = self.handler_row_lines(event_name, content_width).len();
@@ -436,7 +436,7 @@ impl Renderable for HooksBrowserView {
             Layout::vertical([Constraint::Fill(1), Constraint::Length(1)]).areas(area);
         let content_area = render_menu_surface(content_area, buf);
         let width = content_area.width as usize;
-        let mut lines = match self.page {
+        let lines = match self.page {
             HooksBrowserPage::Events => {
                 let mut lines = Self::event_header_lines();
                 lines.push(Line::default());
@@ -474,7 +474,6 @@ impl Renderable for HooksBrowserView {
                 return;
             }
         };
-        lines.push(Line::default());
         Paragraph::new(lines).render(content_area, buf);
         self.render_footer(footer_area, buf);
     }
@@ -598,7 +597,6 @@ mod tests {
         event_name: HookEventName,
         source: HookSource,
         plugin_id: Option<&str>,
-        plugin_description: Option<&str>,
         command: &str,
         enabled: bool,
         is_managed: bool,
@@ -616,7 +614,6 @@ mod tests {
             source_path: test_path_buf("/tmp/hooks.json").abs(),
             source,
             plugin_id: plugin_id.map(str::to_string),
-            plugin_description: plugin_description.map(str::to_string),
             source_relative_path: None,
             display_order,
             enabled,
@@ -632,9 +629,6 @@ mod tests {
                     HookEventName::PreToolUse,
                     HookSource::Plugin,
                     Some("superpowers@openai-curated"),
-                    Some(
-                        "An agentic skills framework & software development methodology that works: planning, TDD, debugging, and collaboration workflows.",
-                    ),
                     "${CODEX_PLUGIN_ROOT}/hooks/pre-tool-use-check.sh",
                     /*enabled*/ true,
                     /*is_managed*/ false,
@@ -645,7 +639,6 @@ mod tests {
                     HookEventName::PreToolUse,
                     HookSource::User,
                     None,
-                    None,
                     "~/bin/check-shell-with-a-command-that-is-way-too-long-for-the-summary-column.sh",
                     /*enabled*/ false,
                     /*is_managed*/ false,
@@ -655,7 +648,6 @@ mod tests {
                     "path:managed",
                     HookEventName::PermissionRequest,
                     HookSource::System,
-                    None,
                     None,
                     "/enterprise/hooks/permission-check.sh",
                     /*enabled*/ true,
@@ -712,7 +704,6 @@ mod tests {
                 HookEventName::PreToolUse,
                 HookSource::Plugin,
                 Some("superpowers@openai-curated"),
-                None,
                 "hooks/pre-tool-use-check.sh",
                 /*enabled*/ true,
                 /*is_managed*/ false,
@@ -741,7 +732,6 @@ mod tests {
                 HookEventName::PreToolUse,
                 HookSource::Plugin,
                 Some("superpowers@openai-curated"),
-                None,
                 "hooks/pre-tool-use-check.sh",
                 /*enabled*/ true,
                 /*is_managed*/ false,
@@ -769,7 +759,6 @@ mod tests {
                 "path:managed",
                 HookEventName::PreToolUse,
                 HookSource::System,
-                None,
                 None,
                 "/enterprise/hooks/pre-tool-use-check.sh",
                 /*enabled*/ true,

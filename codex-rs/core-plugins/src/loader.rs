@@ -26,7 +26,6 @@ use codex_plugin::PluginId;
 use codex_plugin::PluginIdError;
 use codex_plugin::PluginLoadOutcome;
 use codex_plugin::PluginTelemetryMetadata;
-use codex_plugin::prompt_safe_plugin_description;
 use codex_protocol::protocol::Product;
 use codex_protocol::protocol::SkillScope;
 use codex_utils_absolute_path::AbsolutePathBuf;
@@ -552,12 +551,7 @@ async fn load_plugin(
     }
     loaded_plugin.mcp_servers = mcp_servers;
     loaded_plugin.apps = load_plugin_apps(plugin_root.as_path()).await;
-    loaded_plugin.hook_sources = load_plugin_hooks(
-        &plugin_root,
-        &loaded_plugin_id,
-        manifest_paths,
-        prompt_safe_plugin_description(loaded_plugin.manifest_description.as_deref()),
-    );
+    loaded_plugin.hook_sources = load_plugin_hooks(&plugin_root, &loaded_plugin_id, manifest_paths);
     loaded_plugin
 }
 
@@ -694,15 +688,12 @@ pub fn load_plugin_hooks(
     plugin_root: &AbsolutePathBuf,
     plugin_id: &PluginId,
     manifest_paths: &PluginManifestPaths,
-    plugin_description: Option<String>,
 ) -> Vec<PluginHookSource> {
     let mut sources = Vec::new();
     match &manifest_paths.hooks {
         Some(PluginManifestHooks::Paths(paths)) => {
             for path in paths {
-                if let Some(source) =
-                    load_plugin_hook_file(plugin_root, plugin_id, path, plugin_description.clone())
-                {
+                if let Some(source) = load_plugin_hook_file(plugin_root, plugin_id, path) {
                     sources.push(source);
                 }
             }
@@ -720,7 +711,6 @@ pub fn load_plugin_hooks(
                     plugin_root: plugin_root.clone(),
                     source_path: manifest_path.clone(),
                     source_relative_path: format!("plugin.json#hooks[{index}]"),
-                    plugin_description: plugin_description.clone(),
                     hooks: hooks_file.hooks.clone(),
                 });
             }
@@ -728,12 +718,7 @@ pub fn load_plugin_hooks(
         None => {
             let default_path = plugin_root.join(DEFAULT_HOOKS_CONFIG_FILE);
             if default_path.as_path().is_file()
-                && let Some(source) = load_plugin_hook_file(
-                    plugin_root,
-                    plugin_id,
-                    &default_path,
-                    plugin_description.clone(),
-                )
+                && let Some(source) = load_plugin_hook_file(plugin_root, plugin_id, &default_path)
             {
                 sources.push(source);
             }
@@ -748,7 +733,6 @@ fn load_plugin_hook_file(
     plugin_root: &AbsolutePathBuf,
     plugin_id: &PluginId,
     path: &AbsolutePathBuf,
-    plugin_description: Option<String>,
 ) -> Option<PluginHookSource> {
     let contents = match fs::read_to_string(path.as_path()) {
         Ok(contents) => contents,
@@ -786,7 +770,6 @@ fn load_plugin_hook_file(
         plugin_root: plugin_root.clone(),
         source_path: path.clone(),
         source_relative_path,
-        plugin_description,
         hooks: parsed.hooks,
     })
 }

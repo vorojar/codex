@@ -41,7 +41,6 @@ struct HookHandlerSource<'a> {
     hook_config_rules: &'a HookConfigRules,
     env: HashMap<String, String>,
     plugin_id: Option<String>,
-    plugin_description: Option<String>,
     source_relative_path: Option<String>,
 }
 
@@ -119,7 +118,6 @@ pub(crate) fn discover_handlers(
                     hook_config_rules: &hook_config_rules,
                     env: HashMap::new(),
                     plugin_id: None,
-                    plugin_description: None,
                     source_relative_path: None,
                 },
                 hook_events,
@@ -140,7 +138,6 @@ pub(crate) fn discover_handlers(
                     hook_config_rules: &hook_config_rules,
                     env: HashMap::new(),
                     plugin_id: None,
-                    plugin_description: None,
                     source_relative_path: None,
                 },
                 hook_events,
@@ -193,7 +190,6 @@ fn append_managed_requirement_handlers(
             hook_config_rules,
             env: HashMap::new(),
             plugin_id: None,
-            plugin_description: None,
             source_relative_path: None,
         },
         managed_hooks.get().hooks.clone(),
@@ -215,7 +211,6 @@ fn append_plugin_hook_sources(
             plugin_id,
             source_path,
             source_relative_path,
-            plugin_description,
             hooks,
         } = source;
         let mut env = HashMap::new();
@@ -237,7 +232,6 @@ fn append_plugin_hook_sources(
                 hook_config_rules,
                 env,
                 plugin_id: Some(plugin_id),
-                plugin_description,
                 source_relative_path: Some(source_relative_path),
             },
             hooks,
@@ -467,7 +461,6 @@ fn append_matcher_groups(
                         source_path: source.path.clone(),
                         source: source.source,
                         plugin_id: source.plugin_id.clone(),
-                        plugin_description: source.plugin_description.clone(),
                         source_relative_path: source.source_relative_path.clone(),
                         display_order: *display_order,
                         enabled,
@@ -578,7 +571,6 @@ mod tests {
             hook_config_rules,
             env: std::collections::HashMap::new(),
             plugin_id: None,
-            plugin_description: None,
             source_relative_path: None,
         }
     }

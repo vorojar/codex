@@ -482,7 +482,6 @@ Path(r"{log_path}").write_text(json.dumps({{
         plugin_root: plugin_root.clone(),
         source_path: source_path.clone(),
         source_relative_path: "hooks/hooks.json".to_string(),
-        plugin_description: Some("Demo plugin hook support.".to_string()),
         hooks: HookEventsToml {
             pre_tool_use: vec![MatcherGroup {
                 matcher: Some("Bash".to_string()),
@@ -530,8 +529,8 @@ Path(r"{log_path}").write_text(json.dumps({{
         shell_args: Vec::new(),
     });
     assert_eq!(
-        listed.hooks[0].plugin_description.as_deref(),
-        Some("Demo plugin hook support.")
+        listed.hooks[0].plugin_id.as_deref(),
+        Some("demo-plugin@test-marketplace")
     );
 
     let outcome = engine

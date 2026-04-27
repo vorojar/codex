@@ -9524,7 +9524,6 @@ fn hooks_to_info(hooks: &[codex_core::hooks::HookListEntry]) -> Vec<HookMetadata
             source_path: hook.source_path.clone(),
             source: hook.source.into(),
             plugin_id: hook.plugin_id.clone(),
-            plugin_description: hook.plugin_description.clone(),
             source_relative_path: hook.source_relative_path.clone(),
             display_order: hook.display_order,
             enabled: hook.enabled,

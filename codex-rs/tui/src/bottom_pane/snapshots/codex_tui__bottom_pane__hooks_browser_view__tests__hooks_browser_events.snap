@@ -14,5 +14,4 @@ expression: "render_lines(&view, 112)"
   UserPromptSubmit      0           0           When the user submits a prompt                                  
   Stop                  0           0           Before Codex concludes a response                               
                                                                                                                 
-                                                                                                                
   Press enter to view hooks; esc to close

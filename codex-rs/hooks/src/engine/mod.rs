@@ -82,7 +82,6 @@ pub struct HookListEntry {
     pub source_path: AbsolutePathBuf,
     pub source: HookSource,
     pub plugin_id: Option<String>,
-    pub plugin_description: Option<String>,
     pub source_relative_path: Option<String>,
     pub display_order: i64,
     pub enabled: bool,

@@ -72,12 +72,6 @@
             "null"
           ]
         },
-        "pluginDescription": {
-          "type": [
-            "string",
-            "null"
-          ]
-        },
         "pluginId": {
           "type": [
             "string",

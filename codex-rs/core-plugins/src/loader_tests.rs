@@ -133,7 +133,7 @@ fn write_hook_file(plugin_root: &AbsolutePathBuf, relative_path: &str, event: &s
 
 fn load_sources(plugin_root: &AbsolutePathBuf) -> Vec<PluginHookSource> {
     let manifest = load_plugin_manifest(plugin_root.as_path()).expect("manifest");
-    load_plugin_hooks(plugin_root, &plugin_id(), &manifest.paths, None)
+    load_plugin_hooks(plugin_root, &plugin_id(), &manifest.paths)
 }
 
 #[test]
