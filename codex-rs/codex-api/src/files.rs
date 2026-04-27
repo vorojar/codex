@@ -5,13 +5,17 @@ use std::time::Duration;
 use crate::AuthProvider;
 use codex_client::build_reqwest_client_with_custom_ca;
 use futures::StreamExt;
+use futures::TryStreamExt;
 use reqwest::StatusCode;
 use reqwest::header::CONTENT_LENGTH;
 use serde::Deserialize;
 use tokio::fs::File;
+use tokio::io::AsyncBufReadExt;
 use tokio::io::AsyncWriteExt;
+use tokio::io::BufReader;
 use tokio::time::Instant;
 use tokio_util::io::ReaderStream;
+use tokio_util::io::StreamReader;
 use url::Url;
 
 pub const OPENAI_FILE_URI_PREFIX: &str = "sediment://";
@@ -21,6 +25,7 @@ const OPENAI_FILE_REQUEST_TIMEOUT: Duration = Duration::from_secs(60);
 const OPENAI_FILE_FINALIZE_TIMEOUT: Duration = Duration::from_secs(30);
 const OPENAI_FILE_FINALIZE_RETRY_DELAY: Duration = Duration::from_millis(250);
 const OPENAI_FILE_USE_CASE: &str = "codex";
+
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct OpenAiFileUploadOptions {
     pub store_in_library: bool,
@@ -54,6 +59,12 @@ pub enum OpenAiFileError {
     #[error("path `{path}` cannot be read: {source}")]
     ReadFile {
         path: PathBuf,
+        #[source]
+        source: std::io::Error,
+    },
+    #[error("failed to read OpenAI file response from {url}: {source}")]
+    ReadResponse {
+        url: String,
         #[source]
         source: std::io::Error,
     },
@@ -415,10 +426,32 @@ async fn process_upload_stream(
             url: process_url.clone(),
             source,
         })?;
-    let process_body = response_text(&process_url, process_response).await?;
+    let status = process_response.status();
+    if !status.is_success() {
+        let body = process_response.text().await.unwrap_or_default();
+        return Err(OpenAiFileError::UnexpectedStatus {
+            url: process_url,
+            status,
+            body,
+        });
+    }
+
+    let process_stream = process_response
+        .bytes_stream()
+        .map_err(std::io::Error::other);
+    let process_reader = StreamReader::new(process_stream);
+    let mut process_lines = BufReader::new(process_reader).lines();
 
     let mut result = ProcessUploadStreamExtra::default();
-    for line in process_body.lines() {
+    while let Some(line) =
+        process_lines
+            .next_line()
+            .await
+            .map_err(|source| OpenAiFileError::ReadResponse {
+                url: process_url.clone(),
+                source,
+            })?
+    {
         let line = line.trim();
         if line.is_empty() {
             continue;
