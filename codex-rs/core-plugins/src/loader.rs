@@ -758,20 +758,20 @@ fn load_plugin_hook_file(
         return None;
     }
 
+    let source_relative_path = path
+        .as_path()
+        .strip_prefix(plugin_root.as_path())
+        .unwrap_or(path.as_path())
+        .to_string_lossy()
+        .replace('\\', "/");
+
     Some(PluginHookSource {
         plugin_id: plugin_id.clone(),
         plugin_root: plugin_root.clone(),
         source_path: path.clone(),
-        source_relative_path: plugin_relative_path(plugin_root.as_path(), path.as_path()),
+        source_relative_path,
         hooks: parsed.hooks,
     })
-}
-
-fn plugin_relative_path(plugin_root: &Path, path: &Path) -> String {
-    path.strip_prefix(plugin_root)
-        .unwrap_or(path)
-        .to_string_lossy()
-        .replace('\\', "/")
 }
 
 async fn load_apps_from_paths(
