@@ -1,6 +1,5 @@
 //! Captures lifecycle breadcrumbs for Responses streams so transport failures can
-//! include useful diagnostics in logs and error messages without changing API
-//! payload shapes.
+//! include useful diagnostics in logs and error messages.
 
 use crate::error::ApiError;
 use crate::sse::ResponsesStreamEvent;
