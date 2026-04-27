@@ -15,7 +15,11 @@ use codex_core::config::edit::ConfigEditsBuilder;
 use codex_core::config::find_codex_home;
 use codex_core::config::load_global_mcp_servers;
 use codex_core::plugins::PluginsManager;
+use codex_exec_server::CODEX_EXEC_SERVER_URL_ENV_VAR;
 use codex_exec_server::Environment;
+use codex_exec_server::EnvironmentManager;
+use codex_exec_server::EnvironmentManagerArgs;
+use codex_exec_server::ExecServerRuntimePaths;
 use codex_mcp::McpOAuthLoginSupport;
 use codex_mcp::McpRuntimeEnvironment;
 use codex_mcp::ResolvedMcpOAuthScopes;
@@ -485,6 +489,23 @@ async fn run_list(config_overrides: &CliConfigOverrides, list_args: ListArgs) ->
         config.codex_home.to_path_buf(),
     )));
     let mcp_servers = mcp_manager.effective_servers(&config, /*auth*/ None).await;
+    let local_runtime_paths = ExecServerRuntimePaths::from_optional_paths(
+        config.codex_self_exe.clone(),
+        config.codex_linux_sandbox_exe.clone(),
+    );
+    let environment = match local_runtime_paths {
+        Ok(local_runtime_paths) => {
+            let environment_manager =
+                EnvironmentManager::new(EnvironmentManagerArgs::from_env(local_runtime_paths));
+            environment_manager
+                .default_environment()
+                .unwrap_or_else(|| environment_manager.local_environment())
+        }
+        Err(_) => Arc::new(
+            Environment::create_for_tests(std::env::var(CODEX_EXEC_SERVER_URL_ENV_VAR).ok())
+                .unwrap_or_else(|_| Environment::default_for_tests()),
+        ),
+    };
 
     let mut entries: Vec<_> = mcp_servers.iter().collect();
     entries.sort_by(|(a, _), (b, _)| a.cmp(b));
@@ -492,10 +513,7 @@ async fn run_list(config_overrides: &CliConfigOverrides, list_args: ListArgs) ->
         mcp_servers.iter(),
         config.mcp_oauth_credentials_store_mode,
         /*auth*/ None,
-        McpRuntimeEnvironment::new(
-            Arc::new(Environment::default_for_tests()),
-            config.cwd.to_path_buf(),
-        ),
+        McpRuntimeEnvironment::new(environment, config.cwd.to_path_buf()),
     )
     .await;
 
