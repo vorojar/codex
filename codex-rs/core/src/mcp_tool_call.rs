@@ -532,6 +532,10 @@ async fn maybe_request_codex_apps_auth_elicitation(
         return result;
     }
 
+    if !turn_context.features.enabled(Feature::AuthElicitation) {
+        return result;
+    }
+
     let Some(auth_failure) = codex_apps_connector_auth_failure(&result, metadata) else {
         return result;
     };

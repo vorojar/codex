@@ -1,5 +1,6 @@
 use super::*;
 use crate::config::ConfigBuilder;
+use crate::config::ManagedFeatures;
 use crate::session::tests::make_session_and_context;
 use crate::session::tests::make_session_and_context_with_rx;
 use crate::state::ActiveTurn;
@@ -13,6 +14,7 @@ use codex_config::types::ApprovalsReviewer;
 use codex_config::types::AppsConfigToml;
 use codex_config::types::McpServerConfig;
 use codex_config::types::McpServerToolConfig;
+use codex_features::Features;
 use codex_hooks::Hooks;
 use codex_hooks::HooksConfig;
 use codex_model_provider::create_model_provider;
@@ -764,7 +766,26 @@ async fn codex_apps_tool_call_request_meta_includes_call_id_without_existing_cod
 
 #[test]
 fn codex_apps_auth_failure_meta_is_parsed_for_connector_elicitation() {
-    let result = CallToolResult {
+    let result = codex_apps_auth_failure_result();
+    let metadata = codex_apps_auth_failure_metadata();
+
+    assert_eq!(
+        codex_apps_connector_auth_failure(&result, Some(&metadata)),
+        Some(CodexAppsConnectorAuthFailure {
+            connector_id: "connector_calendar".to_string(),
+            connector_name: "Google Calendar".to_string(),
+            install_url: "https://chatgpt.com/apps/google-calendar/connector_calendar".to_string(),
+            auth_reason: Some("reauthentication_required".to_string()),
+            link_id: Some("link_123".to_string()),
+            error_code: Some("UNAUTHORIZED".to_string()),
+            error_http_status_code: Some(401),
+            error_action: Some("TRIGGER_REAUTHENTICATION".to_string()),
+        })
+    );
+}
+
+fn codex_apps_auth_failure_result() -> CallToolResult {
+    CallToolResult {
         content: vec![serde_json::json!({
             "type": "text",
             "text": "Connector reauthentication required",
@@ -784,27 +805,106 @@ fn codex_apps_auth_failure_meta_is_parsed_for_connector_elicitation() {
                 },
             },
         })),
-    };
-    let metadata = approval_metadata(
+    }
+}
+
+fn codex_apps_auth_failure_metadata() -> McpToolApprovalMetadata {
+    approval_metadata(
         Some("metadata_connector"),
         Some("Google Calendar"),
         Some("Manage events and schedules."),
         Some("Create Event"),
         Some("Create a calendar event."),
-    );
+    )
+}
 
+#[tokio::test]
+async fn codex_apps_auth_elicitation_feature_disabled_returns_original_result() {
+    let (session, turn_context, rx_event) = make_session_and_context_with_rx().await;
+    let result = codex_apps_auth_failure_result();
+    let metadata = codex_apps_auth_failure_metadata();
+
+    let returned = maybe_request_codex_apps_auth_elicitation(
+        &session,
+        &turn_context,
+        "call_123",
+        CODEX_APPS_MCP_SERVER_NAME,
+        Some(&metadata),
+        result.clone(),
+    )
+    .await;
+
+    assert_eq!(returned, result);
+    assert!(rx_event.try_recv().is_err());
+}
+
+#[tokio::test]
+async fn codex_apps_auth_elicitation_feature_enabled_requests_elicitation() {
+    let (session, mut turn_context, rx_event) = make_session_and_context_with_rx().await;
+    *session.active_turn.lock().await = Some(ActiveTurn::default());
+    let mut features = Features::with_defaults();
+    features.enable(Feature::AuthElicitation);
+    Arc::get_mut(&mut turn_context)
+        .expect("single turn context ref")
+        .features = ManagedFeatures::from(features);
+    let result = codex_apps_auth_failure_result();
+    let metadata = codex_apps_auth_failure_metadata();
+
+    let request_task = tokio::spawn({
+        let session = Arc::clone(&session);
+        let turn_context = Arc::clone(&turn_context);
+        async move {
+            maybe_request_codex_apps_auth_elicitation(
+                &session,
+                &turn_context,
+                "call_123",
+                CODEX_APPS_MCP_SERVER_NAME,
+                Some(&metadata),
+                result,
+            )
+            .await
+        }
+    });
+
+    let event = tokio::time::timeout(std::time::Duration::from_secs(1), rx_event.recv())
+        .await
+        .expect("elicitation event timed out")
+        .expect("expected elicitation event");
+    let EventMsg::ElicitationRequest(request) = event.msg else {
+        panic!("expected elicitation request");
+    };
+    assert_eq!(request.server_name, CODEX_APPS_MCP_SERVER_NAME);
     assert_eq!(
-        codex_apps_connector_auth_failure(&result, Some(&metadata)),
-        Some(CodexAppsConnectorAuthFailure {
-            connector_id: "connector_calendar".to_string(),
-            connector_name: "Google Calendar".to_string(),
-            install_url: "https://chatgpt.com/apps/google-calendar/connector_calendar".to_string(),
-            auth_reason: Some("reauthentication_required".to_string()),
-            link_id: Some("link_123".to_string()),
-            error_code: Some("UNAUTHORIZED".to_string()),
-            error_http_status_code: Some(401),
-            error_action: Some("TRIGGER_REAUTHENTICATION".to_string()),
-        })
+        request.id,
+        codex_protocol::mcp::RequestId::String("codex_apps_auth_call_123".to_string())
+    );
+    assert!(matches!(
+        request.request,
+        codex_protocol::approvals::ElicitationRequest::Url { .. }
+    ));
+
+    session
+        .resolve_elicitation(
+            CODEX_APPS_MCP_SERVER_NAME.to_string(),
+            rmcp::model::RequestId::String("codex_apps_auth_call_123".into()),
+            ElicitationResponse {
+                action: ElicitationAction::Accept,
+                content: None,
+                meta: None,
+            },
+        )
+        .await
+        .expect("elicitation should resolve");
+    let returned = tokio::time::timeout(std::time::Duration::from_secs(1), request_task)
+        .await
+        .expect("auth elicitation task timed out")
+        .expect("auth elicitation task failed");
+    assert_eq!(
+        returned.content,
+        vec![serde_json::json!({
+            "type": "text",
+            "text": "Authentication for Google Calendar was requested and accepted. Retry this tool call now.",
+        })]
     );
 }
 
