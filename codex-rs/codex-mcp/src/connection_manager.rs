@@ -564,6 +564,19 @@ impl McpConnectionManager {
             .server_supports_sandbox_state_meta_capability)
     }
 
+    pub async fn server_supports_subspan_tracing_for_tool(
+        &self,
+        server: &str,
+        tool: &str,
+    ) -> Result<bool> {
+        Ok(self
+            .client_by_name(server)
+            .await?
+            .subspan_tracing_capability
+            .as_ref()
+            .is_some_and(|capability| capability.supports_tool(tool)))
+    }
+
     /// List resources from the specified server.
     pub async fn list_resources(
         &self,

@@ -1035,6 +1035,83 @@ async fn codex_apps_tool_call_request_meta_includes_call_id_without_existing_cod
 }
 
 #[test]
+fn subspan_tracing_request_meta_includes_trace_context_when_supported() {
+    use opentelemetry::trace::TracerProvider as _;
+    use opentelemetry_sdk::trace::SdkTracerProvider;
+    use tracing_subscriber::prelude::*;
+
+    let provider = SdkTracerProvider::builder().build();
+    let tracer = provider.tracer("codex-core-mcp-tool-call-tests");
+    let subscriber =
+        tracing_subscriber::registry().with(tracing_opentelemetry::layer().with_tracer(tracer));
+    let _guard = tracing::subscriber::set_default(subscriber);
+
+    let span = tracing::info_span!("mcp.tools.call");
+    let _entered = span.enter();
+
+    let meta = augment_mcp_tool_request_meta_with_subspan_tracing_if_supported(
+        /*supports_subspan_tracing*/ true,
+        Some(serde_json::json!({
+            "threadId": "thread-live",
+        })),
+    )
+    .expect("meta");
+
+    let telemetry = meta
+        .get(MCP_TOOL_SUBSPAN_TRACING_META_KEY)
+        .expect("subspan tracing metadata");
+    assert_eq!(
+        telemetry.get("enabled"),
+        Some(&serde_json::Value::Bool(true))
+    );
+    assert_eq!(
+        telemetry.get("version"),
+        Some(&serde_json::json!(MCP_SUBSPAN_TRACING_VERSION))
+    );
+    assert!(
+        telemetry
+            .get("traceparent")
+            .and_then(serde_json::Value::as_str)
+            .is_some_and(|traceparent| traceparent.starts_with("00-"))
+    );
+    assert_eq!(
+        meta.get("threadId"),
+        Some(&serde_json::json!("thread-live"))
+    );
+}
+
+#[test]
+fn subspan_tracing_request_meta_is_only_added_when_supported_and_trace_context_exists() {
+    assert_eq!(
+        augment_mcp_tool_request_meta_with_subspan_tracing_if_supported(
+            /*supports_subspan_tracing*/ true,
+            Some(serde_json::json!({"threadId": "thread-live"})),
+        ),
+        Some(serde_json::json!({"threadId": "thread-live"}))
+    );
+
+    use opentelemetry::trace::TracerProvider as _;
+    use opentelemetry_sdk::trace::SdkTracerProvider;
+    use tracing_subscriber::prelude::*;
+
+    let provider = SdkTracerProvider::builder().build();
+    let tracer = provider.tracer("codex-core-mcp-tool-call-tests");
+    let subscriber =
+        tracing_subscriber::registry().with(tracing_opentelemetry::layer().with_tracer(tracer));
+    let _guard = tracing::subscriber::set_default(subscriber);
+    let span = tracing::info_span!("mcp.tools.call");
+    let _entered = span.enter();
+
+    assert_eq!(
+        augment_mcp_tool_request_meta_with_subspan_tracing_if_supported(
+            /*supports_subspan_tracing*/ false,
+            Some(serde_json::json!({"threadId": "thread-live"})),
+        ),
+        Some(serde_json::json!({"threadId": "thread-live"}))
+    );
+}
+
+#[test]
 fn mcp_tool_call_thread_id_meta_is_added_to_request_meta() {
     assert_eq!(
         with_mcp_tool_call_thread_id_meta(

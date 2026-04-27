@@ -40,6 +40,8 @@ use codex_config::types::AppToolApproval;
 use codex_features::Feature;
 use codex_hooks::PermissionRequestDecision;
 use codex_mcp::CODEX_APPS_MCP_SERVER_NAME;
+use codex_mcp::MCP_SUBSPAN_TRACING_CAPABILITY;
+use codex_mcp::MCP_SUBSPAN_TRACING_VERSION;
 use codex_mcp::McpPermissionPromptAutoApproveContext;
 use codex_mcp::SandboxState;
 use codex_mcp::declared_openai_file_input_param_names;
@@ -546,6 +548,9 @@ async fn execute_mcp_tool_call(
     request_meta: Option<JsonValue>,
 ) -> Result<CallToolResult, String> {
     let request_meta =
+        augment_mcp_tool_request_meta_with_subspan_tracing(sess, server, tool_name, request_meta)
+            .await;
+    let request_meta =
         with_mcp_tool_call_thread_id_meta(request_meta, &sess.conversation_id.to_string());
     let request_meta =
         augment_mcp_tool_request_meta_with_sandbox_state(sess, turn_context, server, request_meta)
@@ -837,6 +842,7 @@ const MCP_TOOL_CODEX_APPS_META_KEY: &str = "_codex_apps";
 const MCP_TOOL_OPENAI_OUTPUT_TEMPLATE_META_KEY: &str = "openai/outputTemplate";
 const MCP_TOOL_UI_RESOURCE_URI_META_KEY: &str = "ui/resourceUri";
 const MCP_TOOL_THREAD_ID_META_KEY: &str = "threadId";
+const MCP_TOOL_SUBSPAN_TRACING_META_KEY: &str = MCP_SUBSPAN_TRACING_CAPABILITY;
 
 async fn custom_mcp_tool_approval_mode(
     sess: &Session,
@@ -917,6 +923,79 @@ fn build_mcp_tool_call_request_meta(
     }
 
     (!request_meta.is_empty()).then_some(serde_json::Value::Object(request_meta))
+}
+
+#[expect(
+    clippy::await_holding_invalid_type,
+    reason = "MCP subspan metadata reads through the session-owned manager guard"
+)]
+async fn augment_mcp_tool_request_meta_with_subspan_tracing(
+    sess: &Session,
+    server: &str,
+    tool_name: &str,
+    meta: Option<serde_json::Value>,
+) -> Option<serde_json::Value> {
+    let supports_subspan_tracing = sess
+        .services
+        .mcp_connection_manager
+        .read()
+        .await
+        .server_supports_subspan_tracing_for_tool(server, tool_name)
+        .await
+        .unwrap_or(false);
+    augment_mcp_tool_request_meta_with_subspan_tracing_if_supported(supports_subspan_tracing, meta)
+}
+
+fn augment_mcp_tool_request_meta_with_subspan_tracing_if_supported(
+    supports_subspan_tracing: bool,
+    meta: Option<serde_json::Value>,
+) -> Option<serde_json::Value> {
+    if !supports_subspan_tracing {
+        return meta;
+    }
+
+    let Some(trace_context) = codex_otel::current_span_w3c_trace_context() else {
+        return meta;
+    };
+    let Some(traceparent) = trace_context.traceparent else {
+        return meta;
+    };
+
+    let mut telemetry_meta = serde_json::Map::new();
+    telemetry_meta.insert("enabled".to_string(), serde_json::Value::Bool(true));
+    telemetry_meta.insert(
+        "version".to_string(),
+        serde_json::Value::Number(MCP_SUBSPAN_TRACING_VERSION.into()),
+    );
+    telemetry_meta.insert(
+        "traceparent".to_string(),
+        serde_json::Value::String(traceparent),
+    );
+    if let Some(tracestate) = trace_context.tracestate {
+        telemetry_meta.insert(
+            "tracestate".to_string(),
+            serde_json::Value::String(tracestate),
+        );
+    }
+
+    match meta {
+        Some(serde_json::Value::Object(mut map)) => {
+            map.insert(
+                MCP_TOOL_SUBSPAN_TRACING_META_KEY.to_string(),
+                serde_json::Value::Object(telemetry_meta),
+            );
+            Some(serde_json::Value::Object(map))
+        }
+        None => {
+            let mut map = serde_json::Map::new();
+            map.insert(
+                MCP_TOOL_SUBSPAN_TRACING_META_KEY.to_string(),
+                serde_json::Value::Object(telemetry_meta),
+            );
+            Some(serde_json::Value::Object(map))
+        }
+        other => other,
+    }
 }
 
 fn with_mcp_tool_call_thread_id_meta(

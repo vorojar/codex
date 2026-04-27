@@ -7,7 +7,9 @@
 //! [`crate::connection_manager`].
 
 use std::borrow::Cow;
+use std::collections::BTreeMap;
 use std::collections::HashMap;
+use std::collections::HashSet;
 use std::env;
 use std::ffi::OsString;
 use std::sync::Arc;
@@ -50,6 +52,8 @@ use codex_rmcp_client::ExecutorStdioServerLauncher;
 use codex_rmcp_client::LocalStdioServerLauncher;
 use codex_rmcp_client::RmcpClient;
 use codex_rmcp_client::StdioServerLauncher;
+use codex_rmcp_client::StdioServerTelemetry;
+use codex_rmcp_client::StdioServerTelemetrySink;
 use futures::future::BoxFuture;
 use futures::future::FutureExt;
 use futures::future::Shared;
@@ -57,6 +61,7 @@ use rmcp::model::ClientCapabilities;
 use rmcp::model::ElicitationCapability;
 use rmcp::model::Implementation;
 use rmcp::model::InitializeRequestParams;
+use rmcp::model::JsonObject;
 use rmcp::model::ProtocolVersion;
 use rmcp::model::Tool as RmcpTool;
 use tokio_util::sync::CancellationToken;
@@ -65,6 +70,12 @@ use tracing::warn;
 /// MCP server capability indicating that Codex should include [`SandboxState`]
 /// in tool-call request `_meta` under this key.
 pub const MCP_SANDBOX_STATE_META_CAPABILITY: &str = "codex/sandbox-state-meta";
+/// MCP server capability indicating that Codex should include W3C trace context
+/// in tool-call request `_meta` so the server can emit reconstructed child spans.
+/// See `codex-rs/docs/mcp_subspan_tracing.md` for the protocol contract.
+pub const MCP_SUBSPAN_TRACING_CAPABILITY: &str = "codex/subspan-tracing";
+pub const MCP_SUBSPAN_TRACING_TRANSPORT_STDERR_JSONL: &str = "stderr-jsonl";
+pub const MCP_SUBSPAN_TRACING_VERSION: u64 = 1;
 
 pub(crate) const MCP_TOOLS_LIST_DURATION_METRIC: &str = "codex.mcp.tools.list.duration_ms";
 pub(crate) const MCP_TOOLS_FETCH_UNCACHED_DURATION_METRIC: &str =
@@ -88,7 +99,50 @@ pub(crate) struct ManagedClient {
     pub(crate) tool_timeout: Option<Duration>,
     pub(crate) server_instructions: Option<String>,
     pub(crate) server_supports_sandbox_state_meta_capability: bool,
+    pub(crate) subspan_tracing_capability: Option<McpSubspanTracingCapability>,
     pub(crate) codex_apps_tools_cache_context: Option<CodexAppsToolsCacheContext>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct McpSubspanTracingCapability {
+    tools: Option<HashSet<String>>,
+}
+
+impl McpSubspanTracingCapability {
+    fn from_experimental_capability(capability: &JsonObject) -> Option<Self> {
+        if capability
+            .get("version")
+            .and_then(serde_json::Value::as_u64)
+            != Some(MCP_SUBSPAN_TRACING_VERSION)
+        {
+            return None;
+        }
+
+        let supports_stderr_jsonl = capability
+            .get("transports")
+            .and_then(serde_json::Value::as_array)
+            .is_some_and(|transports| {
+                transports.iter().any(|transport| {
+                    transport.as_str() == Some(MCP_SUBSPAN_TRACING_TRANSPORT_STDERR_JSONL)
+                })
+            });
+        if !supports_stderr_jsonl {
+            return None;
+        }
+
+        let tools = capability
+            .get("tools")
+            .and_then(serde_json::Value::as_object)
+            .map(|tools| tools.keys().cloned().collect());
+
+        Some(Self { tools })
+    }
+
+    pub(crate) fn supports_tool(&self, tool_name: &str) -> bool {
+        self.tools
+            .as_ref()
+            .is_none_or(|tools| tools.contains(tool_name))
+    }
 }
 
 impl ManagedClient {
@@ -151,7 +205,9 @@ impl AsyncManagedClient {
         .map(|tools| filter_tools(tools, &tool_filter));
         let startup_tool_filter = tool_filter;
         let startup_complete = Arc::new(AtomicBool::new(false));
+        let subspan_tracing_enabled = Arc::new(AtomicBool::new(false));
         let startup_complete_for_fut = Arc::clone(&startup_complete);
+        let subspan_tracing_enabled_for_fut = Arc::clone(&subspan_tracing_enabled);
         let cancel_token_for_fut = cancel_token.clone();
         let fut = async move {
             let outcome = match async {
@@ -166,6 +222,7 @@ impl AsyncManagedClient {
                         store_mode,
                         runtime_environment,
                         runtime_auth_provider,
+                        Arc::clone(&subspan_tracing_enabled_for_fut),
                     )
                     .await?,
                 );
@@ -181,6 +238,7 @@ impl AsyncManagedClient {
                         tx_event,
                         elicitation_requests,
                         codex_apps_tools_cache_context,
+                        subspan_tracing_enabled: subspan_tracing_enabled_for_fut,
                     },
                 )
                 .await
@@ -456,12 +514,26 @@ async fn start_server_task(
         tx_event,
         elicitation_requests,
         codex_apps_tools_cache_context,
+        subspan_tracing_enabled,
     } = params;
     let elicitation = elicitation_capability_for_server(&server_name);
-    let params = InitializeRequestParams {
+    let mut subspan_tracing_capability = JsonObject::new();
+    subspan_tracing_capability.insert(
+        "version".to_string(),
+        serde_json::json!(MCP_SUBSPAN_TRACING_VERSION),
+    );
+    subspan_tracing_capability.insert(
+        "transports".to_string(),
+        serde_json::json!([MCP_SUBSPAN_TRACING_TRANSPORT_STDERR_JSONL]),
+    );
+    let client_experimental_capabilities = BTreeMap::from([(
+        MCP_SUBSPAN_TRACING_CAPABILITY.to_string(),
+        subspan_tracing_capability,
+    )]);
+    let initialize_params = InitializeRequestParams {
         meta: None,
         capabilities: ClientCapabilities {
-            experimental: None,
+            experimental: Some(client_experimental_capabilities),
             extensions: None,
             roots: None,
             sampling: None,
@@ -482,7 +554,7 @@ async fn start_server_task(
     let send_elicitation = elicitation_requests.make_sender(server_name.clone(), tx_event);
 
     let initialize_result = client
-        .initialize(params, startup_timeout, send_elicitation)
+        .initialize(initialize_params, startup_timeout, send_elicitation)
         .await
         .map_err(StartupOutcomeError::from)?;
 
@@ -492,6 +564,13 @@ async fn start_server_task(
         .as_ref()
         .and_then(|exp| exp.get(MCP_SANDBOX_STATE_META_CAPABILITY))
         .is_some();
+    let subspan_tracing_capability = initialize_result
+        .capabilities
+        .experimental
+        .as_ref()
+        .and_then(|exp| exp.get(MCP_SUBSPAN_TRACING_CAPABILITY))
+        .and_then(McpSubspanTracingCapability::from_experimental_capability);
+    subspan_tracing_enabled.store(subspan_tracing_capability.is_some(), Ordering::Release);
     let list_start = Instant::now();
     let fetch_start = Instant::now();
     let tools = list_tools_for_client_uncached(
@@ -528,6 +607,7 @@ async fn start_server_task(
         tool_filter,
         server_instructions: initialize_result.instructions,
         server_supports_sandbox_state_meta_capability,
+        subspan_tracing_capability,
         codex_apps_tools_cache_context,
     };
 
@@ -541,6 +621,7 @@ struct StartServerTaskParams {
     tx_event: Sender<Event>,
     elicitation_requests: ElicitationRequestManager,
     codex_apps_tools_cache_context: Option<CodexAppsToolsCacheContext>,
+    subspan_tracing_enabled: Arc<AtomicBool>,
 }
 
 async fn make_rmcp_client(
@@ -549,6 +630,7 @@ async fn make_rmcp_client(
     store_mode: OAuthCredentialsStoreMode,
     runtime_environment: McpRuntimeEnvironment,
     runtime_auth_provider: Option<SharedAuthProvider>,
+    subspan_tracing_enabled: Arc<AtomicBool>,
 ) -> Result<RmcpClient, StartupOutcomeError> {
     let McpServerConfig {
         transport,
@@ -601,9 +683,20 @@ async fn make_rmcp_client(
             // `RmcpClient` always sees a launched MCP stdio server. The
             // launcher hides whether that means a local child process or an
             // executor process whose stdin/stdout bytes cross the process API.
-            RmcpClient::new_stdio_client(command_os, args_os, env_os, &env_vars, cwd, launcher)
-                .await
-                .map_err(|err| StartupOutcomeError::from(anyhow!(err)))
+            RmcpClient::new_stdio_client(
+                command_os,
+                args_os,
+                env_os,
+                &env_vars,
+                cwd,
+                launcher,
+                Some(subspan_tracing_telemetry_sink(
+                    server_name,
+                    subspan_tracing_enabled,
+                )),
+            )
+            .await
+            .map_err(|err| StartupOutcomeError::from(anyhow!(err)))
         }
         McpServerTransportConfig::StreamableHttp {
             url,
@@ -635,6 +728,32 @@ async fn make_rmcp_client(
             .map_err(StartupOutcomeError::from)
         }
     }
+}
+
+fn subspan_tracing_telemetry_sink(
+    server_name: &str,
+    enabled: Arc<AtomicBool>,
+) -> StdioServerTelemetrySink {
+    let server_name = server_name.to_string();
+    Arc::new(move |telemetry: StdioServerTelemetry| {
+        if !enabled.load(Ordering::Acquire) {
+            return;
+        }
+
+        if let Err(error) = codex_otel::emit_mcp_subspan_telemetry(telemetry.payload) {
+            match error {
+                codex_otel::StderrSpanTelemetryError::UnsupportedVersion
+                | codex_otel::StderrSpanTelemetryError::UnsupportedType => {
+                    tracing::debug!(
+                        "ignoring unsupported MCP subspan telemetry from {server_name}: {error}"
+                    );
+                }
+                _ => {
+                    warn!("ignoring invalid MCP subspan telemetry from {server_name}: {error}");
+                }
+            }
+        }
+    })
 }
 
 #[cfg(test)]
@@ -736,6 +855,49 @@ mod tests {
             "CONNECTOR_UPPERCASE",
         ] {
             assert!(meta.0.contains_key(key), "{key} should be preserved");
+        }
+    }
+
+    #[test]
+    fn subspan_tracing_capability_accepts_stderr_jsonl_transport_and_tool_filter() {
+        let capability: JsonObject = serde_json::from_value(serde_json::json!({
+            "version": 1,
+            "transports": ["stderr-jsonl"],
+            "tools": {
+                "js": {
+                    "attributeProfile": "browser-use-v1"
+                }
+            }
+        }))
+        .expect("capability object");
+
+        let capability = McpSubspanTracingCapability::from_experimental_capability(&capability)
+            .expect("valid capability");
+
+        assert!(capability.supports_tool("js"));
+        assert!(!capability.supports_tool("other"));
+    }
+
+    #[test]
+    fn subspan_tracing_capability_rejects_unknown_version_or_transport() {
+        for capability in [
+            serde_json::json!({
+                "version": 2,
+                "transports": ["stderr-jsonl"],
+            }),
+            serde_json::json!({
+                "version": 1,
+                "transports": ["events"],
+            }),
+            serde_json::json!({
+                "version": 1,
+            }),
+        ] {
+            let capability: JsonObject =
+                serde_json::from_value(capability).expect("capability object");
+            assert!(
+                McpSubspanTracingCapability::from_experimental_capability(&capability).is_none()
+            );
         }
     }
 }
