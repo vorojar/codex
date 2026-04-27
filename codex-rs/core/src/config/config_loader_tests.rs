@@ -27,6 +27,7 @@ use codex_config::version_for_toml;
 use codex_exec_server::LOCAL_FS;
 use codex_protocol::config_types::TrustLevel;
 use codex_protocol::config_types::WebSearchMode;
+use codex_protocol::models::PermissionProfile;
 use codex_protocol::protocol::AskForApproval;
 use codex_protocol::protocol::SandboxPolicy;
 use codex_utils_absolute_path::AbsolutePathBuf;
@@ -585,8 +586,8 @@ allowed_sandbox_modes = ["read-only"]
         AskForApproval::Never
     );
     assert_eq!(
-        *state.requirements().sandbox_policy.get(),
-        SandboxPolicy::new_read_only_policy()
+        state.requirements().permission_profile.get(),
+        &PermissionProfile::read_only()
     );
     assert!(
         state
@@ -598,13 +599,15 @@ allowed_sandbox_modes = ["read-only"]
     assert!(
         state
             .requirements()
-            .sandbox_policy
-            .can_set(&SandboxPolicy::WorkspaceWrite {
-                writable_roots: Vec::new(),
-                network_access: false,
-                exclude_tmpdir_env_var: false,
-                exclude_slash_tmp: false,
-            })
+            .permission_profile
+            .can_set(&PermissionProfile::from_legacy_sandbox_policy(
+                &SandboxPolicy::WorkspaceWrite {
+                    writable_roots: Vec::new(),
+                    network_access: false,
+                    exclude_tmpdir_env_var: false,
+                    exclude_slash_tmp: false,
+                },
+            ))
             .is_err()
     );
 
@@ -913,9 +916,11 @@ allowed_sandbox_modes = ["read-only"]
     let config_requirements: ConfigRequirements = config_requirements_toml.try_into()?;
 
     assert_eq!(
-        config_requirements
-            .sandbox_policy
-            .can_set(&SandboxPolicy::new_workspace_write_policy()),
+        config_requirements.permission_profile.can_set(
+            &PermissionProfile::from_legacy_sandbox_policy(
+                &SandboxPolicy::new_workspace_write_policy()
+            )
+        ),
         Err(ConstraintError::InvalidValue {
             field_name: "sandbox_mode",
             candidate: "WorkspaceWrite".into(),
@@ -1191,8 +1196,10 @@ async fn load_config_layers_applies_matching_remote_sandbox_config() -> anyhow::
     assert!(
         layers
             .requirements()
-            .sandbox_policy
-            .can_set(&SandboxPolicy::new_workspace_write_policy())
+            .permission_profile
+            .can_set(&PermissionProfile::from_legacy_sandbox_policy(
+                &SandboxPolicy::new_workspace_write_policy()
+            ))
             .is_ok()
     );
 
