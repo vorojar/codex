@@ -788,6 +788,81 @@ async fn build_guardian_approval_request_items_are_skinny() -> anyhow::Result<()
     Ok(())
 }
 
+#[tokio::test]
+async fn guardian_prompt_sync_and_skinny_shapes_match_snapshot() -> anyhow::Result<()> {
+    let (session, turn) = guardian_test_session_and_turn_with_base_url("http://127.0.0.1:1").await;
+    seed_guardian_parent_history(&session, &turn).await;
+
+    let full_sync = build_guardian_transcript_sync_items(&session, GuardianPromptMode::Full).await;
+    let skinny_approval = build_guardian_approval_request_items(
+        &session,
+        Some("Retry after sandbox denial".to_string()),
+        GuardianApprovalRequest::Shell {
+            id: "shell-skinny".to_string(),
+            command: vec!["git".to_string(), "push".to_string()],
+            cwd: test_path_buf("/repo/codex-rs/core").abs(),
+            sandbox_permissions: crate::sandboxing::SandboxPermissions::UseDefault,
+            additional_permissions: None,
+            justification: Some("Need to push the reviewed docs fix.".to_string()),
+        },
+    )?;
+
+    session
+        .record_into_history(
+            &[
+                ResponseItem::Message {
+                    id: None,
+                    role: "user".to_string(),
+                    content: vec![ContentItem::InputText {
+                        text: "Please push one more docs fix.".to_string(),
+                    }],
+                    phase: None,
+                },
+                ResponseItem::Message {
+                    id: None,
+                    role: "assistant".to_string(),
+                    content: vec![ContentItem::OutputText {
+                        text: "I need approval for the follow-up push.".to_string(),
+                    }],
+                    phase: None,
+                },
+            ],
+            turn.as_ref(),
+        )
+        .await;
+    let delta_sync = build_guardian_transcript_sync_items(
+        &session,
+        GuardianPromptMode::Delta {
+            cursor: full_sync.transcript_cursor,
+        },
+    )
+    .await;
+
+    let mut settings = Settings::clone_current();
+    settings.set_snapshot_path("snapshots");
+    settings.set_prepend_module_to_snapshot(false);
+    settings.bind(|| {
+        assert_snapshot!(
+            "codex_core__guardian__tests__guardian_prompt_sync_and_skinny_shapes",
+            normalize_guardian_snapshot_paths(format!(
+                "full_sync_has_update: {}\nfull_sync_has_pending_tool_call: {}\nfull_sync_cursor: {:?}\n{}\n\nskinny_reviewed_action_truncated: {}\n{}\n\ndelta_sync_has_update: {}\ndelta_sync_has_pending_tool_call: {}\ndelta_sync_cursor: {:?}\n{}",
+                full_sync.has_transcript_update,
+                full_sync.has_pending_tool_call,
+                full_sync.transcript_cursor,
+                guardian_prompt_text(&full_sync.items),
+                skinny_approval.reviewed_action_truncated,
+                guardian_prompt_text(&skinny_approval.items),
+                delta_sync.has_transcript_update,
+                delta_sync.has_pending_tool_call,
+                delta_sync.transcript_cursor,
+                guardian_prompt_text(&delta_sync.items),
+            ))
+        );
+    });
+
+    Ok(())
+}
+
 #[test]
 fn guardian_truncate_text_keeps_prefix_suffix_and_xml_marker() {
     let content = "prefix ".repeat(200) + &" suffix".repeat(200);
@@ -1974,6 +2049,171 @@ async fn proactive_guardian_sync_compacts_trunk_before_review_request() -> anyho
         !review_request.body_contains_text(SUMMARIZATION_PROMPT),
         "approval review should not do request-time compaction after proactive compaction succeeded"
     );
+
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn guardian_pending_tool_call_forces_full_resync_before_skinny_review() -> anyhow::Result<()>
+{
+    skip_if_no_network!(Ok(()));
+
+    let server = start_mock_server().await;
+    let request_log = mount_sse_sequence(
+        &server,
+        vec![
+            sse(vec![
+                ev_response_created("resp-guardian-pending-1"),
+                ev_assistant_message(
+                    "msg-guardian-pending-1",
+                    "{\"risk_level\":\"low\",\"user_authorization\":\"high\",\"outcome\":\"allow\",\"rationale\":\"first approval while a parent tool call is still pending\"}",
+                ),
+                ev_completed("resp-guardian-pending-1"),
+            ]),
+            sse(vec![
+                ev_response_created("resp-guardian-pending-2"),
+                ev_assistant_message(
+                    "msg-guardian-pending-2",
+                    "{\"risk_level\":\"low\",\"user_authorization\":\"high\",\"outcome\":\"allow\",\"rationale\":\"second approval after the parent tool call completed\"}",
+                ),
+                ev_completed("resp-guardian-pending-2"),
+            ]),
+        ],
+    )
+    .await;
+
+    let (session, turn) = guardian_test_session_and_turn(&server).await;
+    session
+        .record_into_history(
+            &[
+                ResponseItem::Message {
+                    id: None,
+                    role: "user".to_string(),
+                    content: vec![ContentItem::InputText {
+                        text: "Please inspect Cargo.toml before approving the push.".to_string(),
+                    }],
+                    phase: None,
+                },
+                ResponseItem::FunctionCall {
+                    id: None,
+                    name: "read_file".to_string(),
+                    namespace: None,
+                    arguments: "{\"path\":\"Cargo.toml\"}".to_string(),
+                    call_id: "pending-read-file".to_string(),
+                },
+                ResponseItem::Message {
+                    id: None,
+                    role: "assistant".to_string(),
+                    content: vec![ContentItem::OutputText {
+                        text: "I need the read_file result before I can reason about the push."
+                            .to_string(),
+                    }],
+                    phase: None,
+                },
+            ],
+            turn.as_ref(),
+        )
+        .await;
+
+    let first_outcome = run_guardian_review_session_for_test(
+        Arc::clone(&session),
+        Arc::clone(&turn),
+        GuardianApprovalRequest::Shell {
+            id: "shell-pending-1".to_string(),
+            command: vec!["git".to_string(), "status".to_string()],
+            cwd: test_path_buf("/repo/codex-rs/core").abs(),
+            sandbox_permissions: crate::sandboxing::SandboxPermissions::UseDefault,
+            additional_permissions: None,
+            justification: Some("Need to inspect the repo state.".to_string()),
+        },
+        /*retry_reason*/ None,
+        guardian_output_schema(),
+        /*external_cancel*/ None,
+    )
+    .await;
+    let (GuardianReviewOutcome::Completed(first_assessment), first_metadata) = first_outcome else {
+        panic!("expected first guardian assessment");
+    };
+    assert_eq!(first_assessment.outcome, GuardianAssessmentOutcome::Allow);
+    assert_eq!(first_metadata.had_prior_review_context, Some(false));
+
+    session
+        .record_into_history(
+            &[
+                ResponseItem::FunctionCallOutput {
+                    call_id: "pending-read-file".to_string(),
+                    output: codex_protocol::models::FunctionCallOutputPayload::from_text(
+                        "workspace manifest with package name codex-core".to_string(),
+                    ),
+                },
+                ResponseItem::Message {
+                    id: None,
+                    role: "assistant".to_string(),
+                    content: vec![ContentItem::OutputText {
+                        text:
+                            "Cargo.toml confirms this is the core crate; I need approval to push."
+                                .to_string(),
+                    }],
+                    phase: None,
+                },
+            ],
+            turn.as_ref(),
+        )
+        .await;
+
+    let second_outcome = run_guardian_review_session_for_test(
+        Arc::clone(&session),
+        Arc::clone(&turn),
+        GuardianApprovalRequest::Shell {
+            id: "shell-pending-2".to_string(),
+            command: vec!["git".to_string(), "push".to_string()],
+            cwd: test_path_buf("/repo/codex-rs/core").abs(),
+            sandbox_permissions: crate::sandboxing::SandboxPermissions::UseDefault,
+            additional_permissions: None,
+            justification: Some("Need to push after inspecting Cargo.toml.".to_string()),
+        },
+        Some("Retry after the read_file tool result arrived.".to_string()),
+        guardian_output_schema(),
+        /*external_cancel*/ None,
+    )
+    .await;
+    let (GuardianReviewOutcome::Completed(second_assessment), second_metadata) = second_outcome
+    else {
+        panic!("expected second guardian assessment");
+    };
+    assert_eq!(second_assessment.outcome, GuardianAssessmentOutcome::Allow);
+    assert_eq!(
+        second_metadata.had_prior_review_context,
+        Some(false),
+        "pending parent tool calls should prevent reusing a delta cursor"
+    );
+
+    let requests = request_log.requests();
+    assert_eq!(requests.len(), 2);
+    let second_user_messages = requests[1].message_input_text_groups("user");
+    let transcript_sync = second_user_messages
+        .iter()
+        .find(|message| {
+            message
+                .join("")
+                .contains("Transcript sync only. No approval decision is requested")
+        })
+        .expect("second review should include a transcript sync message")
+        .join("");
+    assert!(transcript_sync.contains(">>> TRANSCRIPT START\n"));
+    assert!(!transcript_sync.contains(">>> TRANSCRIPT DELTA START\n"));
+    assert!(transcript_sync.contains("[2] tool read_file call: {\"path\":\"Cargo.toml\"}"));
+    assert!(
+        transcript_sync
+            .contains("[3] tool read_file result: workspace manifest with package name codex-core")
+    );
+    let second_approval_message = second_user_messages
+        .last()
+        .expect("second review should include an approval request")
+        .join("");
+    assert!(second_approval_message.contains(">>> APPROVAL REQUEST START\n"));
+    assert!(!second_approval_message.contains(">>> TRANSCRIPT START\n"));
+    assert!(!second_approval_message.contains(">>> TRANSCRIPT DELTA START\n"));
 
     Ok(())
 }
