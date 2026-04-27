@@ -607,7 +607,7 @@ async fn workspace_member_credits_depleted_prompts_and_sends_credits() {
     assert_eq!(
         event,
         (
-            TrackUsageLimitBannerAction::Shown,
+            UsageLimitBannerAction::Shown,
             UsageLimitBannerType::WorkspaceMemberCreditsDepleted
         )
     );
@@ -617,7 +617,7 @@ async fn workspace_member_credits_depleted_prompts_and_sends_credits() {
     assert_eq!(
         event,
         (
-            TrackUsageLimitBannerAction::CtaClicked,
+            UsageLimitBannerAction::CtaClicked,
             UsageLimitBannerType::WorkspaceMemberCreditsDepleted
         )
     );
@@ -643,7 +643,7 @@ async fn workspace_member_usage_limit_prompts_and_sends_usage_limit() {
     assert_eq!(
         event,
         (
-            TrackUsageLimitBannerAction::Shown,
+            UsageLimitBannerAction::Shown,
             UsageLimitBannerType::WorkspaceMemberUsageLimitReached
         )
     );
@@ -653,7 +653,7 @@ async fn workspace_member_usage_limit_prompts_and_sends_usage_limit() {
     assert_eq!(
         event,
         (
-            TrackUsageLimitBannerAction::CtaClicked,
+            UsageLimitBannerAction::CtaClicked,
             UsageLimitBannerType::WorkspaceMemberUsageLimitReached
         )
     );
@@ -812,7 +812,7 @@ async fn workspace_owner_nudge_default_no_dismisses_without_sending() {
     assert_eq!(
         event,
         (
-            TrackUsageLimitBannerAction::Shown,
+            UsageLimitBannerAction::Shown,
             UsageLimitBannerType::WorkspaceMemberCreditsDepleted
         )
     );
@@ -837,7 +837,7 @@ async fn workspace_owner_nudge_reappears_after_dismissing_no() {
     assert_eq!(
         event,
         (
-            TrackUsageLimitBannerAction::Shown,
+            UsageLimitBannerAction::Shown,
             UsageLimitBannerType::WorkspaceMemberUsageLimitReached
         )
     );
@@ -942,17 +942,20 @@ fn next_send_add_credits_nudge_email_event(
 
 fn next_track_usage_limit_banner_event(
     rx: &mut tokio::sync::mpsc::UnboundedReceiver<AppEvent>,
-) -> (TrackUsageLimitBannerAction, UsageLimitBannerType) {
+) -> (UsageLimitBannerAction, UsageLimitBannerType) {
     while let Ok(event) = rx.try_recv() {
-        if let AppEvent::TrackUsageLimitBanner {
-            action,
-            banner_type,
+        if let AppEvent::TrackProductAnalyticsEvent {
+            event:
+                ProductAnalyticsEvent::UsageLimitBanner {
+                    action,
+                    banner_type,
+                },
         } = event
         {
             return (action, banner_type);
         }
     }
-    panic!("expected TrackUsageLimitBanner app event");
+    panic!("expected usage-limit product analytics app event");
 }
 
 fn assert_no_owner_nudge_or_rate_limit_refresh(
@@ -964,7 +967,7 @@ fn assert_no_owner_nudge_or_rate_limit_refresh(
                 event,
                 AppEvent::SendAddCreditsNudgeEmail { .. }
                     | AppEvent::RefreshRateLimits { .. }
-                    | AppEvent::TrackUsageLimitBanner { .. }
+                    | AppEvent::TrackProductAnalyticsEvent { .. }
             ),
             "unexpected event: {event:?}"
         );

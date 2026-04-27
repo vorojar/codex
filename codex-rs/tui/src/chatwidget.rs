@@ -99,6 +99,7 @@ use codex_app_server_protocol::McpServerStartupState;
 use codex_app_server_protocol::McpServerStatusDetail;
 use codex_app_server_protocol::McpServerStatusUpdatedNotification;
 use codex_app_server_protocol::ModelVerification as AppServerModelVerification;
+use codex_app_server_protocol::ProductAnalyticsEvent;
 use codex_app_server_protocol::ServerNotification;
 use codex_app_server_protocol::ServerRequest;
 use codex_app_server_protocol::ThreadGoal as AppThreadGoal;
@@ -106,11 +107,11 @@ use codex_app_server_protocol::ThreadGoalStatus as AppThreadGoalStatus;
 use codex_app_server_protocol::ThreadItem;
 use codex_app_server_protocol::ThreadTokenUsage;
 use codex_app_server_protocol::ToolRequestUserInputParams;
-use codex_app_server_protocol::TrackUsageLimitBannerAction;
 use codex_app_server_protocol::Turn;
 use codex_app_server_protocol::TurnCompletedNotification;
 use codex_app_server_protocol::TurnPlanStepStatus;
 use codex_app_server_protocol::TurnStatus;
+use codex_app_server_protocol::UsageLimitBannerAction;
 use codex_app_server_protocol::UsageLimitBannerType;
 use codex_chatgpt::connectors;
 use codex_config::ConfigLayerStackOrdering;
@@ -8592,9 +8593,11 @@ impl ChatWidget {
             }
         };
         let send_actions: Vec<SelectionAction> = vec![Box::new(move |tx| {
-            tx.send(AppEvent::TrackUsageLimitBanner {
-                action: TrackUsageLimitBannerAction::CtaClicked,
-                banner_type,
+            tx.send(AppEvent::TrackProductAnalyticsEvent {
+                event: ProductAnalyticsEvent::UsageLimitBanner {
+                    action: UsageLimitBannerAction::CtaClicked,
+                    banner_type,
+                },
             });
             tx.send(AppEvent::SendAddCreditsNudgeEmail { credit_type });
         })];
@@ -8623,10 +8626,13 @@ impl ChatWidget {
             initial_selected_idx: Some(1),
             ..Default::default()
         });
-        self.app_event_tx.send(AppEvent::TrackUsageLimitBanner {
-            action: TrackUsageLimitBannerAction::Shown,
-            banner_type,
-        });
+        self.app_event_tx
+            .send(AppEvent::TrackProductAnalyticsEvent {
+                event: ProductAnalyticsEvent::UsageLimitBanner {
+                    action: UsageLimitBannerAction::Shown,
+                    banner_type,
+                },
+            });
     }
 
     pub(crate) fn start_add_credits_nudge_email_request(

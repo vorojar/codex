@@ -59,16 +59,15 @@ impl App {
         });
     }
 
-    pub(super) fn track_usage_limit_banner(
+    pub(super) fn track_product_analytics_event(
         &mut self,
         app_server: &AppServerSession,
-        action: TrackUsageLimitBannerAction,
-        banner_type: UsageLimitBannerType,
+        event: ProductAnalyticsEvent,
     ) {
         let request_handle = app_server.request_handle();
         tokio::spawn(async move {
-            if let Err(err) = track_usage_limit_banner(request_handle, action, banner_type).await {
-                tracing::warn!("failed to track usage limit banner event: {err:#}");
+            if let Err(err) = track_product_analytics_event(request_handle, event).await {
+                tracing::warn!("failed to track product analytics event: {err:#}");
             }
         });
     }
@@ -465,22 +464,18 @@ pub(super) async fn send_add_credits_nudge_email(
     Ok(response.status)
 }
 
-pub(super) async fn track_usage_limit_banner(
+pub(super) async fn track_product_analytics_event(
     request_handle: AppServerRequestHandle,
-    action: TrackUsageLimitBannerAction,
-    banner_type: UsageLimitBannerType,
+    event: ProductAnalyticsEvent,
 ) -> Result<()> {
-    let request_id = RequestId::String(format!("usage-limit-banner-{}", Uuid::new_v4()));
-    let _: TrackUsageLimitBannerResponse = request_handle
-        .request_typed(ClientRequest::TrackUsageLimitBanner {
+    let request_id = RequestId::String(format!("product-analytics-event-{}", Uuid::new_v4()));
+    let _: TrackProductAnalyticsEventResponse = request_handle
+        .request_typed(ClientRequest::TrackProductAnalyticsEvent {
             request_id,
-            params: TrackUsageLimitBannerParams {
-                action,
-                banner_type,
-            },
+            params: TrackProductAnalyticsEventParams { event },
         })
         .await
-        .wrap_err("account/usageLimitBanner/track failed in TUI")?;
+        .wrap_err("analytics/productEvent/track failed in TUI")?;
 
     Ok(())
 }
