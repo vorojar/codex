@@ -3,6 +3,7 @@ use crate::app_server_session::ThreadSessionState;
 use crate::read_session_model;
 use codex_app_server_protocol::Thread;
 use codex_protocol::ThreadId;
+use codex_protocol::models::PermissionProfile;
 
 impl App {
     pub(super) async fn sync_active_thread_permission_settings_to_cached_session(&mut self) {
@@ -12,20 +13,14 @@ impl App {
 
         let approval_policy = self.config.permissions.approval_policy.value();
         let approvals_reviewer = self.config.approvals_reviewer;
-        let sandbox_policy = self
-            .config
+        let permission_profile = self
+            .chat_widget
+            .config_ref()
             .permissions
-            .legacy_sandbox_policy(self.config.cwd.as_path());
-        let permission_profile = Some(
-            self.chat_widget
-                .config_ref()
-                .permissions
-                .permission_profile(),
-        );
+            .permission_profile();
         let update_session = |session: &mut ThreadSessionState| {
             session.approval_policy = approval_policy;
             session.approvals_reviewer = approvals_reviewer;
-            session.sandbox_policy = sandbox_policy.clone();
             session.permission_profile = permission_profile.clone();
         };
 
@@ -48,10 +43,6 @@ impl App {
         thread_id: ThreadId,
         thread: &Thread,
     ) -> ThreadSessionState {
-        let sandbox_policy = self
-            .config
-            .permissions
-            .legacy_sandbox_policy(self.config.cwd.as_path());
         let mut session = self
             .primary_session_configured
             .clone()
@@ -65,8 +56,7 @@ impl App {
                 service_tier: self.chat_widget.current_service_tier(),
                 approval_policy: self.config.permissions.approval_policy.value(),
                 approvals_reviewer: self.config.approvals_reviewer,
-                sandbox_policy,
-                permission_profile: None,
+                permission_profile: self.legacy_permission_profile_for_cwd(thread.cwd.as_path()),
                 cwd: thread.cwd.clone(),
                 instruction_source_paths: Vec::new(),
                 reasoning_effort: self.chat_widget.current_reasoning_effort(),
@@ -79,7 +69,7 @@ impl App {
         session.thread_name = thread.name.clone();
         session.model_provider_id = thread.model_provider.clone();
         session.cwd = thread.cwd.clone();
-        session.permission_profile = None;
+        session.permission_profile = self.legacy_permission_profile_for_cwd(thread.cwd.as_path());
         session.instruction_source_paths = Vec::new();
         session.rollout_path = thread.path.clone();
         if let Some(model) =
@@ -92,6 +82,11 @@ impl App {
         session.history_log_id = 0;
         session.history_entry_count = 0;
         session
+    }
+
+    fn legacy_permission_profile_for_cwd(&self, cwd: &std::path::Path) -> PermissionProfile {
+        let sandbox_policy = self.config.permissions.legacy_sandbox_policy(cwd);
+        PermissionProfile::from_legacy_sandbox_policy_for_cwd(&sandbox_policy, cwd)
     }
 }
 
@@ -127,8 +122,7 @@ mod tests {
             service_tier: None,
             approval_policy: AskForApproval::Never,
             approvals_reviewer: ApprovalsReviewer::User,
-            sandbox_policy: SandboxPolicy::new_read_only_policy(),
-            permission_profile: None,
+            permission_profile: PermissionProfile::read_only(),
             cwd: cwd.abs(),
             instruction_source_paths: Vec::new(),
             reasoning_effort: None,
@@ -149,7 +143,7 @@ mod tests {
         let main_session = test_thread_session(main_thread_id, test_path_buf("/tmp/main"));
         let side_session = ThreadSessionState {
             approval_policy: AskForApproval::OnRequest,
-            sandbox_policy: SandboxPolicy::new_workspace_write_policy(),
+            permission_profile: PermissionProfile::workspace_write(),
             ..test_thread_session(side_thread_id, test_path_buf("/tmp/side"))
         };
 
@@ -201,8 +195,7 @@ mod tests {
         let expected_main_session = ThreadSessionState {
             approval_policy: AskForApproval::OnRequest,
             approvals_reviewer: ApprovalsReviewer::AutoReview,
-            sandbox_policy: expected_sandbox_policy,
-            permission_profile: Some(expected_permission_profile),
+            permission_profile: expected_permission_profile,
             ..main_session
         };
         assert_eq!(
@@ -256,7 +249,7 @@ mod tests {
             NetworkSandboxPolicy::Restricted,
         );
         let session = ThreadSessionState {
-            permission_profile: Some(profile.clone()),
+            permission_profile: profile.clone(),
             ..test_thread_session(thread_id, test_path_buf("/tmp/main"))
         };
 
@@ -276,7 +269,7 @@ mod tests {
 
         let expected_session = ThreadSessionState {
             approval_policy: AskForApproval::OnRequest,
-            permission_profile: Some(profile),
+            permission_profile: profile,
             ..session
         };
         assert_eq!(

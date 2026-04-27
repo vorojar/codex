@@ -49,6 +49,7 @@ use codex_protocol::config_types::WebSearchToolConfig;
 use codex_protocol::config_types::WindowsSandboxLevel;
 use codex_protocol::models::PermissionProfile;
 use codex_protocol::openai_models::ReasoningEffort;
+use codex_protocol::permissions::NetworkSandboxPolicy;
 use codex_protocol::protocol::AskForApproval;
 use codex_protocol::protocol::SandboxPolicy;
 use codex_utils_absolute_path::AbsolutePathBuf;
@@ -641,15 +642,15 @@ pub struct GhostSnapshotToml {
 }
 
 impl ConfigToml {
-    /// Derive the effective sandbox policy from the configuration.
-    pub async fn derive_sandbox_policy(
+    /// Derive the effective permission profile from the configuration.
+    pub async fn derive_permission_profile(
         &self,
         sandbox_mode_override: Option<SandboxMode>,
         profile_sandbox_mode: Option<SandboxMode>,
         windows_sandbox_level: WindowsSandboxLevel,
         active_project: Option<&ProjectConfig>,
         permission_profile_constraint: Option<&crate::Constrained<PermissionProfile>>,
-    ) -> SandboxPolicy {
+    ) -> PermissionProfile {
         let sandbox_mode_was_explicit = sandbox_mode_override.is_some()
             || profile_sandbox_mode.is_some()
             || self.sandbox_mode.is_some();
@@ -677,50 +678,72 @@ impl ConfigToml {
                 })
             })
             .unwrap_or_default();
-        let mut sandbox_policy = match resolved_sandbox_mode {
-            SandboxMode::ReadOnly => SandboxPolicy::new_read_only_policy(),
+        let workspace_write_unsupported = cfg!(target_os = "windows")
+            // If the experimental Windows sandbox is enabled, do not force a downgrade.
+            && windows_sandbox_level == WindowsSandboxLevel::Disabled
+            && matches!(resolved_sandbox_mode, SandboxMode::WorkspaceWrite);
+        let mut permission_profile = match resolved_sandbox_mode {
+            SandboxMode::ReadOnly => PermissionProfile::read_only(),
             SandboxMode::WorkspaceWrite => match self.sandbox_workspace_write.as_ref() {
                 Some(SandboxWorkspaceWrite {
                     writable_roots,
                     network_access,
                     exclude_tmpdir_env_var,
                     exclude_slash_tmp,
-                }) => SandboxPolicy::WorkspaceWrite {
-                    writable_roots: writable_roots.clone(),
-                    network_access: *network_access,
-                    exclude_tmpdir_env_var: *exclude_tmpdir_env_var,
-                    exclude_slash_tmp: *exclude_slash_tmp,
-                },
-                None => SandboxPolicy::new_workspace_write_policy(),
+                }) => {
+                    let network_policy = if *network_access {
+                        NetworkSandboxPolicy::Enabled
+                    } else {
+                        NetworkSandboxPolicy::Restricted
+                    };
+                    PermissionProfile::workspace_write_with(
+                        writable_roots,
+                        network_policy,
+                        *exclude_tmpdir_env_var,
+                        *exclude_slash_tmp,
+                    )
+                }
+                None => PermissionProfile::workspace_write(),
             },
-            SandboxMode::DangerFullAccess => SandboxPolicy::DangerFullAccess,
+            SandboxMode::DangerFullAccess => PermissionProfile::Disabled,
         };
-        let downgrade_workspace_write_if_unsupported = |policy: &mut SandboxPolicy| {
-            if cfg!(target_os = "windows")
-                // If the experimental Windows sandbox is enabled, do not force a downgrade.
-                && windows_sandbox_level == WindowsSandboxLevel::Disabled
-                && matches!(&*policy, SandboxPolicy::WorkspaceWrite { .. })
-            {
-                *policy = SandboxPolicy::new_read_only_policy();
-            }
-        };
-        if matches!(resolved_sandbox_mode, SandboxMode::WorkspaceWrite) {
-            downgrade_workspace_write_if_unsupported(&mut sandbox_policy);
+        if workspace_write_unsupported {
+            permission_profile = PermissionProfile::read_only();
         }
         if !sandbox_mode_was_explicit
             && let Some(constraint) = permission_profile_constraint
-            && let Err(err) = constraint.can_set(&PermissionProfile::from_legacy_sandbox_policy(
-                &sandbox_policy,
-            ))
+            && let Err(err) = constraint.can_set(&permission_profile)
         {
             tracing::warn!(
                 error = %err,
                 "default sandbox policy is disallowed by requirements; falling back to required default"
             );
-            sandbox_policy = SandboxPolicy::new_read_only_policy();
-            downgrade_workspace_write_if_unsupported(&mut sandbox_policy);
+            permission_profile = PermissionProfile::read_only();
         }
-        sandbox_policy
+        permission_profile
+    }
+
+    /// Derive the legacy sandbox projection from configuration.
+    ///
+    /// New callers should use [`Self::derive_permission_profile`] instead.
+    pub async fn derive_sandbox_policy(
+        &self,
+        sandbox_mode_override: Option<SandboxMode>,
+        profile_sandbox_mode: Option<SandboxMode>,
+        windows_sandbox_level: WindowsSandboxLevel,
+        active_project: Option<&ProjectConfig>,
+        permission_profile_constraint: Option<&crate::Constrained<PermissionProfile>>,
+    ) -> SandboxPolicy {
+        self.derive_permission_profile(
+            sandbox_mode_override,
+            profile_sandbox_mode,
+            windows_sandbox_level,
+            active_project,
+            permission_profile_constraint,
+        )
+        .await
+        .to_legacy_sandbox_policy(Path::new("/"))
+        .expect("legacy config-derived permission profile should be bridgeable")
     }
 
     /// Resolves the cwd to an existing project, or returns None if ConfigToml
