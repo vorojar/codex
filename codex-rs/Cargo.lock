@@ -3168,7 +3168,6 @@ dependencies = [
  "axum",
  "bytes",
  "codex-api",
- "codex-client",
  "codex-config",
  "codex-exec-server",
  "codex-keyring-store",

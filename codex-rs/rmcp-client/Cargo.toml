@@ -14,7 +14,6 @@ axum = { workspace = true, default-features = false, features = [
     "tokio",
 ] }
 codex-api = { workspace = true }
-codex-client = { workspace = true }
 codex-config = { workspace = true }
 codex-exec-server = { workspace = true }
 codex-keyring-store = { workspace = true }
