@@ -273,18 +273,19 @@ impl HooksBrowserView {
 
         let mut lines = vec![detail_line("Event", event_label(event_name))];
         if let Some(matcher) = hook.matcher.as_deref() {
-            lines.extend(detail_wrapped_lines("Matcher", matcher, width));
+            lines.extend(detail_wrapped_lines("Matcher", matcher, width, None));
         }
         lines.extend(detail_wrapped_lines(
             "File",
             &hook.source_path.display().to_string(),
             width,
+            None,
         ));
-        lines.extend(detail_wrapped_lines_limited(
+        lines.extend(detail_wrapped_lines(
             "Command",
             hook.command.as_deref().unwrap_or("-"),
             width,
-            MAX_COMMAND_DETAIL_LINES,
+            Some(MAX_COMMAND_DETAIL_LINES),
         ));
         lines.push(detail_line("Timeout", &format!("{}s", hook.timeout_sec)));
         lines
@@ -548,7 +549,12 @@ fn detail_line(label: &str, value: &str) -> Line<'static> {
     Line::from(vec![format!("{label:<10}").into(), value.to_string().dim()])
 }
 
-fn detail_wrapped_lines(label: &str, value: &str, width: usize) -> Vec<Line<'static>> {
+fn detail_wrapped_lines(
+    label: &str,
+    value: &str,
+    width: usize,
+    max_lines: Option<usize>,
+) -> Vec<Line<'static>> {
     let prefix = format!("{label:<10}");
     let available = width.saturating_sub(prefix.width()).max(1);
     let mut wrapped = textwrap::wrap(value, available).into_iter();
@@ -556,16 +562,9 @@ fn detail_wrapped_lines(label: &str, value: &str, width: usize) -> Vec<Line<'sta
     let mut lines = vec![Line::from(vec![prefix.into(), first.dim()])];
     lines
         .extend(wrapped.map(|line| Line::from(vec!["          ".into(), line.into_owned().dim()])));
-    lines
-}
-
-fn detail_wrapped_lines_limited(
-    label: &str,
-    value: &str,
-    width: usize,
-    max_lines: usize,
-) -> Vec<Line<'static>> {
-    let mut lines = detail_wrapped_lines(label, value, width);
+    let Some(max_lines) = max_lines else {
+        return lines;
+    };
     if lines.len() <= max_lines {
         return lines;
     }
