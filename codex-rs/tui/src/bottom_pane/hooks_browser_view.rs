@@ -274,13 +274,15 @@ impl HooksBrowserView {
 
         let mut lines = vec![detail_line("Event", event_label(event_name))];
         if let Some(matcher) = hook.matcher.as_deref() {
-            lines.extend(detail_wrapped_lines("Matcher", matcher, width, None));
+            lines.extend(detail_wrapped_lines(
+                "Matcher", matcher, width, /*max_lines*/ None,
+            ));
         }
         lines.extend(detail_wrapped_lines(
             "Source",
             &format_directory_display(&hook.source_path, /*max_width*/ None),
             width,
-            None,
+            /*max_lines*/ None,
         ));
         lines.extend(detail_wrapped_lines(
             "Command",
@@ -603,6 +605,7 @@ mod tests {
     use crate::render::renderable::Renderable;
     use crate::test_support::PathBufExt;
     use crate::test_support::test_path_buf;
+    use crate::test_support::test_path_display;
     use codex_app_server_protocol::HookEventName;
     use codex_app_server_protocol::HookHandlerType;
     use codex_app_server_protocol::HookMetadata;
@@ -620,7 +623,7 @@ mod tests {
         let mut buf = Buffer::empty(area);
         view.render(area, &mut buf);
 
-        (0..area.height)
+        let rendered = (0..area.height)
             .map(|row| {
                 (0..area.width)
                     .map(|col| {
@@ -634,7 +637,8 @@ mod tests {
                     .collect::<String>()
             })
             .collect::<Vec<_>>()
-            .join("\n")
+            .join("\n");
+        rendered.replace(&test_path_display("/tmp/hooks.json"), "/tmp/hooks.json")
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -684,7 +688,7 @@ mod tests {
                     "path:user-config",
                     HookEventName::PreToolUse,
                     HookSource::User,
-                    None,
+                    /*plugin_id*/ None,
                     "~/bin/check-shell-with-a-command-that-is-way-too-long-for-the-summary-column.sh",
                     /*enabled*/ false,
                     /*is_managed*/ false,
@@ -694,7 +698,7 @@ mod tests {
                     "path:managed",
                     HookEventName::PermissionRequest,
                     HookSource::System,
-                    None,
+                    /*plugin_id*/ None,
                     "/enterprise/hooks/permission-check.sh",
                     /*enabled*/ true,
                     /*is_managed*/ true,
@@ -738,7 +742,7 @@ mod tests {
                     "path:managed-1",
                     HookEventName::PreToolUse,
                     HookSource::System,
-                    None,
+                    /*plugin_id*/ None,
                     "/enterprise/hooks/pre-tool-use-1.sh",
                     /*enabled*/ true,
                     /*is_managed*/ true,
@@ -748,7 +752,7 @@ mod tests {
                     "path:managed-2",
                     HookEventName::PreToolUse,
                     HookSource::System,
-                    None,
+                    /*plugin_id*/ None,
                     "/enterprise/hooks/pre-tool-use-2.sh",
                     /*enabled*/ true,
                     /*is_managed*/ true,
@@ -774,7 +778,7 @@ mod tests {
                     &format!("path:hook-{idx}"),
                     HookEventName::PreToolUse,
                     HookSource::User,
-                    None,
+                    /*plugin_id*/ None,
                     &format!("/tmp/hook-{idx}.sh"),
                     /*enabled*/ true,
                     /*is_managed*/ false,
@@ -801,7 +805,7 @@ mod tests {
                 "path:long-command",
                 HookEventName::PreToolUse,
                 HookSource::User,
-                None,
+                /*plugin_id*/ None,
                 "one two three four five six seven eight nine ten eleven twelve thirteen fourteen fifteen sixteen seventeen eighteen nineteen twenty",
                 /*enabled*/ true,
                 /*is_managed*/ false,
@@ -892,7 +896,7 @@ mod tests {
                 "path:managed",
                 HookEventName::PreToolUse,
                 HookSource::System,
-                None,
+                /*plugin_id*/ None,
                 "/enterprise/hooks/pre-tool-use-check.sh",
                 /*enabled*/ true,
                 /*is_managed*/ true,
