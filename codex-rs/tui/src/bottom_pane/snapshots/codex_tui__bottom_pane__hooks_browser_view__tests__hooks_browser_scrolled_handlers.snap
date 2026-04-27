@@ -22,5 +22,4 @@ expression: "render_lines(&view, 112)"
   Command   /tmp/hook-8.sh                                                                                      
   Timeout   30s                                                                                                 
                                                                                                                 
-                                                                                                                
   Press space or enter to toggle; esc to go back

@@ -416,9 +416,10 @@ impl Renderable for HooksBrowserView {
                 if row_count == 0 {
                     self.handler_header_lines(event_name).len() + 2
                 } else {
+                    let visible_row_count = row_count.min(MAX_POPUP_ROWS);
                     self.handler_header_lines(event_name).len()
                         + 1
-                        + row_count
+                        + visible_row_count
                         + 1
                         + self.detail_lines(event_name, content_width).len()
                 }
