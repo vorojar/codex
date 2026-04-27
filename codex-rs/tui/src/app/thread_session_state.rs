@@ -14,10 +14,6 @@ impl App {
 
         let approval_policy = self.config.permissions.approval_policy.value();
         let approvals_reviewer = self.config.approvals_reviewer;
-        let sandbox_policy = self
-            .config
-            .permissions
-            .legacy_sandbox_policy(self.config.cwd.as_path());
         let permission_profile = self
             .chat_widget
             .config_ref()
@@ -26,7 +22,6 @@ impl App {
         let update_session = |session: &mut ThreadSessionState| {
             session.approval_policy = approval_policy;
             session.approvals_reviewer = approvals_reviewer;
-            session.sandbox_policy = sandbox_policy.clone();
             session.permission_profile = permission_profile.clone();
         };
 
@@ -49,7 +44,6 @@ impl App {
         thread_id: ThreadId,
         thread: &Thread,
     ) -> ThreadSessionState {
-        let sandbox_policy = self.active_legacy_sandbox_policy_for_cwd(thread.cwd.as_path());
         let mut session = self
             .primary_session_configured
             .clone()
@@ -63,7 +57,6 @@ impl App {
                 service_tier: self.chat_widget.current_service_tier(),
                 approval_policy: self.config.permissions.approval_policy.value(),
                 approvals_reviewer: self.config.approvals_reviewer,
-                sandbox_policy,
                 permission_profile: self
                     .active_legacy_permission_profile_for_cwd(thread.cwd.as_path()),
                 cwd: thread.cwd.clone(),
@@ -78,7 +71,6 @@ impl App {
         session.thread_name = thread.name.clone();
         session.model_provider_id = thread.model_provider.clone();
         session.cwd = thread.cwd.clone();
-        session.sandbox_policy = self.active_legacy_sandbox_policy_for_cwd(thread.cwd.as_path());
         session.permission_profile =
             self.active_legacy_permission_profile_for_cwd(thread.cwd.as_path());
         session.instruction_source_paths = Vec::new();
@@ -140,7 +132,6 @@ mod tests {
             service_tier: None,
             approval_policy: AskForApproval::Never,
             approvals_reviewer: ApprovalsReviewer::User,
-            sandbox_policy: SandboxPolicy::new_read_only_policy(),
             permission_profile: PermissionProfile::read_only(),
             cwd: cwd.abs(),
             instruction_source_paths: Vec::new(),
@@ -162,7 +153,7 @@ mod tests {
         let main_session = test_thread_session(main_thread_id, test_path_buf("/tmp/main"));
         let side_session = ThreadSessionState {
             approval_policy: AskForApproval::OnRequest,
-            sandbox_policy: SandboxPolicy::new_workspace_write_policy(),
+            permission_profile: PermissionProfile::workspace_write(),
             ..test_thread_session(side_thread_id, test_path_buf("/tmp/side"))
         };
 
@@ -214,7 +205,6 @@ mod tests {
         let expected_main_session = ThreadSessionState {
             approval_policy: AskForApproval::OnRequest,
             approvals_reviewer: ApprovalsReviewer::AutoReview,
-            sandbox_policy: expected_sandbox_policy,
             permission_profile: expected_permission_profile,
             ..main_session
         };
@@ -356,7 +346,6 @@ mod tests {
             &expected_sandbox_policy,
             read_thread.cwd.as_path(),
         );
-        assert_eq!(session.sandbox_policy, expected_sandbox_policy);
         assert_eq!(session.permission_profile, expected_permission_profile);
         assert_ne!(
             session.permission_profile,
