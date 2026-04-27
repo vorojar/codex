@@ -279,6 +279,15 @@ impl CodexMessageProcessor {
                         &visible_skills,
                         &outcome.plugin.disabled_skill_paths,
                     ),
+                    hooks: outcome
+                        .plugin
+                        .hooks
+                        .into_iter()
+                        .map(|hook| codex_app_server_protocol::PluginHookSummary {
+                            event_name: hook.event_name.into(),
+                            handler_count: hook.handler_count,
+                        })
+                        .collect(),
                     apps: app_summaries,
                     mcp_servers: outcome.plugin.mcp_server_names,
                 }
@@ -815,6 +824,7 @@ fn remote_plugin_detail_to_info(
                 enabled: skill.enabled,
             })
             .collect(),
+        hooks: Vec::new(),
         apps,
         mcp_servers: Vec::new(),
     }

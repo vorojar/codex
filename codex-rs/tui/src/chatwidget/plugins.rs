@@ -17,6 +17,7 @@ use crate::render::renderable::ColumnRenderable;
 use crate::render::renderable::Renderable;
 use crate::shimmer::shimmer_spans;
 use crate::tui::FrameRequester;
+use codex_app_server_protocol::HookEventName;
 use codex_app_server_protocol::PluginDetail;
 use codex_app_server_protocol::PluginInstallPolicy;
 use codex_app_server_protocol::PluginInstallResponse;
@@ -1050,6 +1051,12 @@ impl ChatWidget {
             ..Default::default()
         });
         items.push(SelectionItem {
+            name: "Hooks".to_string(),
+            description: Some(plugin_hook_summary(plugin)),
+            is_disabled: true,
+            ..Default::default()
+        });
+        items.push(SelectionItem {
             name: "Apps".to_string(),
             description: Some(plugin_app_summary(plugin)),
             is_disabled: true,
@@ -1393,6 +1400,36 @@ fn plugin_app_summary(plugin: &PluginDetail) -> String {
             .map(|app| app.name.as_str())
             .collect::<Vec<_>>()
             .join(", ")
+    }
+}
+
+fn plugin_hook_summary(plugin: &PluginDetail) -> String {
+    if plugin.hooks.is_empty() {
+        "No plugin hooks.".to_string()
+    } else {
+        plugin
+            .hooks
+            .iter()
+            .map(|hook| {
+                format!(
+                    "{} ({})",
+                    plugin_hook_event_label(hook.event_name),
+                    hook.handler_count
+                )
+            })
+            .collect::<Vec<_>>()
+            .join(", ")
+    }
+}
+
+fn plugin_hook_event_label(event_name: HookEventName) -> &'static str {
+    match event_name {
+        HookEventName::PreToolUse => "PreToolUse",
+        HookEventName::PermissionRequest => "PermissionRequest",
+        HookEventName::PostToolUse => "PostToolUse",
+        HookEventName::SessionStart => "SessionStart",
+        HookEventName::UserPromptSubmit => "UserPromptSubmit",
+        HookEventName::Stop => "Stop",
     }
 }
 

@@ -37,6 +37,17 @@
       ],
       "type": "object"
     },
+    "HookEventName": {
+      "enum": [
+        "preToolUse",
+        "permissionRequest",
+        "postToolUse",
+        "sessionStart",
+        "userPromptSubmit",
+        "stop"
+      ],
+      "type": "string"
+    },
     "PluginAuthPolicy": {
       "enum": [
         "ON_INSTALL",
@@ -57,6 +68,12 @@
             "string",
             "null"
           ]
+        },
+        "hooks": {
+          "items": {
+            "$ref": "#/definitions/PluginHookSummary"
+          },
+          "type": "array"
         },
         "marketplaceName": {
           "type": "string"
@@ -89,10 +106,28 @@
       },
       "required": [
         "apps",
+        "hooks",
         "marketplaceName",
         "mcpServers",
         "skills",
         "summary"
+      ],
+      "type": "object"
+    },
+    "PluginHookSummary": {
+      "properties": {
+        "eventName": {
+          "$ref": "#/definitions/HookEventName"
+        },
+        "handlerCount": {
+          "format": "uint",
+          "minimum": 0.0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "eventName",
+        "handlerCount"
       ],
       "type": "object"
     },

@@ -13,6 +13,7 @@ use codex_core_plugins::loader::configured_curated_plugin_ids_from_codex_home;
 use codex_core_plugins::loader::curated_plugin_cache_version;
 use codex_core_plugins::loader::installed_plugin_telemetry_metadata;
 use codex_core_plugins::loader::load_plugin_apps;
+use codex_core_plugins::loader::load_plugin_hooks;
 use codex_core_plugins::loader::load_plugin_mcp_servers;
 use codex_core_plugins::loader::load_plugin_skills;
 use codex_core_plugins::loader::load_plugins_from_layer_stack;
@@ -54,9 +55,11 @@ use codex_login::AuthManager;
 use codex_login::CodexAuth;
 use codex_plugin::AppConnectorId;
 use codex_plugin::PluginCapabilitySummary;
+use codex_plugin::PluginHookSource;
 use codex_plugin::PluginId;
 use codex_plugin::PluginIdError;
 use codex_plugin::prompt_safe_plugin_description;
+use codex_protocol::protocol::HookEventName;
 use codex_protocol::protocol::Product;
 use codex_utils_absolute_path::AbsolutePathBuf;
 use std::collections::HashMap;
@@ -172,9 +175,16 @@ pub struct PluginDetail {
     pub enabled: bool,
     pub skills: Vec<SkillMetadata>,
     pub disabled_skill_paths: HashSet<AbsolutePathBuf>,
+    pub hooks: Vec<PluginHookSummary>,
     pub apps: Vec<AppConnectorId>,
     pub mcp_server_names: Vec<String>,
     pub details_unavailable_reason: Option<PluginDetailsUnavailableReason>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PluginHookSummary {
+    pub event_name: HookEventName,
+    pub handler_count: usize,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1043,6 +1053,7 @@ impl PluginsManager {
                 enabled: plugin.enabled,
                 skills: Vec::new(),
                 disabled_skill_paths: HashSet::new(),
+                hooks: Vec::new(),
                 apps: Vec::new(),
                 mcp_server_names: Vec::new(),
                 details_unavailable_reason: Some(
@@ -1099,6 +1110,11 @@ impl PluginsManager {
             ),
         )
         .await;
+        let hooks = summarize_plugin_hooks(&load_plugin_hooks(
+            &source_path,
+            &plugin_id,
+            &manifest.paths,
+        ));
         let apps = load_plugin_apps(source_path.as_path()).await;
         let mut mcp_server_names = load_plugin_mcp_servers(source_path.as_path())
             .await
@@ -1118,6 +1134,7 @@ impl PluginsManager {
             enabled: plugin.enabled,
             skills: resolved_skills.skills,
             disabled_skill_paths: resolved_skills.disabled_skill_paths,
+            hooks,
             apps,
             mcp_server_names,
             details_unavailable_reason: None,
@@ -1467,6 +1484,39 @@ impl PluginsManager {
         roots.dedup();
         roots
     }
+}
+
+fn summarize_plugin_hooks(hook_sources: &[PluginHookSource]) -> Vec<PluginHookSummary> {
+    let handler_count = |groups: &[codex_config::MatcherGroup]| {
+        groups.iter().map(|group| group.hooks.len()).sum::<usize>()
+    };
+    let mut counts = [
+        (HookEventName::SessionStart, 0),
+        (HookEventName::UserPromptSubmit, 0),
+        (HookEventName::PreToolUse, 0),
+        (HookEventName::PermissionRequest, 0),
+        (HookEventName::PostToolUse, 0),
+        (HookEventName::Stop, 0),
+    ];
+
+    for source in hook_sources {
+        counts[0].1 += handler_count(&source.hooks.session_start);
+        counts[1].1 += handler_count(&source.hooks.user_prompt_submit);
+        counts[2].1 += handler_count(&source.hooks.pre_tool_use);
+        counts[3].1 += handler_count(&source.hooks.permission_request);
+        counts[4].1 += handler_count(&source.hooks.post_tool_use);
+        counts[5].1 += handler_count(&source.hooks.stop);
+    }
+
+    counts
+        .into_iter()
+        .filter_map(|(event_name, handler_count)| {
+            (handler_count > 0).then_some(PluginHookSummary {
+                event_name,
+                handler_count,
+            })
+        })
+        .collect()
 }
 
 fn remote_plugin_install_required_description(source: &MarketplacePluginSource) -> String {

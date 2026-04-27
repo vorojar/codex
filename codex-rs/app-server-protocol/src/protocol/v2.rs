@@ -4524,8 +4524,17 @@ pub struct PluginDetail {
     pub summary: PluginSummary,
     pub description: Option<String>,
     pub skills: Vec<SkillSummary>,
+    pub hooks: Vec<PluginHookSummary>,
     pub apps: Vec<AppSummary>,
     pub mcp_servers: Vec<String>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "v2/")]
+pub struct PluginHookSummary {
+    pub event_name: HookEventName,
+    pub handler_count: usize,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, JsonSchema, TS)]

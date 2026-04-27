@@ -17,6 +17,7 @@ use axum::http::Uri;
 use axum::http::header::AUTHORIZATION;
 use axum::routing::get;
 use codex_app_server_protocol::AppInfo;
+use codex_app_server_protocol::HookEventName;
 use codex_app_server_protocol::JSONRPCResponse;
 use codex_app_server_protocol::PluginAuthPolicy;
 use codex_app_server_protocol::PluginInstallPolicy;
@@ -482,6 +483,7 @@ async fn plugin_read_returns_plugin_details_with_bundle_contents() -> Result<()>
     std::fs::create_dir_all(repo_root.path().join(".git"))?;
     std::fs::create_dir_all(repo_root.path().join(".agents/plugins"))?;
     std::fs::create_dir_all(plugin_root.join(".codex-plugin"))?;
+    std::fs::create_dir_all(plugin_root.join("hooks"))?;
     std::fs::create_dir_all(plugin_root.join("skills/thread-summarizer"))?;
     std::fs::create_dir_all(plugin_root.join("skills/chatgpt-only"))?;
     std::fs::write(
@@ -587,6 +589,37 @@ description: Visible only for ChatGPT
 }"#,
     )?;
     std::fs::write(
+        plugin_root.join("hooks/hooks.json"),
+        r#"{
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "echo startup"
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "echo first"
+          },
+          {
+            "type": "command",
+            "command": "echo second"
+          }
+        ]
+      }
+    ]
+  }
+}"#,
+    )?;
+    std::fs::write(
         codex_home.path().join("config.toml"),
         r#"[features]
 plugins = true
@@ -679,6 +712,17 @@ enabled = true
         "Summarize email threads"
     );
     assert!(!response.plugin.skills[0].enabled);
+    assert_eq!(response.plugin.hooks.len(), 2);
+    assert_eq!(
+        response.plugin.hooks[0].event_name,
+        HookEventName::SessionStart
+    );
+    assert_eq!(response.plugin.hooks[0].handler_count, 1);
+    assert_eq!(
+        response.plugin.hooks[1].event_name,
+        HookEventName::PreToolUse
+    );
+    assert_eq!(response.plugin.hooks[1].handler_count, 2);
     assert_eq!(response.plugin.apps.len(), 1);
     assert_eq!(response.plugin.apps[0].id, "gmail");
     assert_eq!(response.plugin.apps[0].name, "gmail");

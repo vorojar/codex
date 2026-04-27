@@ -962,6 +962,7 @@ pub(super) fn plugins_test_detail(
     summary: PluginSummary,
     description: Option<&str>,
     skills: &[&str],
+    hooks: &[(codex_app_server_protocol::HookEventName, usize)],
     apps: &[(&str, bool)],
     mcp_servers: &[&str],
 ) -> PluginDetail {
@@ -982,6 +983,15 @@ pub(super) fn plugins_test_detail(
                 ))),
                 enabled: true,
             })
+            .collect(),
+        hooks: hooks
+            .iter()
+            .map(
+                |(event_name, handler_count)| codex_app_server_protocol::PluginHookSummary {
+                    event_name: *event_name,
+                    handler_count: *handler_count,
+                },
+            )
             .collect(),
         apps: apps
             .iter()

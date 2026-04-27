@@ -1733,6 +1733,37 @@ async fn read_plugin_for_config_installed_git_source_reads_from_cache_without_cl
         r#"{"mcpServers":{"toolkit":{"command":"toolkit-mcp"}}}"#,
     );
     write_file(
+        &cached_plugin_root.join("hooks/hooks.json"),
+        r#"{
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "echo startup"
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "echo first"
+          },
+          {
+            "type": "command",
+            "command": "echo second"
+          }
+        ]
+      }
+    ]
+  }
+}"#,
+    );
+    write_file(
         &tmp.path().join(CONFIG_TOML_FILE),
         r#"[features]
 plugins = true
@@ -1776,6 +1807,19 @@ enabled = true
     assert_eq!(
         outcome.plugin.apps,
         vec![AppConnectorId("connector_calendar".to_string())]
+    );
+    assert_eq!(
+        outcome.plugin.hooks,
+        vec![
+            PluginHookSummary {
+                event_name: HookEventName::SessionStart,
+                handler_count: 1,
+            },
+            PluginHookSummary {
+                event_name: HookEventName::PreToolUse,
+                handler_count: 2,
+            },
+        ]
     );
     assert_eq!(outcome.plugin.mcp_server_names, vec!["toolkit".to_string()]);
     assert!(
