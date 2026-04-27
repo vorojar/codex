@@ -5842,24 +5842,6 @@ impl CodexMessageProcessor {
         }
     }
 
-    async fn send_internal_error(&self, request_id: ConnectionRequestId, message: String) {
-        let error = JSONRPCErrorError {
-            code: INTERNAL_ERROR_CODE,
-            message,
-            data: None,
-        };
-        self.outgoing.send_error(request_id, error).await;
-    }
-
-    async fn send_invalid_request_error(&self, request_id: ConnectionRequestId, message: String) {
-        let error = JSONRPCErrorError {
-            code: INVALID_REQUEST_ERROR_CODE,
-            message,
-            data: None,
-        };
-        self.outgoing.send_error(request_id, error).await;
-    }
-
     fn input_too_large_error(actual_chars: usize) -> JSONRPCErrorError {
         JSONRPCErrorError {
             code: INVALID_PARAMS_ERROR_CODE,
@@ -6520,180 +6502,173 @@ impl CodexMessageProcessor {
         app_server_client_name: Option<String>,
         app_server_client_version: Option<String>,
     ) {
-        if let Err(error) = Self::validate_v2_input_limit(&params.input) {
-            self.track_error_response(
-                &request_id,
-                &error,
-                Some(AnalyticsJsonRpcError::Input(InputError::TooLarge)),
-            );
-            self.outgoing.send_error(request_id, error).await;
-            return;
-        }
-        let (_, thread) = match self.load_thread(&params.thread_id).await {
-            Ok(v) => v,
-            Err(error) => {
-                self.track_error_response(&request_id, &error, /*error_type*/ None);
-                self.outgoing.send_error(request_id, error).await;
-                return;
+        let result = async {
+            if let Err(error) = Self::validate_v2_input_limit(&params.input) {
+                self.track_error_response(
+                    &request_id,
+                    &error,
+                    Some(AnalyticsJsonRpcError::Input(InputError::TooLarge)),
+                );
+                return Err(error);
             }
-        };
-        if let Err(error) = Self::set_app_server_client_info(
-            thread.as_ref(),
-            app_server_client_name,
-            app_server_client_version,
-        )
-        .await
-        {
-            self.track_error_response(&request_id, &error, /*error_type*/ None);
-            self.outgoing.send_error(request_id, error).await;
-            return;
-        }
-
-        let collaboration_modes_config = CollaborationModesConfig {
-            default_mode_request_user_input: thread.enabled(Feature::DefaultModeRequestUserInput),
-        };
-        let collaboration_mode = params.collaboration_mode.map(|mode| {
-            self.normalize_turn_start_collaboration_mode(mode, collaboration_modes_config)
-        });
-        let environments: Option<Vec<TurnEnvironmentSelection>> =
-            params.environments.map(|environments| {
-                environments
-                    .into_iter()
-                    .map(|environment| TurnEnvironmentSelection {
-                        environment_id: environment.environment_id,
-                        cwd: environment.cwd,
-                    })
-                    .collect()
-            });
-        if let Some(environments) = environments.as_ref()
-            && let Err(err) = self
-                .thread_manager
-                .validate_environment_selections(environments)
-        {
-            self.send_invalid_request_error(request_id, environment_selection_error_message(err))
-                .await;
-            return;
-        }
-
-        // Map v2 input items to core input items.
-        let mapped_items: Vec<CoreInputItem> = params
-            .input
-            .into_iter()
-            .map(V2UserInput::into_core)
-            .collect();
-
-        let has_any_overrides = params.cwd.is_some()
-            || params.approval_policy.is_some()
-            || params.approvals_reviewer.is_some()
-            || params.sandbox_policy.is_some()
-            || params.permission_profile.is_some()
-            || params.model.is_some()
-            || params.service_tier.is_some()
-            || params.effort.is_some()
-            || params.summary.is_some()
-            || collaboration_mode.is_some()
-            || params.personality.is_some();
-
-        if params.sandbox_policy.is_some() && params.permission_profile.is_some() {
-            self.send_invalid_request_error(
-                request_id,
-                "`permissionProfile` cannot be combined with `sandboxPolicy`".to_string(),
+            let (_, thread) = self
+                .load_thread(&params.thread_id)
+                .await
+                .inspect_err(|error| {
+                    self.track_error_response(&request_id, error, /*error_type*/ None);
+                })?;
+            Self::set_app_server_client_info(
+                thread.as_ref(),
+                app_server_client_name,
+                app_server_client_version,
             )
-            .await;
-            return;
-        }
+            .await
+            .inspect_err(|error| {
+                self.track_error_response(&request_id, error, /*error_type*/ None);
+            })?;
 
-        let cwd = params.cwd;
-        let approval_policy = params.approval_policy.map(AskForApproval::to_core);
-        let approvals_reviewer = params
-            .approvals_reviewer
-            .map(codex_app_server_protocol::ApprovalsReviewer::to_core);
-        let sandbox_policy = params.sandbox_policy.map(|p| p.to_core());
-        let permission_profile = params.permission_profile.map(Into::into);
-        let model = params.model;
-        let effort = params.effort.map(Some);
-        let summary = params.summary;
-        let service_tier = params.service_tier;
-        let personality = params.personality;
+            let collaboration_modes_config = CollaborationModesConfig {
+                default_mode_request_user_input: thread
+                    .enabled(Feature::DefaultModeRequestUserInput),
+            };
+            let collaboration_mode = params.collaboration_mode.map(|mode| {
+                self.normalize_turn_start_collaboration_mode(mode, collaboration_modes_config)
+            });
+            let environments: Option<Vec<TurnEnvironmentSelection>> =
+                params.environments.map(|environments| {
+                    environments
+                        .into_iter()
+                        .map(|environment| TurnEnvironmentSelection {
+                            environment_id: environment.environment_id,
+                            cwd: environment.cwd,
+                        })
+                        .collect()
+                });
+            if let Some(environments) = environments.as_ref() {
+                self.thread_manager
+                    .validate_environment_selections(environments)
+                    .map_err(|err| invalid_request(environment_selection_error_message(err)))?;
+            }
 
-        // If any overrides are provided, validate them synchronously so the
-        // request can fail before accepting user input. The actual update is
-        // still queued together with the input below to preserve submission order.
-        if has_any_overrides {
-            let result = thread
-                .validate_turn_context_overrides(CodexThreadTurnContextOverrides {
-                    cwd: cwd.clone(),
+            // Map v2 input items to core input items.
+            let mapped_items: Vec<CoreInputItem> = params
+                .input
+                .into_iter()
+                .map(V2UserInput::into_core)
+                .collect();
+
+            let has_any_overrides = params.cwd.is_some()
+                || params.approval_policy.is_some()
+                || params.approvals_reviewer.is_some()
+                || params.sandbox_policy.is_some()
+                || params.permission_profile.is_some()
+                || params.model.is_some()
+                || params.service_tier.is_some()
+                || params.effort.is_some()
+                || params.summary.is_some()
+                || collaboration_mode.is_some()
+                || params.personality.is_some();
+
+            if params.sandbox_policy.is_some() && params.permission_profile.is_some() {
+                return Err(invalid_request(
+                    "`permissionProfile` cannot be combined with `sandboxPolicy`",
+                ));
+            }
+
+            let cwd = params.cwd;
+            let approval_policy = params.approval_policy.map(AskForApproval::to_core);
+            let approvals_reviewer = params
+                .approvals_reviewer
+                .map(codex_app_server_protocol::ApprovalsReviewer::to_core);
+            let sandbox_policy = params.sandbox_policy.map(|p| p.to_core());
+            let permission_profile = params.permission_profile.map(Into::into);
+            let model = params.model;
+            let effort = params.effort.map(Some);
+            let summary = params.summary;
+            let service_tier = params.service_tier;
+            let personality = params.personality;
+
+            // If any overrides are provided, validate them synchronously so the
+            // request can fail before accepting user input. The actual update is
+            // still queued together with the input below to preserve submission order.
+            if has_any_overrides {
+                thread
+                    .validate_turn_context_overrides(CodexThreadTurnContextOverrides {
+                        cwd: cwd.clone(),
+                        approval_policy,
+                        approvals_reviewer,
+                        sandbox_policy: sandbox_policy.clone(),
+                        permission_profile: permission_profile.clone(),
+                        windows_sandbox_level: None,
+                        model: model.clone(),
+                        effort,
+                        summary,
+                        service_tier,
+                        collaboration_mode: collaboration_mode.clone(),
+                        personality,
+                    })
+                    .await
+                    .map_err(|err| {
+                        invalid_request(format!("invalid turn context override: {err}"))
+                    })?;
+            }
+
+            // Start the turn by submitting the user input. Return its submission id as turn_id.
+            let turn_op = if has_any_overrides {
+                Op::UserInputWithTurnContext {
+                    items: mapped_items,
+                    environments,
+                    final_output_json_schema: params.output_schema,
+                    responsesapi_client_metadata: params.responsesapi_client_metadata,
+                    cwd,
                     approval_policy,
                     approvals_reviewer,
-                    sandbox_policy: sandbox_policy.clone(),
-                    permission_profile: permission_profile.clone(),
+                    sandbox_policy,
+                    permission_profile,
                     windows_sandbox_level: None,
-                    model: model.clone(),
+                    model,
                     effort,
                     summary,
                     service_tier,
-                    collaboration_mode: collaboration_mode.clone(),
+                    collaboration_mode,
                     personality,
-                })
+                }
+            } else {
+                Op::UserInput {
+                    items: mapped_items,
+                    environments,
+                    final_output_json_schema: params.output_schema,
+                    responsesapi_client_metadata: params.responsesapi_client_metadata,
+                }
+            };
+            let turn_id = self
+                .submit_core_op(&request_id, thread.as_ref(), turn_op)
+                .await
+                .map_err(|err| {
+                    let error = internal_error(format!("failed to start turn: {err}"));
+                    self.track_error_response(&request_id, &error, /*error_type*/ None);
+                    error
+                })?;
+
+            self.outgoing
+                .record_request_turn_id(&request_id, &turn_id)
                 .await;
-            if let Err(err) = result {
-                self.send_invalid_request_error(
-                    request_id,
-                    format!("invalid turn context override: {err}"),
-                )
-                .await;
-                return;
-            }
+            let turn = Turn {
+                id: turn_id,
+                items: vec![],
+                error: None,
+                status: TurnStatus::InProgress,
+                started_at: None,
+                completed_at: None,
+                duration_ms: None,
+            };
+
+            Ok::<_, JSONRPCErrorError>(TurnStartResponse { turn })
         }
+        .await;
 
-        // Start the turn by submitting the user input. Return its submission id as turn_id.
-        let turn_op = if has_any_overrides {
-            Op::UserInputWithTurnContext {
-                items: mapped_items,
-                environments,
-                final_output_json_schema: params.output_schema,
-                responsesapi_client_metadata: params.responsesapi_client_metadata,
-                cwd,
-                approval_policy,
-                approvals_reviewer,
-                sandbox_policy,
-                permission_profile,
-                windows_sandbox_level: None,
-                model,
-                effort,
-                summary,
-                service_tier,
-                collaboration_mode,
-                personality,
-            }
-        } else {
-            Op::UserInput {
-                items: mapped_items,
-                environments,
-                final_output_json_schema: params.output_schema,
-                responsesapi_client_metadata: params.responsesapi_client_metadata,
-            }
-        };
-        let turn_id = self
-            .submit_core_op(&request_id, thread.as_ref(), turn_op)
-            .await;
-
-        match turn_id {
-            Ok(turn_id) => {
-                self.outgoing
-                    .record_request_turn_id(&request_id, &turn_id)
-                    .await;
-                let turn = Turn {
-                    id: turn_id.clone(),
-                    items: vec![],
-                    error: None,
-                    status: TurnStatus::InProgress,
-                    started_at: None,
-                    completed_at: None,
-                    duration_ms: None,
-                };
-
-                let response = TurnStartResponse { turn };
+        match result {
+            Ok(response) => {
                 self.analytics_events_client.track_response(
                     request_id.connection_id.0,
                     ClientResponse::TurnStart {
@@ -6708,13 +6683,7 @@ impl CodexMessageProcessor {
                     )
                     .await;
             }
-            Err(err) => {
-                let error = JSONRPCErrorError {
-                    code: INTERNAL_ERROR_CODE,
-                    message: format!("failed to start turn: {err}"),
-                    data: None,
-                };
-                self.track_error_response(&request_id, &error, /*error_type*/ None);
+            Err(error) => {
                 self.outgoing.send_error(request_id, error).await;
             }
         }
@@ -6725,15 +6694,19 @@ impl CodexMessageProcessor {
         request_id: ConnectionRequestId,
         params: ThreadInjectItemsParams,
     ) {
-        let (_, thread) = match self.load_thread(&params.thread_id).await {
-            Ok(value) => value,
-            Err(error) => {
-                self.outgoing.send_error(request_id, error).await;
-                return;
-            }
-        };
+        let result = self.thread_inject_items_response(params).await;
+        self.outgoing
+            .send_result(request_id, result, ClientResponsePayload::ThreadInjectItems)
+            .await;
+    }
 
-        let items = match params
+    async fn thread_inject_items_response(
+        &self,
+        params: ThreadInjectItemsParams,
+    ) -> Result<ThreadInjectItemsResponse, JSONRPCErrorError> {
+        let (_, thread) = self.load_thread(&params.thread_id).await?;
+
+        let items = params
             .items
             .into_iter()
             .enumerate()
@@ -6742,36 +6715,16 @@ impl CodexMessageProcessor {
                     .map_err(|err| format!("items[{index}] is not a valid response item: {err}"))
             })
             .collect::<std::result::Result<Vec<_>, _>>()
-        {
-            Ok(items) => items,
-            Err(message) => {
-                self.send_invalid_request_error(request_id, message).await;
-                return;
-            }
-        };
+            .map_err(invalid_request)?;
 
-        match thread.inject_response_items(items).await {
-            Ok(()) => {
-                self.outgoing
-                    .send_response(
-                        request_id,
-                        codex_app_server_protocol::ClientResponsePayload::ThreadInjectItems(
-                            ThreadInjectItemsResponse {},
-                        ),
-                    )
-                    .await;
-            }
-            Err(CodexErr::InvalidRequest(message)) => {
-                self.send_invalid_request_error(request_id, message).await;
-            }
-            Err(err) => {
-                self.send_internal_error(
-                    request_id,
-                    format!("failed to inject response items: {err}"),
-                )
-                .await;
-            }
-        }
+        thread
+            .inject_response_items(items)
+            .await
+            .map_err(|err| match err {
+                CodexErr::InvalidRequest(message) => invalid_request(message),
+                err => internal_error(format!("failed to inject response items: {err}")),
+            })?;
+        Ok(ThreadInjectItemsResponse {})
     }
 
     async fn set_app_server_client_info(
@@ -6790,52 +6743,116 @@ impl CodexMessageProcessor {
     }
 
     async fn turn_steer(&self, request_id: ConnectionRequestId, params: TurnSteerParams) {
-        let (_, thread) = match self.load_thread(&params.thread_id).await {
-            Ok(v) => v,
-            Err(error) => {
-                self.track_error_response(&request_id, &error, /*error_type*/ None);
-                self.outgoing.send_error(request_id, error).await;
-                return;
+        let result = async {
+            let (_, thread) = self
+                .load_thread(&params.thread_id)
+                .await
+                .inspect_err(|error| {
+                    self.track_error_response(&request_id, error, /*error_type*/ None);
+                })?;
+
+            if params.expected_turn_id.is_empty() {
+                return Err(invalid_request("expectedTurnId must not be empty"));
             }
-        };
+            self.outgoing
+                .record_request_turn_id(&request_id, &params.expected_turn_id)
+                .await;
+            if let Err(error) = Self::validate_v2_input_limit(&params.input) {
+                self.track_error_response(
+                    &request_id,
+                    &error,
+                    Some(AnalyticsJsonRpcError::Input(InputError::TooLarge)),
+                );
+                return Err(error);
+            }
 
-        if params.expected_turn_id.is_empty() {
-            self.send_invalid_request_error(
-                request_id,
-                "expectedTurnId must not be empty".to_string(),
-            )
-            .await;
-            return;
+            let mapped_items: Vec<CoreInputItem> = params
+                .input
+                .into_iter()
+                .map(V2UserInput::into_core)
+                .collect();
+
+            let turn_id = thread
+                .steer_input(
+                    mapped_items,
+                    Some(&params.expected_turn_id),
+                    params.responsesapi_client_metadata,
+                )
+                .await
+                .map_err(|err| {
+                    let (code, message, data, error_type) = match err {
+                        SteerInputError::NoActiveTurn(_) => (
+                            INVALID_REQUEST_ERROR_CODE,
+                            "no active turn to steer".to_string(),
+                            None,
+                            Some(AnalyticsJsonRpcError::TurnSteer(
+                                TurnSteerRequestError::NoActiveTurn,
+                            )),
+                        ),
+                        SteerInputError::ExpectedTurnMismatch { expected, actual } => (
+                            INVALID_REQUEST_ERROR_CODE,
+                            format!("expected active turn id `{expected}` but found `{actual}`"),
+                            None,
+                            Some(AnalyticsJsonRpcError::TurnSteer(
+                                TurnSteerRequestError::ExpectedTurnMismatch,
+                            )),
+                        ),
+                        SteerInputError::ActiveTurnNotSteerable { turn_kind } => {
+                            let (message, turn_steer_error) = match turn_kind {
+                                codex_protocol::protocol::NonSteerableTurnKind::Review => (
+                                    "cannot steer a review turn".to_string(),
+                                    TurnSteerRequestError::NonSteerableReview,
+                                ),
+                                codex_protocol::protocol::NonSteerableTurnKind::Compact => (
+                                    "cannot steer a compact turn".to_string(),
+                                    TurnSteerRequestError::NonSteerableCompact,
+                                ),
+                            };
+                            let error = TurnError {
+                                message: message.clone(),
+                                codex_error_info: Some(CodexErrorInfo::ActiveTurnNotSteerable {
+                                    turn_kind: turn_kind.into(),
+                                }),
+                                additional_details: None,
+                            };
+                            let data = match serde_json::to_value(error) {
+                                Ok(data) => Some(data),
+                                Err(error) => {
+                                    tracing::error!(
+                                        ?error,
+                                        "failed to serialize active-turn-not-steerable turn error"
+                                    );
+                                    None
+                                }
+                            };
+                            (
+                                INVALID_REQUEST_ERROR_CODE,
+                                message,
+                                data,
+                                Some(AnalyticsJsonRpcError::TurnSteer(turn_steer_error)),
+                            )
+                        }
+                        SteerInputError::EmptyInput => (
+                            INVALID_REQUEST_ERROR_CODE,
+                            "input must not be empty".to_string(),
+                            None,
+                            Some(AnalyticsJsonRpcError::Input(InputError::Empty)),
+                        ),
+                    };
+                    let error = JSONRPCErrorError {
+                        code,
+                        message,
+                        data,
+                    };
+                    self.track_error_response(&request_id, &error, error_type);
+                    error
+                })?;
+            Ok::<_, JSONRPCErrorError>(TurnSteerResponse { turn_id })
         }
-        self.outgoing
-            .record_request_turn_id(&request_id, &params.expected_turn_id)
-            .await;
-        if let Err(error) = Self::validate_v2_input_limit(&params.input) {
-            self.track_error_response(
-                &request_id,
-                &error,
-                Some(AnalyticsJsonRpcError::Input(InputError::TooLarge)),
-            );
-            self.outgoing.send_error(request_id, error).await;
-            return;
-        }
+        .await;
 
-        let mapped_items: Vec<CoreInputItem> = params
-            .input
-            .into_iter()
-            .map(V2UserInput::into_core)
-            .collect();
-
-        match thread
-            .steer_input(
-                mapped_items,
-                Some(&params.expected_turn_id),
-                params.responsesapi_client_metadata,
-            )
-            .await
-        {
-            Ok(turn_id) => {
-                let response = TurnSteerResponse { turn_id };
+        match result {
+            Ok(response) => {
                 self.analytics_events_client.track_response(
                     request_id.connection_id.0,
                     ClientResponse::TurnSteer {
@@ -6850,72 +6867,7 @@ impl CodexMessageProcessor {
                     )
                     .await;
             }
-            Err(err) => {
-                let (code, message, data, error_type) = match err {
-                    SteerInputError::NoActiveTurn(_) => (
-                        INVALID_REQUEST_ERROR_CODE,
-                        "no active turn to steer".to_string(),
-                        None,
-                        Some(AnalyticsJsonRpcError::TurnSteer(
-                            TurnSteerRequestError::NoActiveTurn,
-                        )),
-                    ),
-                    SteerInputError::ExpectedTurnMismatch { expected, actual } => (
-                        INVALID_REQUEST_ERROR_CODE,
-                        format!("expected active turn id `{expected}` but found `{actual}`"),
-                        None,
-                        Some(AnalyticsJsonRpcError::TurnSteer(
-                            TurnSteerRequestError::ExpectedTurnMismatch,
-                        )),
-                    ),
-                    SteerInputError::ActiveTurnNotSteerable { turn_kind } => {
-                        let (message, turn_steer_error) = match turn_kind {
-                            codex_protocol::protocol::NonSteerableTurnKind::Review => (
-                                "cannot steer a review turn".to_string(),
-                                TurnSteerRequestError::NonSteerableReview,
-                            ),
-                            codex_protocol::protocol::NonSteerableTurnKind::Compact => (
-                                "cannot steer a compact turn".to_string(),
-                                TurnSteerRequestError::NonSteerableCompact,
-                            ),
-                        };
-                        let error = TurnError {
-                            message: message.clone(),
-                            codex_error_info: Some(CodexErrorInfo::ActiveTurnNotSteerable {
-                                turn_kind: turn_kind.into(),
-                            }),
-                            additional_details: None,
-                        };
-                        let data = match serde_json::to_value(error) {
-                            Ok(data) => Some(data),
-                            Err(error) => {
-                                tracing::error!(
-                                    ?error,
-                                    "failed to serialize active-turn-not-steerable turn error"
-                                );
-                                None
-                            }
-                        };
-                        (
-                            INVALID_REQUEST_ERROR_CODE,
-                            message,
-                            data,
-                            Some(AnalyticsJsonRpcError::TurnSteer(turn_steer_error)),
-                        )
-                    }
-                    SteerInputError::EmptyInput => (
-                        INVALID_REQUEST_ERROR_CODE,
-                        "input must not be empty".to_string(),
-                        None,
-                        Some(AnalyticsJsonRpcError::Input(InputError::Empty)),
-                    ),
-                };
-                let error = JSONRPCErrorError {
-                    code,
-                    message,
-                    data,
-                };
-                self.track_error_response(&request_id, &error, error_type);
+            Err(error) => {
                 self.outgoing.send_error(request_id, error).await;
             }
         }
@@ -6923,16 +6875,10 @@ impl CodexMessageProcessor {
 
     async fn prepare_realtime_conversation_thread(
         &self,
-        request_id: ConnectionRequestId,
+        request_id: &ConnectionRequestId,
         thread_id: &str,
-    ) -> Option<(ThreadId, Arc<CodexThread>)> {
-        let (thread_id, thread) = match self.load_thread(thread_id).await {
-            Ok(v) => v,
-            Err(error) => {
-                self.outgoing.send_error(request_id, error).await;
-                return None;
-            }
-        };
+    ) -> Result<Option<(ThreadId, Arc<CodexThread>)>, JSONRPCErrorError> {
+        let (thread_id, thread) = self.load_thread(thread_id).await?;
 
         match self
             .ensure_conversation_listener(
@@ -6945,24 +6891,18 @@ impl CodexMessageProcessor {
         {
             Ok(EnsureConversationListenerResult::Attached) => {}
             Ok(EnsureConversationListenerResult::ConnectionClosed) => {
-                return None;
+                return Ok(None);
             }
-            Err(error) => {
-                self.outgoing.send_error(request_id, error).await;
-                return None;
-            }
+            Err(error) => return Err(error),
         }
 
         if !thread.enabled(Feature::RealtimeConversation) {
-            self.send_invalid_request_error(
-                request_id,
-                format!("thread {thread_id} does not support realtime conversation"),
-            )
-            .await;
-            return None;
+            return Err(invalid_request(format!(
+                "thread {thread_id} does not support realtime conversation"
+            )));
         }
 
-        Some((thread_id, thread))
+        Ok(Some((thread_id, thread)))
     }
 
     async fn thread_realtime_start(
@@ -6970,15 +6910,14 @@ impl CodexMessageProcessor {
         request_id: ConnectionRequestId,
         params: ThreadRealtimeStartParams,
     ) {
-        let Some((_, thread)) = self
-            .prepare_realtime_conversation_thread(request_id.clone(), &params.thread_id)
-            .await
-        else {
-            return;
-        };
-
-        let submit = self
-            .submit_core_op(
+        let result = async {
+            let Some((_, thread)) = self
+                .prepare_realtime_conversation_thread(&request_id, &params.thread_id)
+                .await?
+            else {
+                return Ok(None);
+            };
+            self.submit_core_op(
                 &request_id,
                 thread.as_ref(),
                 Op::RealtimeConversationStart(ConversationStartParams {
@@ -6996,27 +6935,18 @@ impl CodexMessageProcessor {
                     voice: params.voice,
                 }),
             )
-            .await;
-
-        match submit {
-            Ok(_) => {
-                self.outgoing
-                    .send_response(
-                        request_id,
-                        codex_app_server_protocol::ClientResponsePayload::ThreadRealtimeStart(
-                            ThreadRealtimeStartResponse::default(),
-                        ),
-                    )
-                    .await;
-            }
-            Err(err) => {
-                self.send_internal_error(
-                    request_id,
-                    format!("failed to start realtime conversation: {err}"),
-                )
-                .await;
-            }
+            .await
+            .map_err(|err| {
+                internal_error(format!("failed to start realtime conversation: {err}"))
+            })?;
+            Ok::<_, JSONRPCErrorError>(Some(ThreadRealtimeStartResponse::default()))
         }
+        .await;
+        self.send_optional_result(
+            request_id,
+            result.map(|response| response.map(ClientResponsePayload::ThreadRealtimeStart)),
+        )
+        .await;
     }
 
     async fn thread_realtime_append_audio(
@@ -7024,42 +6954,34 @@ impl CodexMessageProcessor {
         request_id: ConnectionRequestId,
         params: ThreadRealtimeAppendAudioParams,
     ) {
-        let Some((_, thread)) = self
-            .prepare_realtime_conversation_thread(request_id.clone(), &params.thread_id)
-            .await
-        else {
-            return;
-        };
-
-        let submit = self
-            .submit_core_op(
+        let result = async {
+            let Some((_, thread)) = self
+                .prepare_realtime_conversation_thread(&request_id, &params.thread_id)
+                .await?
+            else {
+                return Ok(None);
+            };
+            self.submit_core_op(
                 &request_id,
                 thread.as_ref(),
                 Op::RealtimeConversationAudio(ConversationAudioParams {
                     frame: params.audio.into(),
                 }),
             )
-            .await;
-
-        match submit {
-            Ok(_) => {
-                self.outgoing
-                    .send_response(
-                        request_id,
-                        codex_app_server_protocol::ClientResponsePayload::ThreadRealtimeAppendAudio(
-                            ThreadRealtimeAppendAudioResponse::default(),
-                        ),
-                    )
-                    .await;
-            }
-            Err(err) => {
-                self.send_internal_error(
-                    request_id,
-                    format!("failed to append realtime conversation audio: {err}"),
-                )
-                .await;
-            }
+            .await
+            .map_err(|err| {
+                internal_error(format!(
+                    "failed to append realtime conversation audio: {err}"
+                ))
+            })?;
+            Ok::<_, JSONRPCErrorError>(Some(ThreadRealtimeAppendAudioResponse::default()))
         }
+        .await;
+        self.send_optional_result(
+            request_id,
+            result.map(|response| response.map(ClientResponsePayload::ThreadRealtimeAppendAudio)),
+        )
+        .await;
     }
 
     async fn thread_realtime_append_text(
@@ -7067,40 +6989,32 @@ impl CodexMessageProcessor {
         request_id: ConnectionRequestId,
         params: ThreadRealtimeAppendTextParams,
     ) {
-        let Some((_, thread)) = self
-            .prepare_realtime_conversation_thread(request_id.clone(), &params.thread_id)
-            .await
-        else {
-            return;
-        };
-
-        let submit = self
-            .submit_core_op(
+        let result = async {
+            let Some((_, thread)) = self
+                .prepare_realtime_conversation_thread(&request_id, &params.thread_id)
+                .await?
+            else {
+                return Ok(None);
+            };
+            self.submit_core_op(
                 &request_id,
                 thread.as_ref(),
                 Op::RealtimeConversationText(ConversationTextParams { text: params.text }),
             )
-            .await;
-
-        match submit {
-            Ok(_) => {
-                self.outgoing
-                    .send_response(
-                        request_id,
-                        codex_app_server_protocol::ClientResponsePayload::ThreadRealtimeAppendText(
-                            ThreadRealtimeAppendTextResponse::default(),
-                        ),
-                    )
-                    .await;
-            }
-            Err(err) => {
-                self.send_internal_error(
-                    request_id,
-                    format!("failed to append realtime conversation text: {err}"),
-                )
-                .await;
-            }
+            .await
+            .map_err(|err| {
+                internal_error(format!(
+                    "failed to append realtime conversation text: {err}"
+                ))
+            })?;
+            Ok::<_, JSONRPCErrorError>(Some(ThreadRealtimeAppendTextResponse::default()))
         }
+        .await;
+        self.send_optional_result(
+            request_id,
+            result.map(|response| response.map(ClientResponsePayload::ThreadRealtimeAppendText)),
+        )
+        .await;
     }
 
     async fn thread_realtime_stop(
@@ -7108,36 +7022,26 @@ impl CodexMessageProcessor {
         request_id: ConnectionRequestId,
         params: ThreadRealtimeStopParams,
     ) {
-        let Some((_, thread)) = self
-            .prepare_realtime_conversation_thread(request_id.clone(), &params.thread_id)
-            .await
-        else {
-            return;
-        };
-
-        let submit = self
-            .submit_core_op(&request_id, thread.as_ref(), Op::RealtimeConversationClose)
-            .await;
-
-        match submit {
-            Ok(_) => {
-                self.outgoing
-                    .send_response(
-                        request_id,
-                        codex_app_server_protocol::ClientResponsePayload::ThreadRealtimeStop(
-                            ThreadRealtimeStopResponse::default(),
-                        ),
-                    )
-                    .await;
-            }
-            Err(err) => {
-                self.send_internal_error(
-                    request_id,
-                    format!("failed to stop realtime conversation: {err}"),
-                )
-                .await;
-            }
+        let result = async {
+            let Some((_, thread)) = self
+                .prepare_realtime_conversation_thread(&request_id, &params.thread_id)
+                .await?
+            else {
+                return Ok(None);
+            };
+            self.submit_core_op(&request_id, thread.as_ref(), Op::RealtimeConversationClose)
+                .await
+                .map_err(|err| {
+                    internal_error(format!("failed to stop realtime conversation: {err}"))
+                })?;
+            Ok::<_, JSONRPCErrorError>(Some(ThreadRealtimeStopResponse::default()))
         }
+        .await;
+        self.send_optional_result(
+            request_id,
+            result.map(|response| response.map(ClientResponsePayload::ThreadRealtimeStop)),
+        )
+        .await;
     }
 
     async fn thread_realtime_list_voices(
@@ -7356,144 +7260,112 @@ impl CodexMessageProcessor {
             target,
             delivery,
         } = params;
-        let (parent_thread_id, parent_thread) = match self.load_thread(&thread_id).await {
-            Ok(v) => v,
-            Err(error) => {
-                self.outgoing.send_error(request_id, error).await;
-                return;
-            }
-        };
-
-        let (review_request, display_text) = match Self::review_request_from_target(target) {
-            Ok(value) => value,
-            Err(err) => {
-                self.outgoing.send_error(request_id, err).await;
-                return;
-            }
-        };
-
-        let delivery = delivery.unwrap_or(ApiReviewDelivery::Inline).to_core();
-        match delivery {
-            CoreReviewDelivery::Inline => {
-                if let Err(err) = self
-                    .start_inline_review(
+        let result = async {
+            let (parent_thread_id, parent_thread) = self.load_thread(&thread_id).await?;
+            let (review_request, display_text) = Self::review_request_from_target(target)?;
+            match delivery.unwrap_or(ApiReviewDelivery::Inline).to_core() {
+                CoreReviewDelivery::Inline => {
+                    self.start_inline_review(
                         &request_id,
                         parent_thread,
                         review_request,
                         display_text.as_str(),
-                        thread_id.clone(),
+                        thread_id,
                     )
-                    .await
-                {
-                    self.outgoing.send_error(request_id, err).await;
+                    .await?;
                 }
-            }
-            CoreReviewDelivery::Detached => {
-                if let Err(err) = self
-                    .start_detached_review(
+                CoreReviewDelivery::Detached => {
+                    self.start_detached_review(
                         &request_id,
                         parent_thread_id,
                         parent_thread,
                         review_request,
                         display_text.as_str(),
                     )
-                    .await
-                {
-                    self.outgoing.send_error(request_id, err).await;
+                    .await?;
                 }
             }
+            Ok::<_, JSONRPCErrorError>(None::<ReviewStartResponse>)
         }
+        .await;
+        self.send_optional_result(
+            request_id,
+            result.map(|response| response.map(ClientResponsePayload::ReviewStart)),
+        )
+        .await;
     }
 
     async fn turn_interrupt(&self, request_id: ConnectionRequestId, params: TurnInterruptParams) {
         let TurnInterruptParams { thread_id, turn_id } = params;
         let is_startup_interrupt = turn_id.is_empty();
 
-        let (thread_uuid, thread) = match self.load_thread(&thread_id).await {
-            Ok(v) => v,
-            Err(error) => {
-                self.outgoing.send_error(request_id, error).await;
-                return;
-            }
-        };
+        let result = async {
+            let (thread_uuid, thread) = self.load_thread(&thread_id).await?;
 
-        // Record turn interrupts so we can reply when TurnAborted arrives. Startup
-        // interrupts do not have a turn and are acknowledged after submission.
-        if !is_startup_interrupt {
-            let thread_state = self.thread_state_manager.thread_state(thread_uuid).await;
-            let is_running = matches!(thread.agent_status().await, AgentStatus::Running);
-            let interrupt_outcome = {
-                let mut thread_state = thread_state.lock().await;
-                if let Some(active_turn) = thread_state.active_turn_snapshot() {
-                    if active_turn.id != turn_id {
-                        Err(format!(
-                            "expected active turn id {turn_id} but found {}",
-                            active_turn.id
-                        ))
-                    } else {
-                        thread_state
-                            .pending_interrupts
-                            .push((request_id.clone(), ApiVersion::V2));
-                        Ok(())
+            // Record turn interrupts so we can reply when TurnAborted arrives. Startup
+            // interrupts do not have a turn and are acknowledged after submission.
+            if !is_startup_interrupt {
+                let thread_state = self.thread_state_manager.thread_state(thread_uuid).await;
+                let is_running = matches!(thread.agent_status().await, AgentStatus::Running);
+                {
+                    let mut thread_state = thread_state.lock().await;
+                    if let Some(active_turn) = thread_state.active_turn_snapshot() {
+                        if active_turn.id != turn_id {
+                            return Err(invalid_request(format!(
+                                "expected active turn id {turn_id} but found {}",
+                                active_turn.id
+                            )));
+                        }
+                    } else if thread_state.last_terminal_turn_id.as_deref()
+                        == Some(turn_id.as_str())
+                        || !is_running
+                    {
+                        return Err(invalid_request("no active turn to interrupt"));
                     }
-                } else if thread_state.last_terminal_turn_id.as_deref() == Some(turn_id.as_str()) {
-                    Err("no active turn to interrupt".to_string())
-                } else if is_running {
                     thread_state
                         .pending_interrupts
                         .push((request_id.clone(), ApiVersion::V2));
-                    Ok(())
-                } else {
-                    Err("no active turn to interrupt".to_string())
                 }
-            };
-            if let Err(message) = interrupt_outcome {
-                self.send_invalid_request_error(request_id, message).await;
-                return;
-            }
 
-            self.outgoing
-                .record_request_turn_id(&request_id, &turn_id)
-                .await;
-        }
-
-        // Submit the interrupt. Turn interrupts respond upon TurnAborted; startup
-        // interrupts respond here because startup cancellation has no turn event.
-        let submit_result = self
-            .submit_core_op(&request_id, thread.as_ref(), Op::Interrupt)
-            .await;
-        match submit_result {
-            Ok(_) if is_startup_interrupt => {
                 self.outgoing
-                    .send_response(
-                        request_id,
-                        codex_app_server_protocol::ClientResponsePayload::TurnInterrupt(
-                            TurnInterruptResponse {},
-                        ),
-                    )
+                    .record_request_turn_id(&request_id, &turn_id)
                     .await;
             }
-            Ok(_) => {}
-            Err(err) => {
-                if !is_startup_interrupt {
-                    let thread_state = self.thread_state_manager.thread_state(thread_uuid).await;
-                    let mut thread_state = thread_state.lock().await;
-                    thread_state
-                        .pending_interrupts
-                        .retain(|(pending_request_id, _)| pending_request_id != &request_id);
+
+            // Submit the interrupt. Turn interrupts respond upon TurnAborted; startup
+            // interrupts respond here because startup cancellation has no turn event.
+            match self
+                .submit_core_op(&request_id, thread.as_ref(), Op::Interrupt)
+                .await
+            {
+                Ok(_) if is_startup_interrupt => Ok(Some(TurnInterruptResponse {})),
+                Ok(_) => Ok(None),
+                Err(err) => {
+                    if !is_startup_interrupt {
+                        let thread_state =
+                            self.thread_state_manager.thread_state(thread_uuid).await;
+                        let mut thread_state = thread_state.lock().await;
+                        thread_state
+                            .pending_interrupts
+                            .retain(|(pending_request_id, _)| pending_request_id != &request_id);
+                    }
+                    let interrupt_target = if is_startup_interrupt {
+                        "startup"
+                    } else {
+                        "turn"
+                    };
+                    Err(internal_error(format!(
+                        "failed to interrupt {interrupt_target}: {err}"
+                    )))
                 }
-                let interrupt_target = if is_startup_interrupt {
-                    "startup"
-                } else {
-                    "turn"
-                };
-                self.send_internal_error(
-                    request_id,
-                    format!("failed to interrupt {interrupt_target}: {err}"),
-                )
-                .await;
             }
         }
+        .await;
+        self.send_optional_result(
+            request_id,
+            result.map(|response| response.map(ClientResponsePayload::TurnInterrupt)),
+        )
+        .await;
     }
 
     async fn ensure_conversation_listener(
@@ -7804,29 +7676,20 @@ impl CodexMessageProcessor {
         Ok(())
     }
     async fn git_diff_to_origin(&self, request_id: ConnectionRequestId, cwd: PathBuf) {
-        let diff = git_diff_to_remote(&cwd).await;
-        match diff {
-            Some(value) => {
-                let response = GitDiffToRemoteResponse {
-                    sha: value.sha,
-                    diff: value.diff,
-                };
-                self.outgoing
-                    .send_response(
-                        request_id,
-                        codex_app_server_protocol::ClientResponsePayload::GitDiffToRemote(response),
-                    )
-                    .await;
-            }
-            None => {
-                let error = JSONRPCErrorError {
-                    code: INVALID_REQUEST_ERROR_CODE,
-                    message: format!("failed to compute git diff to remote for cwd: {cwd:?}"),
-                    data: None,
-                };
-                self.outgoing.send_error(request_id, error).await;
-            }
-        }
+        let result = git_diff_to_remote(&cwd)
+            .await
+            .map(|value| GitDiffToRemoteResponse {
+                sha: value.sha,
+                diff: value.diff,
+            })
+            .ok_or_else(|| {
+                invalid_request(format!(
+                    "failed to compute git diff to remote for cwd: {cwd:?}"
+                ))
+            });
+        self.outgoing
+            .send_result(request_id, result, ClientResponsePayload::GitDiffToRemote)
+            .await;
     }
 
     async fn fuzzy_file_search(
@@ -7883,38 +7746,35 @@ impl CodexMessageProcessor {
         request_id: ConnectionRequestId,
         params: FuzzyFileSearchSessionStartParams,
     ) {
+        let result = self.fuzzy_file_search_session_start_response(params).await;
+        self.outgoing
+            .send_result(
+                request_id,
+                result,
+                ClientResponsePayload::FuzzyFileSearchSessionStart,
+            )
+            .await;
+    }
+
+    async fn fuzzy_file_search_session_start_response(
+        &self,
+        params: FuzzyFileSearchSessionStartParams,
+    ) -> Result<FuzzyFileSearchSessionStartResponse, JSONRPCErrorError> {
         let FuzzyFileSearchSessionStartParams { session_id, roots } = params;
         if session_id.is_empty() {
-            let error = JSONRPCErrorError {
-                code: INVALID_REQUEST_ERROR_CODE,
-                message: "sessionId must not be empty".to_string(),
-                data: None,
-            };
-            self.outgoing.send_error(request_id, error).await;
-            return;
+            return Err(invalid_request("sessionId must not be empty"));
         }
 
         let session =
-            start_fuzzy_file_search_session(session_id.clone(), roots, self.outgoing.clone());
-        match session {
-            Ok(session) => {
-                self.fuzzy_search_sessions
-                    .lock()
-                    .await
-                    .insert(session_id, session);
-                self.outgoing
-                    .send_response(request_id, codex_app_server_protocol::ClientResponsePayload::FuzzyFileSearchSessionStart(FuzzyFileSearchSessionStartResponse {}))
-                    .await;
-            }
-            Err(err) => {
-                let error = JSONRPCErrorError {
-                    code: INTERNAL_ERROR_CODE,
-                    message: format!("failed to start fuzzy file search session: {err}"),
-                    data: None,
-                };
-                self.outgoing.send_error(request_id, error).await;
-            }
-        }
+            start_fuzzy_file_search_session(session_id.clone(), roots, self.outgoing.clone())
+                .map_err(|err| {
+                    internal_error(format!("failed to start fuzzy file search session: {err}"))
+                })?;
+        self.fuzzy_search_sessions
+            .lock()
+            .await
+            .insert(session_id, session);
+        Ok(FuzzyFileSearchSessionStartResponse {})
     }
 
     async fn fuzzy_file_search_session_update(
@@ -7922,6 +7782,20 @@ impl CodexMessageProcessor {
         request_id: ConnectionRequestId,
         params: FuzzyFileSearchSessionUpdateParams,
     ) {
+        let result = self.fuzzy_file_search_session_update_response(params).await;
+        self.outgoing
+            .send_result(
+                request_id,
+                result,
+                ClientResponsePayload::FuzzyFileSearchSessionUpdate,
+            )
+            .await;
+    }
+
+    async fn fuzzy_file_search_session_update_response(
+        &self,
+        params: FuzzyFileSearchSessionUpdateParams,
+    ) -> Result<FuzzyFileSearchSessionUpdateResponse, JSONRPCErrorError> {
         let FuzzyFileSearchSessionUpdateParams { session_id, query } = params;
         let found = {
             let sessions = self.fuzzy_search_sessions.lock().await;
@@ -7933,23 +7807,12 @@ impl CodexMessageProcessor {
             }
         };
         if !found {
-            let error = JSONRPCErrorError {
-                code: INVALID_REQUEST_ERROR_CODE,
-                message: format!("fuzzy file search session not found: {session_id}"),
-                data: None,
-            };
-            self.outgoing.send_error(request_id, error).await;
-            return;
+            return Err(invalid_request(format!(
+                "fuzzy file search session not found: {session_id}"
+            )));
         }
 
-        self.outgoing
-            .send_response(
-                request_id,
-                codex_app_server_protocol::ClientResponsePayload::FuzzyFileSearchSessionUpdate(
-                    FuzzyFileSearchSessionUpdateResponse {},
-                ),
-            )
-            .await;
+        Ok(FuzzyFileSearchSessionUpdateResponse {})
     }
 
     async fn fuzzy_file_search_session_stop(
@@ -7974,14 +7837,20 @@ impl CodexMessageProcessor {
     }
 
     async fn upload_feedback(&self, request_id: ConnectionRequestId, params: FeedbackUploadParams) {
+        let result = self.upload_feedback_response(params).await;
+        self.outgoing
+            .send_result(request_id, result, ClientResponsePayload::FeedbackUpload)
+            .await;
+    }
+
+    async fn upload_feedback_response(
+        &self,
+        params: FeedbackUploadParams,
+    ) -> Result<FeedbackUploadResponse, JSONRPCErrorError> {
         if !self.config.feedback_enabled {
-            let error = JSONRPCErrorError {
-                code: INVALID_REQUEST_ERROR_CODE,
-                message: "sending feedback is disabled by configuration".to_string(),
-                data: None,
-            };
-            self.outgoing.send_error(request_id, error).await;
-            return;
+            return Err(invalid_request(
+                "sending feedback is disabled by configuration",
+            ));
         }
 
         let FeedbackUploadParams {
@@ -7996,15 +7865,7 @@ impl CodexMessageProcessor {
         let conversation_id = match thread_id.as_deref() {
             Some(thread_id) => match ThreadId::from_string(thread_id) {
                 Ok(conversation_id) => Some(conversation_id),
-                Err(err) => {
-                    let error = JSONRPCErrorError {
-                        code: INVALID_REQUEST_ERROR_CODE,
-                        message: format!("invalid thread id: {err}"),
-                        data: None,
-                    };
-                    self.outgoing.send_error(request_id, error).await;
-                    return;
-                }
+                Err(err) => return Err(invalid_request(format!("invalid thread id: {err}"))),
             },
             None => None,
         };
@@ -8133,35 +7994,14 @@ impl CodexMessageProcessor {
         let upload_result = match upload_result {
             Ok(result) => result,
             Err(join_err) => {
-                let error = JSONRPCErrorError {
-                    code: INTERNAL_ERROR_CODE,
-                    message: format!("failed to upload feedback: {join_err}"),
-                    data: None,
-                };
-                self.outgoing.send_error(request_id, error).await;
-                return;
+                return Err(internal_error(format!(
+                    "failed to upload feedback: {join_err}"
+                )));
             }
         };
 
-        match upload_result {
-            Ok(()) => {
-                let response = FeedbackUploadResponse { thread_id };
-                self.outgoing
-                    .send_response(
-                        request_id,
-                        codex_app_server_protocol::ClientResponsePayload::FeedbackUpload(response),
-                    )
-                    .await;
-            }
-            Err(err) => {
-                let error = JSONRPCErrorError {
-                    code: INTERNAL_ERROR_CODE,
-                    message: format!("failed to upload feedback: {err}"),
-                    data: None,
-                };
-                self.outgoing.send_error(request_id, error).await;
-            }
-        }
+        upload_result.map_err(|err| internal_error(format!("failed to upload feedback: {err}")))?;
+        Ok(FeedbackUploadResponse { thread_id })
     }
 
     async fn windows_sandbox_setup_start(
@@ -8255,6 +8095,26 @@ impl CodexMessageProcessor {
                 warn!("failed to resolve rollout path for thread_id={conversation_id}: {err}");
                 None
             })
+    }
+
+    async fn send_invalid_request_error(
+        &self,
+        request_id: ConnectionRequestId,
+        message: impl Into<String>,
+    ) {
+        self.outgoing
+            .send_error(request_id, invalid_request(message))
+            .await;
+    }
+
+    async fn send_internal_error(
+        &self,
+        request_id: ConnectionRequestId,
+        message: impl Into<String>,
+    ) {
+        self.outgoing
+            .send_error(request_id, internal_error(message))
+            .await;
     }
 }
 
