@@ -11,7 +11,7 @@ expression: "render_lines(&view, 112)"
                                                                                                                 
   Event     PreToolUse                                                                                          
   Matcher   Bash                                                                                                
-  File      /tmp/hooks.json                                                                                     
+  Source    /tmp/hooks.json                                                                                     
   Command   /enterprise/hooks/pre-tool-use-2.sh                                                                 
   Timeout   30s                                                                                                 
                                                                                                                 

@@ -10,7 +10,7 @@ expression: "render_lines(&view, 44)"
                                             
   Event     PreToolUse                      
   Matcher   Bash                            
-  File      /tmp/hooks.json                 
+  Source    /tmp/hooks.json                 
   Command   one two three four five six     
             seven eight nine ten eleven     
             twelve thirteen fourteen…       

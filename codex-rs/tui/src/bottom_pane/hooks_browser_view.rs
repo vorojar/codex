@@ -26,6 +26,7 @@ use crate::app_event_sender::AppEventSender;
 use crate::key_hint;
 use crate::line_truncation::truncate_line_with_ellipsis_if_overflow;
 use crate::render::renderable::Renderable;
+use crate::status::format_directory_display;
 
 const EVENT_COLUMN_WIDTH: usize = 22;
 const COUNT_COLUMN_WIDTH: usize = 12;
@@ -276,8 +277,8 @@ impl HooksBrowserView {
             lines.extend(detail_wrapped_lines("Matcher", matcher, width, None));
         }
         lines.extend(detail_wrapped_lines(
-            "File",
-            &hook.source_path.display().to_string(),
+            "Source",
+            &format_directory_display(&hook.source_path, /*max_width*/ None),
             width,
             None,
         ));

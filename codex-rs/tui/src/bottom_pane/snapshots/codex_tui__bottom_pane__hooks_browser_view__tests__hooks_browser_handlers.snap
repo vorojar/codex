@@ -11,7 +11,7 @@ expression: "render_lines(&view, 112)"
                                                                                                                 
   Event     PreToolUse                                                                                          
   Matcher   Bash                                                                                                
-  File      /tmp/hooks.json                                                                                     
+  Source    /tmp/hooks.json                                                                                     
   Command   ${CODEX_PLUGIN_ROOT}/hooks/pre-tool-use-check.sh                                                    
   Timeout   30s                                                                                                 
                                                                                                                 
