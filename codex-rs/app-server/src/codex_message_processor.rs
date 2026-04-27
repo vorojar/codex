@@ -253,6 +253,7 @@ use codex_core::config::edit::ConfigEdit;
 use codex_core::config::edit::ConfigEditsBuilder;
 use codex_core::config_loader::CloudRequirementsLoadError;
 use codex_core::config_loader::CloudRequirementsLoadErrorCode;
+use codex_core::config_loader::ConfigLayerStack;
 use codex_core::config_loader::project_trust_key;
 use codex_core::exec::ExecCapturePolicy;
 use codex_core::exec::ExecExpiration;
@@ -704,6 +705,21 @@ impl CodexMessageProcessor {
         codex_core::AgentsMdManager::new(config)
             .instruction_sources(LOCAL_FS.as_ref())
             .await
+    }
+
+    async fn resolve_cwd_config(
+        &self,
+        cwd: &Path,
+    ) -> Result<(AbsolutePathBuf, ConfigLayerStack), String> {
+        let cwd_abs =
+            AbsolutePathBuf::relative_to_current_dir(cwd).map_err(|err| err.to_string())?;
+        let config_layer_stack = self
+            .config_manager
+            .load_config_layers_for_cwd(cwd_abs.clone())
+            .await
+            .map_err(|err| err.to_string())?;
+
+        Ok((cwd_abs, config_layer_stack))
     }
 
     pub(crate) fn handle_config_mutation(&self) {
@@ -6834,43 +6850,24 @@ impl CodexMessageProcessor {
             .map(|environment| environment.get_filesystem());
         let mut data = Vec::new();
         for cwd in cwds {
+            let (cwd_abs, config_layer_stack) = match self.resolve_cwd_config(&cwd).await {
+                Ok(resolved) => resolved,
+                Err(message) => {
+                    let error_path = cwd.clone();
+                    data.push(codex_app_server_protocol::SkillsListEntry {
+                        cwd,
+                        skills: Vec::new(),
+                        errors: vec![codex_app_server_protocol::SkillErrorInfo {
+                            path: error_path,
+                            message,
+                        }],
+                    });
+                    continue;
+                }
+            };
             let extra_roots = extra_roots_by_cwd
                 .get(&cwd)
                 .map_or(&[][..], std::vec::Vec::as_slice);
-            let cwd_abs = match AbsolutePathBuf::relative_to_current_dir(cwd.as_path()) {
-                Ok(path) => path,
-                Err(err) => {
-                    let error_path = cwd.clone();
-                    data.push(codex_app_server_protocol::SkillsListEntry {
-                        cwd,
-                        skills: Vec::new(),
-                        errors: vec![codex_app_server_protocol::SkillErrorInfo {
-                            path: error_path,
-                            message: err.to_string(),
-                        }],
-                    });
-                    continue;
-                }
-            };
-            let config_layer_stack = match self
-                .config_manager
-                .load_config_layers_for_cwd(cwd_abs.clone())
-                .await
-            {
-                Ok(config_layer_stack) => config_layer_stack,
-                Err(err) => {
-                    let error_path = cwd.clone();
-                    data.push(codex_app_server_protocol::SkillsListEntry {
-                        cwd,
-                        skills: Vec::new(),
-                        errors: vec![codex_app_server_protocol::SkillErrorInfo {
-                            path: error_path,
-                            message: err.to_string(),
-                        }],
-                    });
-                    continue;
-                }
-            };
             let effective_skill_roots = plugins_manager
                 .effective_skill_roots_for_layer_stack(
                     &config_layer_stack,
@@ -6927,9 +6924,9 @@ impl CodexMessageProcessor {
         let plugins_manager = self.thread_manager.plugins_manager();
         let mut data = Vec::new();
         for cwd in cwds {
-            let cwd_abs = match AbsolutePathBuf::relative_to_current_dir(cwd.as_path()) {
-                Ok(path) => path,
-                Err(err) => {
+            let (_, config_layer_stack) = match self.resolve_cwd_config(&cwd).await {
+                Ok(resolved) => resolved,
+                Err(message) => {
                     let error_path = cwd.clone();
                     data.push(codex_app_server_protocol::HooksListEntry {
                         cwd,
@@ -6937,27 +6934,7 @@ impl CodexMessageProcessor {
                         warnings: Vec::new(),
                         errors: vec![codex_app_server_protocol::HookErrorInfo {
                             path: error_path,
-                            message: err.to_string(),
-                        }],
-                    });
-                    continue;
-                }
-            };
-            let config_layer_stack = match self
-                .config_manager
-                .load_config_layers_for_cwd(cwd_abs.clone())
-                .await
-            {
-                Ok(config_layer_stack) => config_layer_stack,
-                Err(err) => {
-                    let error_path = cwd.clone();
-                    data.push(codex_app_server_protocol::HooksListEntry {
-                        cwd,
-                        hooks: Vec::new(),
-                        warnings: Vec::new(),
-                        errors: vec![codex_app_server_protocol::HookErrorInfo {
-                            path: error_path,
-                            message: err.to_string(),
+                            message,
                         }],
                     });
                     continue;
