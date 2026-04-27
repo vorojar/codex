@@ -2738,7 +2738,7 @@ dependencies = [
  "anyhow",
  "assert_matches",
  "chrono",
- "codex-exec-server",
+ "codex-executor-fs",
  "codex-protocol",
  "codex-utils-absolute-path",
  "futures",
