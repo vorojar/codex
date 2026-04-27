@@ -219,7 +219,7 @@ impl ResponsesWebsocketConnection {
         request: ResponsesWsRequest,
         connection_reused: bool,
     ) -> Result<ResponseStream, ApiError> {
-        self.stream_request_with_lifecycle(request, connection_reused, None)
+        self.stream_request_with_lifecycle(request, connection_reused, /*lifecycle*/ None)
             .await
     }
 

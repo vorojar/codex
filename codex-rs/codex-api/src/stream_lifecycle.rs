@@ -359,9 +359,11 @@ mod tests {
 
     #[test]
     fn records_response_ids_milestones_and_observed_kinds_in_order() {
-        let mut recorder = ResponseStreamLifecycleRecorder::new(
-            ResponseStreamLifecycleOptions::new(2, ResponseStreamTransport::ResponsesHttp),
-        );
+        let mut recorder =
+            ResponseStreamLifecycleRecorder::new(ResponseStreamLifecycleOptions::new(
+                /*attempt*/ 2,
+                ResponseStreamTransport::ResponsesHttp,
+            ));
 
         for event in [
             json!({"type": "response.created", "response": {"id": "resp-created"}}),
@@ -403,9 +405,11 @@ mod tests {
 
     #[test]
     fn stream_errors_gain_diagnostic_context() {
-        let mut recorder = ResponseStreamLifecycleRecorder::new(
-            ResponseStreamLifecycleOptions::new(1, ResponseStreamTransport::ResponsesWebsocket),
-        );
+        let mut recorder =
+            ResponseStreamLifecycleRecorder::new(ResponseStreamLifecycleOptions::new(
+                /*attempt*/ 1,
+                ResponseStreamTransport::ResponsesWebsocket,
+            ));
         let event: ResponsesStreamEvent = serde_json::from_value(json!({
             "type": "response.output_item.added",
             "item": {"type": "message"}

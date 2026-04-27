@@ -72,7 +72,7 @@ impl<T: HttpTransport> ResponsesClient<T> {
         request: ResponsesApiRequest,
         options: ResponsesOptions,
     ) -> Result<ResponseStream, ApiError> {
-        self.stream_request_with_lifecycle(request, options, None)
+        self.stream_request_with_lifecycle(request, options, /*lifecycle*/ None)
             .await
     }
 
