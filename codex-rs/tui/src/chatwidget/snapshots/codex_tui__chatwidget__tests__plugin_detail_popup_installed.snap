@@ -9,7 +9,7 @@ expression: strip_osc8_for_snapshot(&popup)
 › 1. Back to plugins   Return to the plugin list.
   2. Uninstall plugin  Remove this plugin now.
      Skills            design-review, extract-copy
-     Hooks             SessionStart (1), PreToolUse (2)
+     Hooks             PreToolUse (2), SessionStart (1)
      Apps              Figma, Slack
      MCP Servers       figma-mcp, docs-mcp
 

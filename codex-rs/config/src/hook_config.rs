@@ -79,6 +79,17 @@ impl HookEventsToml {
             (HookEventName::Stop, self.stop),
         ]
     }
+
+    pub fn matcher_groups(&self) -> [(HookEventName, &[MatcherGroup]); 6] {
+        [
+            (HookEventName::PreToolUse, &self.pre_tool_use),
+            (HookEventName::PermissionRequest, &self.permission_request),
+            (HookEventName::PostToolUse, &self.post_tool_use),
+            (HookEventName::SessionStart, &self.session_start),
+            (HookEventName::UserPromptSubmit, &self.user_prompt_submit),
+            (HookEventName::Stop, &self.stop),
+        ]
+    }
 }
 
 #[derive(Debug, Default, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]

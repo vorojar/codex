@@ -1812,12 +1812,12 @@ enabled = true
         outcome.plugin.hooks,
         vec![
             PluginHookSummary {
-                event_name: HookEventName::SessionStart,
-                handler_count: 1,
-            },
-            PluginHookSummary {
                 event_name: HookEventName::PreToolUse,
                 handler_count: 2,
+            },
+            PluginHookSummary {
+                event_name: HookEventName::SessionStart,
+                handler_count: 1,
             },
         ]
     );

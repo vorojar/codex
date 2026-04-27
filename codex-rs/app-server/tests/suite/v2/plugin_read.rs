@@ -715,14 +715,14 @@ enabled = true
     assert_eq!(response.plugin.hooks.len(), 2);
     assert_eq!(
         response.plugin.hooks[0].event_name,
-        HookEventName::SessionStart
-    );
-    assert_eq!(response.plugin.hooks[0].handler_count, 1);
-    assert_eq!(
-        response.plugin.hooks[1].event_name,
         HookEventName::PreToolUse
     );
-    assert_eq!(response.plugin.hooks[1].handler_count, 2);
+    assert_eq!(response.plugin.hooks[0].handler_count, 2);
+    assert_eq!(
+        response.plugin.hooks[1].event_name,
+        HookEventName::SessionStart
+    );
+    assert_eq!(response.plugin.hooks[1].handler_count, 1);
     assert_eq!(response.plugin.apps.len(), 1);
     assert_eq!(response.plugin.apps[0].id, "gmail");
     assert_eq!(response.plugin.apps[0].name, "gmail");

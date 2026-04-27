@@ -1487,25 +1487,19 @@ impl PluginsManager {
 }
 
 fn summarize_plugin_hooks(hook_sources: &[PluginHookSource]) -> Vec<PluginHookSummary> {
-    let handler_count = |groups: &[codex_config::MatcherGroup]| {
-        groups.iter().map(|group| group.hooks.len()).sum::<usize>()
+    let Some(first_source) = hook_sources.first() else {
+        return Vec::new();
     };
-    let mut counts = [
-        (HookEventName::SessionStart, 0),
-        (HookEventName::UserPromptSubmit, 0),
-        (HookEventName::PreToolUse, 0),
-        (HookEventName::PermissionRequest, 0),
-        (HookEventName::PostToolUse, 0),
-        (HookEventName::Stop, 0),
-    ];
+    let mut counts = first_source
+        .hooks
+        .matcher_groups()
+        .map(|(event_name, _)| (event_name, 0));
 
     for source in hook_sources {
-        counts[0].1 += handler_count(&source.hooks.session_start);
-        counts[1].1 += handler_count(&source.hooks.user_prompt_submit);
-        counts[2].1 += handler_count(&source.hooks.pre_tool_use);
-        counts[3].1 += handler_count(&source.hooks.permission_request);
-        counts[4].1 += handler_count(&source.hooks.post_tool_use);
-        counts[5].1 += handler_count(&source.hooks.stop);
+        for ((_, count), (_, groups)) in counts.iter_mut().zip(source.hooks.matcher_groups()) {
+            let handler_count = groups.iter().map(|group| group.hooks.len()).sum::<usize>();
+            *count += handler_count;
+        }
     }
 
     counts
