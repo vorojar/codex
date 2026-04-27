@@ -55,6 +55,19 @@ pub(crate) enum AppLinkSuggestionType {
     Auth,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum AuthUrlRouting {
+    CodexAppsOnly,
+    WithGenericFallback,
+}
+
+struct AuthUrlParts<'a> {
+    meta: Option<&'a serde_json::Value>,
+    message: &'a str,
+    url: &'a str,
+    elicitation_id: &'a str,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct AppLinkElicitationTarget {
     pub(crate) thread_id: ThreadId,
@@ -62,6 +75,7 @@ pub(crate) struct AppLinkElicitationTarget {
     pub(crate) request_id: McpRequestId,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct AppLinkViewParams {
     pub(crate) app_id: String,
     pub(crate) title: String,
@@ -95,10 +109,13 @@ impl AppLinkViewParams {
             thread_id,
             server_name,
             request_id,
-            meta.as_ref(),
-            message,
-            url,
-            elicitation_id,
+            AuthUrlParts {
+                meta: meta.as_ref(),
+                message,
+                url,
+                elicitation_id,
+            },
+            AuthUrlRouting::CodexAppsOnly,
         )
     }
 
@@ -121,10 +138,13 @@ impl AppLinkViewParams {
             thread_id,
             server_name,
             request_id,
-            meta.as_ref(),
-            message,
-            url,
-            elicitation_id,
+            AuthUrlParts {
+                meta: meta.as_ref(),
+                message,
+                url,
+                elicitation_id,
+            },
+            AuthUrlRouting::WithGenericFallback,
         )
     }
 
@@ -132,26 +152,43 @@ impl AppLinkViewParams {
         thread_id: ThreadId,
         server_name: &str,
         request_id: McpRequestId,
-        meta: Option<&serde_json::Value>,
-        message: &str,
-        url: &str,
-        elicitation_id: &str,
+        parts: AuthUrlParts<'_>,
+        routing: AuthUrlRouting,
     ) -> Option<Self> {
         if server_name == MCP_CODEX_APPS_SERVER_NAME
             && let Some(params) = Self::from_codex_apps_auth_url_parts(
                 thread_id,
                 server_name,
-                request_id,
-                meta,
-                message,
-                url,
-                elicitation_id,
+                request_id.clone(),
+                parts.meta,
+                parts.message,
+                parts.url,
+                parts.elicitation_id,
             )
         {
             return Some(params);
         }
 
-        None
+        match routing {
+            AuthUrlRouting::CodexAppsOnly => None,
+            AuthUrlRouting::WithGenericFallback => Some(Self {
+                app_id: parts.elicitation_id.to_string(),
+                title: "MCP sign-in required".to_string(),
+                description: Some(format!("Server: {server_name}")),
+                instructions: "Sign in to this MCP server in your browser, then return here."
+                    .to_string(),
+                url: parts.url.to_string(),
+                is_installed: true,
+                is_enabled: true,
+                suggest_reason: Some(parts.message.to_string()),
+                suggestion_type: Some(AppLinkSuggestionType::Auth),
+                elicitation_target: Some(AppLinkElicitationTarget {
+                    thread_id,
+                    server_name: server_name.to_string(),
+                    request_id,
+                }),
+            }),
+        }
     }
 
     fn from_codex_apps_auth_url_parts(
@@ -872,6 +909,42 @@ mod tests {
         );
 
         assert!(params.is_none());
+    }
+
+    #[test]
+    fn non_codex_apps_app_server_auth_url_elicitation_uses_generic_app_link() {
+        let target = generic_auth_target();
+        let request = codex_app_server_protocol::McpServerElicitationRequest::Url {
+            meta: None,
+            message: "Sign in to GitHub to continue.".to_string(),
+            url: "https://github.example/login/device".to_string(),
+            elicitation_id: "github-auth-123".to_string(),
+        };
+
+        let params = AppLinkViewParams::from_auth_url_app_server_request(
+            target.thread_id,
+            &target.server_name,
+            target.request_id.clone(),
+            &request,
+        )
+        .expect("expected generic MCP auth app link params");
+
+        assert_eq!(
+            params,
+            AppLinkViewParams {
+                app_id: "github-auth-123".to_string(),
+                title: "MCP sign-in required".to_string(),
+                description: Some("Server: github_mcp".to_string()),
+                instructions: "Sign in to this MCP server in your browser, then return here."
+                    .to_string(),
+                url: "https://github.example/login/device".to_string(),
+                is_installed: true,
+                is_enabled: true,
+                suggest_reason: Some("Sign in to GitHub to continue.".to_string()),
+                suggestion_type: Some(AppLinkSuggestionType::Auth),
+                elicitation_target: Some(target),
+            }
+        );
     }
 
     fn render_snapshot(view: &AppLinkView, area: Rect) -> String {
