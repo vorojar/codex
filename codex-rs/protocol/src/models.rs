@@ -479,6 +479,14 @@ impl PermissionProfile {
         )
     }
 
+    pub fn from_legacy_sandbox_policy_for_cwd(sandbox_policy: &SandboxPolicy, cwd: &Path) -> Self {
+        Self::from_runtime_permissions_with_enforcement(
+            SandboxEnforcement::from_legacy_sandbox_policy(sandbox_policy),
+            &FileSystemSandboxPolicy::from_legacy_sandbox_policy_for_cwd(sandbox_policy, cwd),
+            NetworkSandboxPolicy::from(sandbox_policy),
+        )
+    }
+
     pub fn enforcement(&self) -> SandboxEnforcement {
         match self {
             Self::Managed { .. } => SandboxEnforcement::Managed,
