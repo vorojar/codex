@@ -18,6 +18,7 @@ use ratatui::widgets::Paragraph;
 use ratatui::widgets::Widget;
 use ratatui::widgets::Wrap;
 use textwrap::wrap;
+use url::Url;
 
 use super::CancellationEvent;
 use super::bottom_pane_view::BottomPaneView;
@@ -155,6 +156,8 @@ impl AppLinkViewParams {
         parts: AuthUrlParts<'_>,
         routing: AuthUrlRouting,
     ) -> Option<Self> {
+        let url = validate_auth_url(parts.url, server_name == MCP_CODEX_APPS_SERVER_NAME)?;
+
         if server_name == MCP_CODEX_APPS_SERVER_NAME
             && let Some(params) = Self::from_codex_apps_auth_url_parts(
                 thread_id,
@@ -162,7 +165,7 @@ impl AppLinkViewParams {
                 request_id.clone(),
                 parts.meta,
                 parts.message,
-                parts.url,
+                url.as_str(),
                 parts.elicitation_id,
             )
         {
@@ -177,7 +180,7 @@ impl AppLinkViewParams {
                 description: Some(format!("Server: {server_name}")),
                 instructions: "Sign in to this MCP server in your browser, then return here."
                     .to_string(),
-                url: parts.url.to_string(),
+                url: url.to_string(),
                 is_installed: true,
                 is_enabled: true,
                 suggest_reason: Some(parts.message.to_string()),
@@ -246,6 +249,28 @@ impl AppLinkViewParams {
             }),
         })
     }
+}
+
+fn validate_auth_url(url: &str, require_chatgpt_host: bool) -> Option<Url> {
+    let parsed = Url::parse(url).ok()?;
+    if parsed.scheme() != "https" || parsed.host_str().is_none() {
+        return None;
+    }
+    if !parsed.username().is_empty() || parsed.password().is_some() {
+        return None;
+    }
+    if require_chatgpt_host && !is_allowed_chatgpt_auth_host(parsed.host_str()?) {
+        return None;
+    }
+    Some(parsed)
+}
+
+fn is_allowed_chatgpt_auth_host(host: &str) -> bool {
+    let host = host.to_ascii_lowercase();
+    host == "chatgpt.com"
+        || host == "chatgpt-staging.com"
+        || host.ends_with(".chatgpt.com")
+        || host.ends_with(".chatgpt-staging.com")
 }
 
 pub(crate) struct AppLinkView {
@@ -945,6 +970,103 @@ mod tests {
                 elicitation_target: Some(target),
             }
         );
+    }
+
+    #[test]
+    fn app_server_auth_url_elicitation_rejects_non_https_urls() {
+        let target = generic_auth_target();
+        let request = codex_app_server_protocol::McpServerElicitationRequest::Url {
+            meta: None,
+            message: "Sign in to GitHub to continue.".to_string(),
+            url: "http://github.example/login/device".to_string(),
+            elicitation_id: "github-auth-123".to_string(),
+        };
+
+        let params = AppLinkViewParams::from_auth_url_app_server_request(
+            target.thread_id,
+            &target.server_name,
+            target.request_id.clone(),
+            &request,
+        );
+
+        assert!(params.is_none());
+    }
+
+    #[test]
+    fn app_server_auth_url_elicitation_rejects_embedded_credentials() {
+        let target = generic_auth_target();
+        let request = codex_app_server_protocol::McpServerElicitationRequest::Url {
+            meta: None,
+            message: "Sign in to GitHub to continue.".to_string(),
+            url: "https://user:pass@github.example/login/device".to_string(),
+            elicitation_id: "github-auth-123".to_string(),
+        };
+
+        let params = AppLinkViewParams::from_auth_url_app_server_request(
+            target.thread_id,
+            &target.server_name,
+            target.request_id.clone(),
+            &request,
+        );
+
+        assert!(params.is_none());
+    }
+
+    #[test]
+    fn codex_apps_auth_url_elicitation_rejects_non_chatgpt_hosts() {
+        let target = suggestion_target();
+        let request = ElicitationRequest::Url {
+            meta: Some(serde_json::json!({
+                "_codex_apps": {
+                    "connector_auth_failure": {
+                        "is_auth_failure": true,
+                        "connector_id": "connector_calendar",
+                        "connector_name": "Google Calendar",
+                    },
+                },
+            })),
+            message: "Reconnect Google Calendar on ChatGPT.".to_string(),
+            url: "https://chatgpt.com.evil.example/apps/google-calendar/connector_calendar"
+                .to_string(),
+            elicitation_id: "codex_apps_auth_call_123".to_string(),
+        };
+
+        let params = AppLinkViewParams::from_auth_url_elicitation(
+            target.thread_id,
+            &target.server_name,
+            target.request_id.clone(),
+            &request,
+        );
+
+        assert!(params.is_none());
+    }
+
+    #[test]
+    fn codex_apps_app_server_auth_url_elicitation_rejects_non_chatgpt_hosts() {
+        let target = suggestion_target();
+        let request = codex_app_server_protocol::McpServerElicitationRequest::Url {
+            meta: Some(serde_json::json!({
+                "_codex_apps": {
+                    "connector_auth_failure": {
+                        "is_auth_failure": true,
+                        "connector_id": "connector_calendar",
+                        "connector_name": "Google Calendar",
+                    },
+                },
+            })),
+            message: "Reconnect Google Calendar on ChatGPT.".to_string(),
+            url: "https://evilchatgpt.com/apps/google-calendar/connector_calendar".to_string(),
+            elicitation_id: "codex_apps_auth_call_123".to_string(),
+        };
+
+        let params = AppLinkViewParams::from_auth_url_app_server_request(
+            target.thread_id,
+            &target.server_name,
+            target.request_id.clone(),
+            &request,
+        );
+
+        assert!(params.is_none());
     }
 
     fn render_snapshot(view: &AppLinkView, area: Rect) -> String {
