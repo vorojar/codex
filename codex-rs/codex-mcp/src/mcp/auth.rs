@@ -10,6 +10,7 @@ use codex_login::CodexAuth;
 use codex_protocol::protocol::McpAuthStatus;
 use codex_rmcp_client::OAuthProviderError;
 use codex_rmcp_client::OauthLoginHandle;
+use codex_rmcp_client::determine_streamable_http_auth_status;
 use codex_rmcp_client::determine_streamable_http_auth_status_with_client;
 use codex_rmcp_client::discover_streamable_http_oauth_with_client;
 use codex_rmcp_client::perform_oauth_login_return_url_with_client;
@@ -418,19 +419,35 @@ async fn compute_auth_status(
             bearer_token_env_var,
             http_headers,
             env_http_headers,
-        } => {
-            let http_client = http_client_for_server(config, runtime_environment)?;
-            determine_streamable_http_auth_status_with_client(
-                server_name,
-                url,
-                bearer_token_env_var.as_deref(),
-                http_headers.clone(),
-                env_http_headers.clone(),
-                store_mode,
-                http_client,
-            )
-            .await
-        }
+        } => match config.experimental_environment.as_deref() {
+            Some("remote") => {
+                let http_client = http_client_for_server(config, runtime_environment)?;
+                determine_streamable_http_auth_status_with_client(
+                    server_name,
+                    url,
+                    bearer_token_env_var.as_deref(),
+                    http_headers.clone(),
+                    env_http_headers.clone(),
+                    store_mode,
+                    http_client,
+                )
+                .await
+            }
+            None | Some("local") => {
+                determine_streamable_http_auth_status(
+                    server_name,
+                    url,
+                    bearer_token_env_var.as_deref(),
+                    http_headers.clone(),
+                    env_http_headers.clone(),
+                    store_mode,
+                )
+                .await
+            }
+            Some(environment) => {
+                anyhow::bail!("unsupported experimental_environment `{environment}`")
+            }
+        },
     }
 }
 
