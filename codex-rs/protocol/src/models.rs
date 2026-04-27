@@ -402,8 +402,12 @@ impl PermissionProfile {
         }
     }
 
-    /// Managed workspace-write filesystem access with restricted network access.
-    pub fn workspace_write() -> Self {
+    /// Managed legacy workspace-write filesystem template with restricted
+    /// network access.
+    ///
+    /// The returned profile contains symbolic `:project_roots` entries that
+    /// must be resolved against the active permission root before enforcement.
+    pub fn legacy_workspace_write_template() -> Self {
         Self::Managed {
             file_system: ManagedFileSystemPermissions::Restricted {
                 entries: vec![
@@ -415,7 +419,7 @@ impl PermissionProfile {
                     },
                     FileSystemSandboxEntry {
                         path: FileSystemPath::Special {
-                            value: FileSystemSpecialPath::CurrentWorkingDirectory,
+                            value: FileSystemSpecialPath::project_roots(/*subpath*/ None),
                         },
                         access: FileSystemAccessMode::Write,
                     },
@@ -1831,7 +1835,7 @@ mod tests {
             PermissionProfile::from_legacy_sandbox_policy(&SandboxPolicy::new_read_only_policy())
         );
         assert_eq!(
-            PermissionProfile::workspace_write(),
+            PermissionProfile::legacy_workspace_write_template(),
             PermissionProfile::from_legacy_sandbox_policy(
                 &SandboxPolicy::new_workspace_write_policy()
             )
