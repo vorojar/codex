@@ -2288,8 +2288,8 @@ dependencies = [
  "async-trait",
  "base64 0.22.1",
  "codex-app-server-protocol",
- "codex-exec-server",
  "codex-execpolicy",
+ "codex-executor-fs",
  "codex-features",
  "codex-git-utils",
  "codex-model-provider-info",
@@ -2609,6 +2609,7 @@ dependencies = [
  "bytes",
  "codex-app-server-protocol",
  "codex-client",
+ "codex-executor-fs",
  "codex-protocol",
  "codex-sandboxing",
  "codex-test-binary-support",
@@ -2666,6 +2667,17 @@ dependencies = [
  "serde_with",
  "starlark",
  "tempfile",
+]
+
+[[package]]
+name = "codex-executor-fs"
+version = "0.0.0"
+dependencies = [
+ "async-trait",
+ "codex-protocol",
+ "codex-utils-absolute-path",
+ "serde",
+ "tokio",
 ]
 
 [[package]]
