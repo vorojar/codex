@@ -4674,9 +4674,9 @@ impl CodexMessageProcessor {
                     thread_status,
                     /*has_live_in_progress_turn*/ false,
                 );
-                let permission_profile = thread_response_permission_profile(
-                    codex_thread.config_snapshot().await.permission_profile,
-                );
+                let config_snapshot = codex_thread.config_snapshot().await;
+                let permission_profile =
+                    thread_response_permission_profile(config_snapshot.permission_profile.clone());
 
                 let response = ThreadResumeResponse {
                     thread,
@@ -4687,7 +4687,7 @@ impl CodexMessageProcessor {
                     instruction_sources,
                     approval_policy: session_configured.approval_policy.into(),
                     approvals_reviewer: session_configured.approvals_reviewer.into(),
-                    sandbox: session_configured.sandbox_policy.into(),
+                    sandbox: config_snapshot.sandbox_policy.into(),
                     permission_profile,
                     reasoning_effort: session_configured.reasoning_effort,
                 };
@@ -5405,9 +5405,9 @@ impl CodexMessageProcessor {
                 .await,
             /*has_in_progress_turn*/ false,
         );
-        let permission_profile = thread_response_permission_profile(
-            forked_thread.config_snapshot().await.permission_profile,
-        );
+        let config_snapshot = forked_thread.config_snapshot().await;
+        let permission_profile =
+            thread_response_permission_profile(config_snapshot.permission_profile.clone());
 
         let response = ThreadForkResponse {
             thread: thread.clone(),
@@ -5418,7 +5418,7 @@ impl CodexMessageProcessor {
             instruction_sources,
             approval_policy: session_configured.approval_policy.into(),
             approvals_reviewer: session_configured.approvals_reviewer.into(),
-            sandbox: session_configured.sandbox_policy.into(),
+            sandbox: config_snapshot.sandbox_policy.into(),
             permission_profile,
             reasoning_effort: session_configured.reasoning_effort,
         };
