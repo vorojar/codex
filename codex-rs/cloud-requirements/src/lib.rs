@@ -15,11 +15,11 @@ use chrono::DateTime;
 use chrono::Duration as ChronoDuration;
 use chrono::Utc;
 use codex_backend_client::Client as BackendClient;
+use codex_config::CloudRequirementsLoadError;
+use codex_config::CloudRequirementsLoadErrorCode;
+use codex_config::CloudRequirementsLoader;
+use codex_config::ConfigRequirementsToml;
 use codex_config::types::AuthCredentialsStoreMode;
-use codex_core::config_loader::CloudRequirementsLoadError;
-use codex_core::config_loader::CloudRequirementsLoadErrorCode;
-use codex_core::config_loader::CloudRequirementsLoader;
-use codex_core::config_loader::ConfigRequirementsToml;
 use codex_core::util::backoff;
 use codex_login::AuthManager;
 use codex_login::CodexAuth;
@@ -176,13 +176,7 @@ fn verify_cache_signature(payload_bytes: &[u8], signature: &str) -> bool {
 }
 
 fn auth_identity(auth: &CodexAuth) -> (Option<String>, Option<String>) {
-    let token_data = auth.get_token_data().ok();
-    let chatgpt_user_id = token_data
-        .as_ref()
-        .and_then(|token_data| token_data.id_token.chatgpt_user_id.as_deref())
-        .map(str::to_owned);
-    let account_id = auth.get_account_id();
-    (chatgpt_user_id, account_id)
+    (auth.get_chatgpt_user_id(), auth.get_account_id())
 }
 
 fn cache_payload_bytes(payload: &CloudRequirementsCacheSignedPayload) -> Option<Vec<u8>> {
@@ -335,10 +329,15 @@ impl CloudRequirementsService {
         let Some(auth) = self.auth_manager.auth().await else {
             return Ok(None);
         };
+        if matches!(auth, CodexAuth::AgentIdentity(_)) {
+            // AgentIdentity does not carry a human bearer token, and identity-edge
+            // only allowlists task-scoped AgentAssertion calls for the Codex runtime.
+            return Ok(None);
+        }
         let Some(plan_type) = auth.account_plan_type() else {
             return Ok(None);
         };
-        if !auth.is_chatgpt_auth()
+        if !auth.uses_codex_backend()
             || !(plan_type.is_business_like() || matches!(plan_type, PlanType::Enterprise))
         {
             return Ok(None);
@@ -558,7 +557,7 @@ impl CloudRequirementsService {
         let Some(plan_type) = auth.account_plan_type() else {
             return false;
         };
-        if !auth.is_chatgpt_auth()
+        if !auth.uses_codex_backend()
             || !(plan_type.is_business_like() || matches!(plan_type, PlanType::Enterprise))
         {
             return false;
@@ -1315,10 +1314,10 @@ enabled = false
         assert_eq!(
             result,
             Some(ConfigRequirementsToml {
-                apps: Some(codex_core::config_loader::AppsRequirementsToml {
+                apps: Some(codex_config::AppsRequirementsToml {
                     apps: BTreeMap::from([(
                         "connector_5f3c8c41a1e54ad7a76272c89e2554fa".to_string(),
-                        codex_core::config_loader::AppRequirementToml {
+                        codex_config::AppRequirementToml {
                             enabled: Some(false),
                         },
                     )]),

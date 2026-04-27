@@ -26,7 +26,7 @@ use codex_app_server_protocol::TrackUsageLimitBannerParams;
 use codex_login::default_client::originator;
 use codex_plugin::PluginTelemetryMetadata;
 use codex_protocol::approvals::NetworkApprovalProtocol;
-use codex_protocol::models::PermissionProfile;
+use codex_protocol::models::AdditionalPermissionProfile;
 use codex_protocol::models::SandboxPermissions;
 use codex_protocol::protocol::GuardianAssessmentOutcome;
 use codex_protocol::protocol::GuardianCommandSource;
@@ -199,17 +199,17 @@ pub enum GuardianApprovalRequestSource {
 pub enum GuardianReviewedAction {
     Shell {
         sandbox_permissions: SandboxPermissions,
-        additional_permissions: Option<PermissionProfile>,
+        additional_permissions: Option<AdditionalPermissionProfile>,
     },
     UnifiedExec {
         sandbox_permissions: SandboxPermissions,
-        additional_permissions: Option<PermissionProfile>,
+        additional_permissions: Option<AdditionalPermissionProfile>,
         tty: bool,
     },
     Execve {
         source: GuardianCommandSource,
         program: String,
-        additional_permissions: Option<PermissionProfile>,
+        additional_permissions: Option<AdditionalPermissionProfile>,
     },
     ApplyPatch {},
     NetworkAccess {
