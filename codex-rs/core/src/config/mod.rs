@@ -1965,8 +1965,8 @@ impl Config {
             )
         } else {
             let configured_network_proxy_config = NetworkProxyConfig::default();
-            let mut sandbox_policy = cfg
-                .derive_sandbox_policy(
+            let mut permission_profile = cfg
+                .derive_permission_profile(
                     sandbox_mode,
                     config_profile.sandbox_mode,
                     windows_sandbox_level,
@@ -1974,24 +1974,34 @@ impl Config {
                     Some(&constrained_permission_profile),
                 )
                 .await;
-            if let SandboxPolicy::WorkspaceWrite { writable_roots, .. } = &mut sandbox_policy {
-                for path in &additional_writable_roots {
-                    if !writable_roots.iter().any(|existing| existing == path) {
-                        writable_roots.push(path.clone());
-                    }
-                }
-            }
-            let file_system_sandbox_policy =
-                FileSystemSandboxPolicy::from_legacy_sandbox_policy_for_cwd(
+            let (mut file_system_sandbox_policy, network_sandbox_policy) =
+                permission_profile.to_runtime_permissions();
+            let sandbox_policy = compatibility_sandbox_policy_for_permission_profile(
+                &permission_profile,
+                &file_system_sandbox_policy,
+                network_sandbox_policy,
+                resolved_cwd.as_path(),
+            );
+            permission_profile = PermissionProfile::from_legacy_sandbox_policy_for_cwd(
                 &sandbox_policy,
                 resolved_cwd.as_path(),
             );
-            let network_sandbox_policy = NetworkSandboxPolicy::from(&sandbox_policy);
-            let permission_profile = PermissionProfile::from_runtime_permissions_with_enforcement(
-                SandboxEnforcement::from_legacy_sandbox_policy(&sandbox_policy),
-                &file_system_sandbox_policy,
-                network_sandbox_policy,
-            );
+            (file_system_sandbox_policy, _) = permission_profile.to_runtime_permissions();
+            if matches!(permission_profile.enforcement(), SandboxEnforcement::Managed)
+                && file_system_sandbox_policy.can_write_path_with_cwd(
+                    resolved_cwd.as_path(),
+                    resolved_cwd.as_path(),
+                )
+                && !file_system_sandbox_policy.has_full_disk_write_access()
+            {
+                file_system_sandbox_policy = file_system_sandbox_policy
+                    .with_additional_legacy_workspace_writable_roots(&additional_writable_roots);
+                permission_profile = PermissionProfile::from_runtime_permissions_with_enforcement(
+                    permission_profile.enforcement(),
+                    &file_system_sandbox_policy,
+                    network_sandbox_policy,
+                );
+            }
             (
                 configured_network_proxy_config,
                 permission_profile,
