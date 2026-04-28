@@ -800,7 +800,10 @@ fn codex_apps_auth_failure_meta_requires_invoked_connector_id() {
         codex_apps_connector_auth_failure(&result, Some(&metadata)),
         None
     );
-    assert_eq!(codex_apps_connector_auth_failure(&result, None), None);
+    assert_eq!(
+        codex_apps_connector_auth_failure(&result, /*metadata*/ None),
+        None
+    );
 }
 
 #[test]
