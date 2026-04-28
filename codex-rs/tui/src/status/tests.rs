@@ -13,6 +13,7 @@ use chrono::TimeZone;
 use chrono::Utc;
 use codex_protocol::ThreadId;
 use codex_protocol::config_types::ReasoningSummary;
+use codex_protocol::models::ActivePermissionProfile;
 use codex_protocol::models::ManagedFileSystemPermissions;
 use codex_protocol::models::PermissionProfile;
 use codex_protocol::openai_models::ReasoningEffort;
@@ -236,6 +237,72 @@ async fn status_permissions_non_default_workspace_write_is_custom() {
     assert_eq!(
         permissions_text_for(&config).as_deref(),
         Some("Custom (workspace-write with network access, on-request)")
+    );
+}
+
+#[tokio::test]
+async fn status_permissions_named_workspace_profile_is_default() {
+    let temp_home = TempDir::new().expect("temp home");
+    let mut config = test_config(&temp_home).await;
+    config
+        .permissions
+        .approval_policy
+        .set(AskForApproval::OnRequest)
+        .expect("set approval policy");
+    config
+        .permissions
+        .set_permission_profile_with_active_profile(
+            PermissionProfile::workspace_write(),
+            Some(ActivePermissionProfile::new(":workspace")),
+        )
+        .expect("set permission profile");
+
+    assert_eq!(permissions_text_for(&config).as_deref(), Some("Default"));
+}
+
+#[tokio::test]
+async fn status_permissions_broadened_workspace_profile_shows_name() {
+    let temp_home = TempDir::new().expect("temp home");
+    let mut config = test_config(&temp_home).await;
+    config
+        .permissions
+        .approval_policy
+        .set(AskForApproval::OnRequest)
+        .expect("set approval policy");
+    config
+        .permissions
+        .set_permission_profile_with_active_profile(
+            PermissionProfile::workspace_write_with(
+                &[],
+                NetworkSandboxPolicy::Enabled,
+                /*exclude_tmpdir_env_var*/ false,
+                /*exclude_slash_tmp*/ false,
+            ),
+            Some(ActivePermissionProfile::new(":workspace")),
+        )
+        .expect("set permission profile");
+
+    assert_eq!(
+        permissions_text_for(&config).as_deref(),
+        Some("Custom (workspace-write with network access, on-request)")
+    );
+}
+
+#[tokio::test]
+async fn status_permissions_user_defined_profile_shows_name() {
+    let temp_home = TempDir::new().expect("temp home");
+    let mut config = test_config(&temp_home).await;
+    config
+        .permissions
+        .set_permission_profile_with_active_profile(
+            PermissionProfile::read_only(),
+            Some(ActivePermissionProfile::new("locked")),
+        )
+        .expect("set permission profile");
+
+    assert_eq!(
+        permissions_text_for(&config).as_deref(),
+        Some("Profile locked (read-only, on-request)")
     );
 }
 

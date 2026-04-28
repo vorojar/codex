@@ -93,6 +93,7 @@ use codex_app_server_protocol::TurnSteerParams;
 use codex_app_server_protocol::TurnSteerResponse;
 use codex_otel::TelemetryAuthMode;
 use codex_protocol::ThreadId;
+use codex_protocol::models::ActivePermissionProfile;
 use codex_protocol::models::PermissionProfile;
 use codex_protocol::models::ResponseItem;
 use codex_protocol::openai_models::ModelAvailabilityNux;
@@ -160,6 +161,9 @@ pub(crate) struct ThreadSessionState {
     /// responses are converted to a profile at ingestion time using the
     /// response cwd so cached sessions do not reinterpret cwd-bound grants.
     pub(crate) permission_profile: PermissionProfile,
+    /// Named profile that produced `permission_profile`, when the server knows
+    /// the permissions came from `default_permissions`.
+    pub(crate) active_permission_profile: Option<ActivePermissionProfile>,
     pub(crate) cwd: AbsolutePathBuf,
     pub(crate) instruction_source_paths: Vec<AbsolutePathBuf>,
     pub(crate) reasoning_effort: Option<codex_protocol::openai_models::ReasoningEffort>,
@@ -1311,6 +1315,7 @@ async fn thread_session_state_from_thread_start_response(
                     response.cwd.as_path(),
                 )
             }),
+        response.active_permission_profile.clone().map(Into::into),
         response.cwd.clone(),
         response.instruction_sources.clone(),
         response.reasoning_effort,
@@ -1343,6 +1348,7 @@ async fn thread_session_state_from_thread_resume_response(
                     response.cwd.as_path(),
                 )
             }),
+        response.active_permission_profile.clone().map(Into::into),
         response.cwd.clone(),
         response.instruction_sources.clone(),
         response.reasoning_effort,
@@ -1375,6 +1381,7 @@ async fn thread_session_state_from_thread_fork_response(
                     response.cwd.as_path(),
                 )
             }),
+        response.active_permission_profile.clone().map(Into::into),
         response.cwd.clone(),
         response.instruction_sources.clone(),
         response.reasoning_effort,
@@ -1417,6 +1424,7 @@ async fn thread_session_state_from_thread_response(
     approval_policy: AskForApproval,
     approvals_reviewer: codex_protocol::config_types::ApprovalsReviewer,
     permission_profile: PermissionProfile,
+    active_permission_profile: Option<ActivePermissionProfile>,
     cwd: AbsolutePathBuf,
     instruction_source_paths: Vec<AbsolutePathBuf>,
     reasoning_effort: Option<codex_protocol::openai_models::ReasoningEffort>,
@@ -1442,6 +1450,7 @@ async fn thread_session_state_from_thread_response(
         approval_policy,
         approvals_reviewer,
         permission_profile,
+        active_permission_profile,
         cwd,
         instruction_source_paths,
         reasoning_effort,
@@ -1792,6 +1801,7 @@ mod tests {
                 .expect("read-only profile must be legacy-compatible")
                 .into(),
             permission_profile: Some(read_only_profile.into()),
+            active_permission_profile: None,
             reasoning_effort: None,
         };
 
@@ -1839,6 +1849,7 @@ mod tests {
             AskForApproval::Never,
             codex_protocol::config_types::ApprovalsReviewer::User,
             PermissionProfile::read_only(),
+            /*active_permission_profile*/ None,
             test_path_buf("/tmp/project").abs(),
             Vec::new(),
             /*reasoning_effort*/ None,
@@ -1869,6 +1880,7 @@ mod tests {
             AskForApproval::Never,
             codex_protocol::config_types::ApprovalsReviewer::User,
             PermissionProfile::read_only(),
+            /*active_permission_profile*/ None,
             test_path_buf("/tmp/project").abs(),
             Vec::new(),
             /*reasoning_effort*/ None,

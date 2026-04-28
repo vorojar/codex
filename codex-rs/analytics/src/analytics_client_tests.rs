@@ -155,6 +155,7 @@ fn sample_thread_start_response(thread_id: &str, ephemeral: bool, model: &str) -
             approvals_reviewer: AppServerApprovalsReviewer::User,
             sandbox: AppServerSandboxPolicy::DangerFullAccess,
             permission_profile: Some(sample_permission_profile()),
+            active_permission_profile: None,
             reasoning_effort: None,
         },
     }
@@ -211,6 +212,7 @@ fn sample_thread_resume_response_with_source(
             approvals_reviewer: AppServerApprovalsReviewer::User,
             sandbox: AppServerSandboxPolicy::DangerFullAccess,
             permission_profile: Some(sample_permission_profile()),
+            active_permission_profile: None,
             reasoning_effort: None,
         },
     }
