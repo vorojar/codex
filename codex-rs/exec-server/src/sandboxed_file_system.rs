@@ -10,6 +10,7 @@ use crate::CreateDirectoryOptions;
 use crate::ExecServerRuntimePaths;
 use crate::ExecutorFileSystem;
 use crate::FileMetadata;
+use crate::FileReadBody;
 use crate::FileSystemResult;
 use crate::FileSystemSandboxContext;
 use crate::ReadDirectoryEntry;
@@ -17,6 +18,7 @@ use crate::RemoveOptions;
 use crate::fs_helper::FsHelperPayload;
 use crate::fs_helper::FsHelperRequest;
 use crate::fs_sandbox::FileSystemSandboxRunner;
+use crate::local_file_system::file_name_from_path;
 use crate::protocol::FsCopyParams;
 use crate::protocol::FsCreateDirectoryParams;
 use crate::protocol::FsGetMetadataParams;
@@ -73,6 +75,41 @@ impl ExecutorFileSystem for SandboxedFileSystem {
                 io::ErrorKind::InvalidData,
                 format!("fs/readFile returned invalid base64 dataBase64: {err}"),
             )
+        })
+    }
+
+    async fn read_file_body(
+        &self,
+        path: &AbsolutePathBuf,
+        sandbox: Option<&FileSystemSandboxContext>,
+    ) -> FileSystemResult<FileReadBody> {
+        let sandbox = require_platform_sandbox(sandbox)?;
+        let file_info = self
+            .run_sandboxed(
+                sandbox,
+                FsHelperRequest::ReadFileInfo(FsReadFileParams {
+                    path: path.clone(),
+                    sandbox: None,
+                }),
+            )
+            .await?
+            .expect_read_file_info()
+            .map_err(map_sandbox_error)?;
+        let stream = self
+            .sandbox_runner
+            .run_stream(
+                sandbox,
+                FsHelperRequest::ReadFileStream(FsReadFileParams {
+                    path: path.clone(),
+                    sandbox: None,
+                }),
+            )
+            .await
+            .map_err(map_sandbox_error)?;
+        Ok(FileReadBody {
+            file_name: file_name_from_path(path.as_path()),
+            file_size_bytes: file_info.file_size_bytes,
+            stream,
         })
     }
 

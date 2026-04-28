@@ -2729,8 +2729,10 @@ name = "codex-file-system"
 version = "0.0.0"
 dependencies = [
  "async-trait",
+ "bytes",
  "codex-protocol",
  "codex-utils-absolute-path",
+ "futures",
  "serde",
 ]
 

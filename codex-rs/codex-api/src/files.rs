@@ -27,7 +27,7 @@ pub struct UploadedOpenAiFile {
     pub file_name: String,
     pub file_size_bytes: u64,
     pub mime_type: Option<String>,
-    pub path: PathBuf,
+    pub path: Option<PathBuf>,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -128,11 +128,64 @@ pub async fn upload_local_file(
         .and_then(|value| value.to_str())
         .unwrap_or("file")
         .to_string();
+    let upload_file = File::open(path)
+        .await
+        .map_err(|source| OpenAiFileError::ReadFile {
+            path: path.to_path_buf(),
+            source,
+        })?;
+    upload_file_body_with_source_path(
+        base_url,
+        auth,
+        file_name,
+        metadata.len(),
+        reqwest::Body::wrap_stream(ReaderStream::new(upload_file)),
+        Some(path.to_path_buf()),
+    )
+    .await
+}
+
+pub async fn upload_file_body(
+    base_url: &str,
+    auth: &dyn AuthProvider,
+    file_name: String,
+    file_size_bytes: u64,
+    body: reqwest::Body,
+) -> Result<UploadedOpenAiFile, OpenAiFileError> {
+    upload_file_body_with_source_path(
+        base_url,
+        auth,
+        file_name,
+        file_size_bytes,
+        body,
+        /*source_path*/ None,
+    )
+    .await
+}
+
+async fn upload_file_body_with_source_path(
+    base_url: &str,
+    auth: &dyn AuthProvider,
+    file_name: String,
+    file_size_bytes: u64,
+    body: reqwest::Body,
+    source_path: Option<PathBuf>,
+) -> Result<UploadedOpenAiFile, OpenAiFileError> {
+    if file_size_bytes > OPENAI_FILE_UPLOAD_LIMIT_BYTES {
+        return Err(OpenAiFileError::FileTooLarge {
+            path: source_path
+                .clone()
+                .unwrap_or_else(|| PathBuf::from(file_name.clone())),
+            size_bytes: file_size_bytes,
+            limit_bytes: OPENAI_FILE_UPLOAD_LIMIT_BYTES,
+        });
+    }
+
     let create_url = format!("{}/files", base_url.trim_end_matches('/'));
     let create_response = authorized_request(auth, reqwest::Method::POST, &create_url)
         .json(&serde_json::json!({
             "file_name": file_name,
-            "file_size": metadata.len(),
+            "file_size": file_size_bytes,
             "use_case": OPENAI_FILE_USE_CASE,
         }))
         .send()
@@ -156,18 +209,12 @@ pub async fn upload_local_file(
             source,
         })?;
 
-    let upload_file = File::open(path)
-        .await
-        .map_err(|source| OpenAiFileError::ReadFile {
-            path: path.to_path_buf(),
-            source,
-        })?;
     let upload_response = build_reqwest_client()
         .put(&create_payload.upload_url)
         .timeout(OPENAI_FILE_REQUEST_TIMEOUT)
         .header("x-ms-blob-type", "BlockBlob")
-        .header(CONTENT_LENGTH, metadata.len())
-        .body(reqwest::Body::wrap_stream(ReaderStream::new(upload_file)))
+        .header(CONTENT_LENGTH, file_size_bytes)
+        .body(body)
         .send()
         .await
         .map_err(|source| OpenAiFileError::Request {
@@ -226,9 +273,9 @@ pub async fn upload_local_file(
                         }
                     })?,
                     file_name: finalize_payload.file_name.unwrap_or(file_name),
-                    file_size_bytes: metadata.len(),
+                    file_size_bytes,
                     mime_type: finalize_payload.mime_type,
-                    path: path.to_path_buf(),
+                    path: source_path,
                 });
             }
             "retry" => {

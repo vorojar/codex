@@ -32,6 +32,7 @@ use codex_protocol::permissions::NetworkSandboxPolicy;
 use codex_sandboxing::policy_transforms::effective_file_system_sandbox_policy;
 use codex_sandboxing::policy_transforms::effective_network_sandbox_policy;
 use codex_utils_absolute_path::AbsolutePathBuf;
+use futures::StreamExt;
 use pretty_assertions::assert_eq;
 use tempfile::TempDir;
 use test_case::test_case;
@@ -521,10 +522,24 @@ async fn file_system_sandboxed_read_allows_readable_root(use_remote: bool) -> Re
     let sandbox = read_only_sandbox(allowed_dir);
 
     let contents = file_system
-        .read_file(&absolute_path(file_path), Some(&sandbox))
+        .read_file(&absolute_path(file_path.clone()), Some(&sandbox))
         .await
         .with_context(|| format!("mode={use_remote}"))?;
     assert_eq!(contents, b"sandboxed hello");
+
+    let body = file_system
+        .read_file_body(&absolute_path(file_path), Some(&sandbox))
+        .await
+        .with_context(|| format!("mode={use_remote}"))?;
+    assert_eq!(body.file_name, "note.txt");
+    assert_eq!(body.file_size_bytes, "sandboxed hello".len() as u64);
+    let chunks = body
+        .stream
+        .collect::<Vec<_>>()
+        .await
+        .into_iter()
+        .collect::<std::io::Result<Vec<_>>>()?;
+    assert_eq!(chunks.concat(), b"sandboxed hello");
 
     Ok(())
 }
