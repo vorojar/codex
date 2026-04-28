@@ -85,17 +85,17 @@ impl HooksBrowserView {
             .collect()
     }
 
-    fn handlers_for_event(&self, event_name: HookEventName) -> Vec<&HookMetadata> {
+    fn handlers_for_event(&self, event_name: HookEventName) -> impl Iterator<Item = &HookMetadata> {
         self.hooks
             .iter()
-            .filter(|hook| hook.event_name == event_name)
-            .collect()
+            .filter(move |hook| hook.event_name == event_name)
     }
 
     fn selected_event(&self) -> Option<HookEventName> {
         self.state
             .selected_idx
-            .and_then(|idx| self.event_rows().get(idx).map(|row| row.event_name))
+            .and_then(|idx| codex_protocol::protocol::HookEventName::iter().nth(idx))
+            .map(Into::into)
     }
 
     fn selected_hook_index(&self, event_name: HookEventName) -> Option<usize> {
@@ -127,8 +127,8 @@ impl HooksBrowserView {
 
     fn page_len(&self) -> usize {
         match self.page {
-            HooksBrowserPage::Events => self.event_rows().len(),
-            HooksBrowserPage::Handlers(event_name) => self.handlers_for_event(event_name).len(),
+            HooksBrowserPage::Events => codex_protocol::protocol::HookEventName::iter().count(),
+            HooksBrowserPage::Handlers(event_name) => self.handlers_for_event(event_name).count(),
         }
     }
 
@@ -178,9 +178,8 @@ impl HooksBrowserView {
         self.state = ScrollState::new();
         self.state.selected_idx = selected_event_name
             .and_then(|event_name| {
-                self.event_rows()
-                    .iter()
-                    .position(|row| row.event_name == event_name)
+                codex_protocol::protocol::HookEventName::iter()
+                    .position(|candidate| HookEventName::from(candidate) == event_name)
             })
             .or_else(|| (self.page_len() > 0).then_some(0));
     }
@@ -194,7 +193,7 @@ impl HooksBrowserView {
         ]
     }
 
-    fn handler_header_lines(&self, event_name: HookEventName) -> Vec<Line<'static>> {
+    fn handler_header_lines(event_name: HookEventName) -> Vec<Line<'static>> {
         vec![
             format!("{} hooks", event_label(event_name)).bold().into(),
             "Turn hooks on or off. Your changes are saved automatically."
@@ -245,7 +244,6 @@ impl HooksBrowserView {
 
     fn handler_row_lines(&self, event_name: HookEventName, width: usize) -> Vec<Line<'static>> {
         self.handlers_for_event(event_name)
-            .into_iter()
             .enumerate()
             .map(|(idx, hook)| {
                 let marker = if hook.enabled { 'x' } else { ' ' };
@@ -310,16 +308,14 @@ impl HooksBrowserView {
                 " to close".into(),
             ]),
             HooksBrowserPage::Handlers(event_name) => {
-                if self.selected_hook(event_name).is_none() {
+                let selected_hook = self.selected_hook(event_name);
+                if selected_hook.is_none() {
                     Line::from(vec![
                         "Press ".into(),
                         key_hint::plain(KeyCode::Esc).into(),
                         " to go back".into(),
                     ])
-                } else if self
-                    .selected_hook(event_name)
-                    .is_some_and(|hook| hook.is_managed)
-                {
+                } else if selected_hook.is_some_and(|hook| hook.is_managed) {
                     Line::from(vec![
                         "Admin managed; press ".into(),
                         key_hint::plain(KeyCode::Esc).into(),
@@ -419,10 +415,10 @@ impl Renderable for HooksBrowserView {
             HooksBrowserPage::Handlers(event_name) => {
                 let row_count = self.handler_row_lines(event_name, content_width).len();
                 if row_count == 0 {
-                    self.handler_header_lines(event_name).len() + 2
+                    Self::handler_header_lines(event_name).len() + 2
                 } else {
                     let visible_row_count = row_count.min(MAX_POPUP_ROWS);
-                    self.handler_header_lines(event_name).len()
+                    Self::handler_header_lines(event_name).len()
                         + 1
                         + visible_row_count
                         + 1
@@ -450,7 +446,7 @@ impl Renderable for HooksBrowserView {
                 lines
             }
             HooksBrowserPage::Handlers(event_name) => {
-                let mut lines = self.handler_header_lines(event_name);
+                let mut lines = Self::handler_header_lines(event_name);
                 let rows = self.handler_row_lines(event_name, width);
                 if rows.is_empty() {
                     lines.push(Line::default());
@@ -541,7 +537,7 @@ fn config_source_label(source: HookSource) -> &'static str {
         HookSource::Project => "Project Config",
         HookSource::Mdm => "MDM",
         HookSource::SessionFlags => "Session Flags",
-        HookSource::Plugin => "Plugin",
+        HookSource::Plugin => unreachable!("plugin hooks are handled by summary_source"),
         HookSource::LegacyManagedConfigFile => "Legacy Managed Config",
         HookSource::LegacyManagedConfigMdm => "Legacy Managed MDM",
         HookSource::Unknown => "Unknown Source",
@@ -831,8 +827,7 @@ mod tests {
         );
     }
 
-    #[test]
-    fn space_toggles_unmanaged_handler() {
+    fn assert_unmanaged_toggle_key(key_code: KeyCode) {
         let (tx_raw, mut rx) = unbounded_channel::<AppEvent>();
         let mut view = HooksBrowserView::new(
             vec![hook(
@@ -848,7 +843,7 @@ mod tests {
             AppEventSender::new(tx_raw),
         );
         view.handle_key_event(KeyEvent::from(KeyCode::Enter));
-        view.handle_key_event(KeyEvent::from(KeyCode::Char(' ')));
+        view.handle_key_event(KeyEvent::from(key_code));
 
         match rx.try_recv().expect("toggle event") {
             AppEvent::SetHookEnabled { key, enabled } => {
@@ -860,30 +855,9 @@ mod tests {
     }
 
     #[test]
-    fn enter_toggles_unmanaged_handler() {
-        let (tx_raw, mut rx) = unbounded_channel::<AppEvent>();
-        let mut view = HooksBrowserView::new(
-            vec![hook(
-                "plugin:superpowers",
-                HookEventName::PreToolUse,
-                HookSource::Plugin,
-                Some("superpowers@openai-curated"),
-                "hooks/pre-tool-use-check.sh",
-                /*enabled*/ true,
-                /*is_managed*/ false,
-                /*display_order*/ 0,
-            )],
-            AppEventSender::new(tx_raw),
-        );
-        view.handle_key_event(KeyEvent::from(KeyCode::Enter));
-        view.handle_key_event(KeyEvent::from(KeyCode::Enter));
-
-        match rx.try_recv().expect("toggle event") {
-            AppEvent::SetHookEnabled { key, enabled } => {
-                assert_eq!(key, "plugin:superpowers");
-                assert!(!enabled);
-            }
-            other => panic!("expected hook toggle event, got {other:?}"),
+    fn toggle_keys_toggle_unmanaged_handler() {
+        for key_code in [KeyCode::Char(' '), KeyCode::Enter] {
+            assert_unmanaged_toggle_key(key_code);
         }
     }
 
