@@ -10156,7 +10156,19 @@
             },
             "type": "array"
           },
+          "PostCompact": {
+            "items": {
+              "$ref": "#/definitions/v2/ConfiguredHookMatcherGroup"
+            },
+            "type": "array"
+          },
           "PostToolUse": {
+            "items": {
+              "$ref": "#/definitions/v2/ConfiguredHookMatcherGroup"
+            },
+            "type": "array"
+          },
+          "PreCompact": {
             "items": {
               "$ref": "#/definitions/v2/ConfiguredHookMatcherGroup"
             },
@@ -10201,7 +10213,9 @@
         },
         "required": [
           "PermissionRequest",
+          "PostCompact",
           "PostToolUse",
+          "PreCompact",
           "PreToolUse",
           "SessionStart",
           "Stop",
