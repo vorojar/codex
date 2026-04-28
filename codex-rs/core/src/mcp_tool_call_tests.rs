@@ -785,6 +785,41 @@ fn codex_apps_auth_failure_meta_is_parsed_for_connector_elicitation() {
     );
 }
 
+#[test]
+fn codex_apps_auth_failure_meta_requires_invoked_connector_id() {
+    let result = codex_apps_auth_failure_result();
+    let metadata = approval_metadata(
+        /*connector_id*/ None,
+        Some("Google Calendar"),
+        Some("Manage events and schedules."),
+        Some("Create Event"),
+        Some("Create a calendar event."),
+    );
+
+    assert_eq!(
+        codex_apps_connector_auth_failure(&result, Some(&metadata)),
+        None
+    );
+    assert_eq!(codex_apps_connector_auth_failure(&result, None), None);
+}
+
+#[test]
+fn codex_apps_auth_failure_meta_rejects_mismatched_result_connector_id() {
+    let result = codex_apps_auth_failure_result();
+    let metadata = approval_metadata(
+        Some("connector_drive"),
+        Some("Google Drive"),
+        Some("Manage files."),
+        Some("Create File"),
+        Some("Create a file."),
+    );
+
+    assert_eq!(
+        codex_apps_connector_auth_failure(&result, Some(&metadata)),
+        None
+    );
+}
+
 fn codex_apps_auth_failure_result() -> CallToolResult {
     CallToolResult {
         content: vec![serde_json::json!({
@@ -799,6 +834,7 @@ fn codex_apps_auth_failure_result() -> CallToolResult {
                     CONNECTOR_AUTH_FAILURE_IS_AUTH_FAILURE_KEY: true,
                     CONNECTOR_AUTH_FAILURE_AUTH_REASON_KEY: "reauthentication_required",
                     CONNECTOR_AUTH_FAILURE_CONNECTOR_ID_KEY: "connector_calendar",
+                    CONNECTOR_AUTH_FAILURE_CONNECTOR_NAME_KEY: "Untrusted Calendar",
                     CONNECTOR_AUTH_FAILURE_LINK_ID_KEY: "link_123",
                     CONNECTOR_AUTH_FAILURE_ERROR_CODE_KEY: "UNAUTHORIZED",
                     CONNECTOR_AUTH_FAILURE_ERROR_HTTP_STATUS_CODE_KEY: 401,
@@ -811,7 +847,7 @@ fn codex_apps_auth_failure_result() -> CallToolResult {
 
 fn codex_apps_auth_failure_metadata() -> McpToolApprovalMetadata {
     approval_metadata(
-        Some("metadata_connector"),
+        Some("connector_calendar"),
         Some("Google Calendar"),
         Some("Manage events and schedules."),
         Some("Create Event"),

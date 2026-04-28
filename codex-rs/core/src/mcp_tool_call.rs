@@ -593,16 +593,26 @@ fn codex_apps_connector_auth_failure(
         return None;
     }
 
-    let connector_id =
+    let metadata = metadata?;
+    let connector_id = metadata
+        .connector_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|connector_id| !connector_id.is_empty())?;
+    if let Some(auth_failure_connector_id) =
         string_auth_failure_field(auth_failure, CONNECTOR_AUTH_FAILURE_CONNECTOR_ID_KEY)
-            .or_else(|| metadata.and_then(|metadata| metadata.connector_id.clone()))?;
+        && auth_failure_connector_id != connector_id
+    {
+        return None;
+    }
     let connector_name = metadata
-        .and_then(|metadata| metadata.connector_name.clone())
-        .filter(|name| !name.trim().is_empty())
-        .or_else(|| {
-            string_auth_failure_field(auth_failure, CONNECTOR_AUTH_FAILURE_CONNECTOR_NAME_KEY)
-        })
-        .unwrap_or_else(|| connector_id.clone());
+        .connector_name
+        .as_deref()
+        .map(str::trim)
+        .filter(|name| !name.is_empty())
+        .unwrap_or(connector_id)
+        .to_string();
+    let connector_id = connector_id.to_string();
     let install_url =
         codex_connectors::metadata::connector_install_url(&connector_name, &connector_id);
 
