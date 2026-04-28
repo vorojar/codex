@@ -99,9 +99,12 @@ use std::path::Path;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use crate::config::permissions::compile_permission_profile;
+use crate::config::permissions::builtin_permission_profile;
+use crate::config::permissions::compile_permission_profile_selection;
+use crate::config::permissions::default_builtin_permission_profile_name;
 use crate::config::permissions::get_readable_roots_required_for_codex_runtime;
-use crate::config::permissions::network_proxy_config_from_profile_network;
+use crate::config::permissions::network_proxy_config_for_profile_selection;
+use crate::config::permissions::validate_user_permission_profile_names;
 use codex_network_proxy::NetworkProxyConfig;
 use toml::Value as TomlValue;
 use toml_edit::DocumentMut;
@@ -1861,6 +1864,7 @@ impl Config {
             .permissions
             .as_ref()
             .is_some_and(|profiles| !profiles.is_empty());
+        validate_user_permission_profile_names(cfg.permissions.as_ref())?;
         if has_permission_profiles
             && !matches!(
                 permission_config_syntax,
@@ -1891,8 +1895,7 @@ impl Config {
         let profiles_are_active = matches!(
             permission_config_syntax,
             Some(PermissionConfigSyntax::Profiles)
-        ) || (permission_config_syntax.is_none()
-            && has_permission_profiles);
+        ) || permission_config_syntax.is_none();
         let (
             configured_network_proxy_config,
             permission_profile,
@@ -1902,24 +1905,19 @@ impl Config {
                 permission_profile.to_runtime_permissions();
             let configured_network_proxy_config =
                 if network_sandbox_policy.is_enabled() && profiles_are_active {
-                    let permissions = cfg.permissions.as_ref().ok_or_else(|| {
-                        std::io::Error::new(
-                            std::io::ErrorKind::InvalidInput,
-                            "default_permissions requires a `[permissions]` table",
-                        )
-                    })?;
-                    let default_permissions = cfg.default_permissions.as_deref().ok_or_else(|| {
-                        std::io::Error::new(
-                            std::io::ErrorKind::InvalidInput,
-                            "default_permissions requires a named permissions profile",
-                        )
-                    })?;
-                    let profile = resolve_permission_profile(permissions, default_permissions)?;
-
                     // PermissionProfile carries the active network sandbox bit, not the configured
                     // proxy/allowlist policy. Keep that config so active profiles can round-trip
                     // without broadening network behavior.
-                    network_proxy_config_from_profile_network(profile.network.as_ref())
+                    let default_permissions = cfg.default_permissions.as_deref().unwrap_or_else(|| {
+                        default_builtin_permission_profile_name(
+                            &active_project,
+                            windows_sandbox_level,
+                        )
+                    });
+                    network_proxy_config_for_profile_selection(
+                        cfg.permissions.as_ref(),
+                        default_permissions,
+                    )?
                 } else {
                     NetworkProxyConfig::default()
                 };
@@ -1947,32 +1945,27 @@ impl Config {
                 file_system_sandbox_policy,
             )
         } else if profiles_are_active {
-            let permissions = cfg.permissions.as_ref().ok_or_else(|| {
-                std::io::Error::new(
-                    std::io::ErrorKind::InvalidInput,
-                    "default_permissions requires a `[permissions]` table",
-                )
-            })?;
-            let default_permissions = cfg.default_permissions.as_deref().ok_or_else(|| {
-                std::io::Error::new(
-                    std::io::ErrorKind::InvalidInput,
-                    "default_permissions requires a named permissions profile",
-                )
-            })?;
-            let profile = resolve_permission_profile(permissions, default_permissions)?;
-            let configured_network_proxy_config =
-                network_proxy_config_from_profile_network(profile.network.as_ref());
+            let default_permissions = cfg.default_permissions.as_deref().unwrap_or_else(|| {
+                default_builtin_permission_profile_name(&active_project, windows_sandbox_level)
+            });
+            let configured_network_proxy_config = network_proxy_config_for_profile_selection(
+                cfg.permissions.as_ref(),
+                default_permissions,
+            )?;
             let (mut file_system_sandbox_policy, network_sandbox_policy) =
-                compile_permission_profile(
-                    permissions,
+                compile_permission_profile_selection(
+                    cfg.permissions.as_ref(),
                     default_permissions,
                     resolved_cwd.as_path(),
                     &mut startup_warnings,
                 )?;
-            let mut permission_profile = PermissionProfile::from_runtime_permissions(
-                &file_system_sandbox_policy,
-                network_sandbox_policy,
-            );
+            let mut permission_profile = builtin_permission_profile(default_permissions)
+                .unwrap_or_else(|| {
+                    PermissionProfile::from_runtime_permissions(
+                        &file_system_sandbox_policy,
+                        network_sandbox_policy,
+                    )
+                });
             let sandbox_policy = compatibility_sandbox_policy_for_permission_profile(
                 &permission_profile,
                 &file_system_sandbox_policy,
