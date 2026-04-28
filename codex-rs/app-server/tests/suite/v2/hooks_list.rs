@@ -4,11 +4,15 @@ use anyhow::Result;
 use app_test_support::McpProcess;
 use app_test_support::to_response;
 use codex_app_server_protocol::HookEventName;
+use codex_app_server_protocol::HookHandlerType;
+use codex_app_server_protocol::HookMetadata;
 use codex_app_server_protocol::HookSource;
+use codex_app_server_protocol::HooksListEntry;
 use codex_app_server_protocol::HooksListParams;
 use codex_app_server_protocol::HooksListResponse;
 use codex_app_server_protocol::JSONRPCResponse;
 use codex_app_server_protocol::RequestId;
+use codex_utils_absolute_path::AbsolutePathBuf;
 use pretty_assertions::assert_eq;
 use tempfile::TempDir;
 use tokio::time::timeout;
@@ -33,7 +37,7 @@ statusMessage = "running listed hook"
     Ok(())
 }
 
-fn write_invalid_plugin_hook_config(codex_home: &std::path::Path) -> Result<()> {
+fn write_plugin_hook_config(codex_home: &std::path::Path, hooks_json: &str) -> Result<()> {
     let plugin_root = codex_home.join("plugins/cache/test/demo/local");
     std::fs::create_dir_all(plugin_root.join(".codex-plugin"))?;
     std::fs::create_dir_all(plugin_root.join("hooks"))?;
@@ -41,7 +45,7 @@ fn write_invalid_plugin_hook_config(codex_home: &std::path::Path) -> Result<()> 
         plugin_root.join(".codex-plugin/plugin.json"),
         r#"{"name":"demo"}"#,
     )?;
-    std::fs::write(plugin_root.join("hooks/hooks.json"), "{ not-json")?;
+    std::fs::write(plugin_root.join("hooks/hooks.json"), hooks_json)?;
     std::fs::write(
         codex_home.join("config.toml"),
         r#"[features]
@@ -76,16 +80,94 @@ async fn hooks_list_shows_discovered_hook() -> Result<()> {
     )
     .await??;
     let HooksListResponse { data } = to_response(response)?;
-    assert_eq!(data.len(), 1);
-    assert_eq!(data[0].cwd.as_path(), cwd.path());
-    assert_eq!(data[0].hooks.len(), 1);
-    let hook = &data[0].hooks[0];
-    assert_eq!(hook.event_name, HookEventName::PreToolUse);
-    assert_eq!(hook.matcher.as_deref(), Some("Bash"));
-    assert_eq!(hook.command.as_deref(), Some("python3 /tmp/listed-hook.py"));
-    assert_eq!(hook.timeout_sec, 5);
-    assert_eq!(hook.status_message.as_deref(), Some("running listed hook"));
-    assert_eq!(hook.source, HookSource::User);
+    assert_eq!(
+        data,
+        vec![HooksListEntry {
+            cwd: cwd.path().to_path_buf(),
+            hooks: vec![HookMetadata {
+                event_name: HookEventName::PreToolUse,
+                handler_type: HookHandlerType::Command,
+                matcher: Some("Bash".to_string()),
+                command: Some("python3 /tmp/listed-hook.py".to_string()),
+                timeout_sec: 5,
+                status_message: Some("running listed hook".to_string()),
+                source_path: AbsolutePathBuf::from_absolute_path(std::fs::canonicalize(
+                    codex_home.path().join("config.toml")
+                )?,)?,
+                source: HookSource::User,
+                plugin_id: None,
+                display_order: 0,
+            }],
+            warnings: Vec::new(),
+            errors: Vec::new(),
+        }]
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn hooks_list_shows_discovered_plugin_hook() -> Result<()> {
+    let codex_home = TempDir::new()?;
+    let cwd = TempDir::new()?;
+    write_plugin_hook_config(
+        codex_home.path(),
+        r#"{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "echo plugin hook",
+            "timeout": 7,
+            "statusMessage": "running plugin hook"
+          }
+        ]
+      }
+    ]
+  }
+}"#,
+    )?;
+
+    let mut mcp = McpProcess::new(codex_home.path()).await?;
+    timeout(DEFAULT_TIMEOUT, mcp.initialize()).await??;
+
+    let request_id = mcp
+        .send_hooks_list_request(HooksListParams {
+            cwds: vec![cwd.path().to_path_buf()],
+        })
+        .await?;
+    let response: JSONRPCResponse = timeout(
+        DEFAULT_TIMEOUT,
+        mcp.read_stream_until_response_message(RequestId::Integer(request_id)),
+    )
+    .await??;
+    let HooksListResponse { data } = to_response(response)?;
+    assert_eq!(
+        data,
+        vec![HooksListEntry {
+            cwd: cwd.path().to_path_buf(),
+            hooks: vec![HookMetadata {
+                event_name: HookEventName::PreToolUse,
+                handler_type: HookHandlerType::Command,
+                matcher: Some("Bash".to_string()),
+                command: Some("echo plugin hook".to_string()),
+                timeout_sec: 7,
+                status_message: Some("running plugin hook".to_string()),
+                source_path: AbsolutePathBuf::from_absolute_path(std::fs::canonicalize(
+                    codex_home
+                        .path()
+                        .join("plugins/cache/test/demo/local/hooks/hooks.json"),
+                )?,)?,
+                source: HookSource::Plugin,
+                plugin_id: Some("demo@test".to_string()),
+                display_order: 0,
+            }],
+            warnings: Vec::new(),
+            errors: Vec::new(),
+        }]
+    );
     Ok(())
 }
 
@@ -93,7 +175,7 @@ async fn hooks_list_shows_discovered_hook() -> Result<()> {
 async fn hooks_list_shows_plugin_hook_load_warnings() -> Result<()> {
     let codex_home = TempDir::new()?;
     let cwd = TempDir::new()?;
-    write_invalid_plugin_hook_config(codex_home.path())?;
+    write_plugin_hook_config(codex_home.path(), "{ not-json")?;
 
     let mut mcp = McpProcess::new(codex_home.path()).await?;
     timeout(DEFAULT_TIMEOUT, mcp.initialize()).await??;
