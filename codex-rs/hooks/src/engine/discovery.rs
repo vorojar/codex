@@ -41,107 +41,67 @@ struct HookHandlerSource<'a> {
     hook_config_rules: &'a HookConfigRules,
     env: HashMap<String, String>,
     plugin_id: Option<String>,
-    source_relative_path: Option<String>,
 }
 
 pub(crate) fn discover_handlers(
     config_layer_stack: Option<&ConfigLayerStack>,
     plugin_hook_sources: Vec<PluginHookSource>,
+    plugin_hook_load_warnings: Vec<String>,
 ) -> DiscoveryResult {
-    let Some(config_layer_stack) = config_layer_stack else {
-        let mut handlers = Vec::new();
-        let mut hook_entries = Vec::new();
-        let mut warnings = Vec::new();
-        let mut display_order = 0_i64;
-        let hook_config_rules = HookConfigRules::default();
-        append_plugin_hook_sources(
+    let mut handlers = Vec::new();
+    let mut hook_entries = Vec::new();
+    let mut warnings = plugin_hook_load_warnings;
+    let mut display_order = 0_i64;
+    let hook_config_rules = hook_config_rules_from_stack(config_layer_stack);
+
+    if let Some(config_layer_stack) = config_layer_stack {
+        append_managed_requirement_handlers(
             &mut handlers,
             &mut hook_entries,
             &mut warnings,
             &mut display_order,
-            plugin_hook_sources,
+            config_layer_stack,
             &hook_config_rules,
         );
-        return DiscoveryResult {
-            handlers,
-            hook_entries,
-            warnings,
-        };
-    };
 
-    let mut handlers = Vec::new();
-    let mut hook_entries = Vec::new();
-    let mut warnings = Vec::new();
-    let mut display_order = 0_i64;
-    let hook_config_rules = hook_config_rules_from_stack(Some(config_layer_stack));
+        for layer in config_layer_stack.get_layers(
+            ConfigLayerStackOrdering::LowestPrecedenceFirst,
+            /*include_disabled*/ false,
+        ) {
+            let hook_source = hook_source_for_config_layer_source(&layer.name);
+            let json_hooks = load_hooks_json(layer.config_folder().as_deref(), &mut warnings);
+            let toml_hooks = load_toml_hooks_from_layer(layer, &mut warnings);
 
-    append_managed_requirement_handlers(
-        &mut handlers,
-        &mut hook_entries,
-        &mut warnings,
-        &mut display_order,
-        config_layer_stack,
-        &hook_config_rules,
-    );
+            if let (Some((json_source_path, json_events)), Some((toml_source_path, toml_events))) =
+                (&json_hooks, &toml_hooks)
+                && !json_events.is_empty()
+                && !toml_events.is_empty()
+            {
+                warnings.push(format!(
+                    "loading hooks from both {} and {}; prefer a single representation for this layer",
+                    json_source_path.display(),
+                    toml_source_path.display()
+                ));
+            }
 
-    for layer in config_layer_stack.get_layers(
-        ConfigLayerStackOrdering::LowestPrecedenceFirst,
-        /*include_disabled*/ false,
-    ) {
-        let hook_source = hook_source_for_config_layer_source(&layer.name);
-        let json_hooks = load_hooks_json(layer.config_folder().as_deref(), &mut warnings);
-        let toml_hooks = load_toml_hooks_from_layer(layer, &mut warnings);
-
-        if let (Some((json_source_path, json_events)), Some((toml_source_path, toml_events))) =
-            (&json_hooks, &toml_hooks)
-            && !json_events.is_empty()
-            && !toml_events.is_empty()
-        {
-            warnings.push(format!(
-                "loading hooks from both {} and {}; prefer a single representation for this layer",
-                json_source_path.display(),
-                toml_source_path.display()
-            ));
-        }
-
-        if let Some((source_path, hook_events)) = json_hooks {
-            append_hook_events(
-                &mut handlers,
-                &mut hook_entries,
-                &mut warnings,
-                &mut display_order,
-                HookHandlerSource {
-                    path: &source_path,
-                    key_prefix: format!("path:{}", source_path.display()),
-                    is_managed: false,
-                    source: hook_source,
-                    hook_config_rules: &hook_config_rules,
-                    env: HashMap::new(),
-                    plugin_id: None,
-                    source_relative_path: None,
-                },
-                hook_events,
-            );
-        }
-
-        if let Some((source_path, hook_events)) = toml_hooks {
-            append_hook_events(
-                &mut handlers,
-                &mut hook_entries,
-                &mut warnings,
-                &mut display_order,
-                HookHandlerSource {
-                    path: &source_path,
-                    key_prefix: format!("path:{}", source_path.display()),
-                    is_managed: false,
-                    source: hook_source,
-                    hook_config_rules: &hook_config_rules,
-                    env: HashMap::new(),
-                    plugin_id: None,
-                    source_relative_path: None,
-                },
-                hook_events,
-            );
+            for (source_path, hook_events) in [json_hooks, toml_hooks].into_iter().flatten() {
+                append_hook_events(
+                    &mut handlers,
+                    &mut hook_entries,
+                    &mut warnings,
+                    &mut display_order,
+                    HookHandlerSource {
+                        path: &source_path,
+                        key_prefix: format!("path:{}", source_path.display()),
+                        is_managed: false,
+                        source: hook_source,
+                        hook_config_rules: &hook_config_rules,
+                        env: HashMap::new(),
+                        plugin_id: None,
+                    },
+                    hook_events,
+                );
+            }
         }
     }
 
@@ -190,7 +150,6 @@ fn append_managed_requirement_handlers(
             hook_config_rules,
             env: HashMap::new(),
             plugin_id: None,
-            source_relative_path: None,
         },
         managed_hooks.get().hooks.clone(),
     );
@@ -209,15 +168,20 @@ fn append_plugin_hook_sources(
         let PluginHookSource {
             plugin_root,
             plugin_id,
+            plugin_data_root,
             source_path,
             source_relative_path,
             hooks,
         } = source;
         let mut env = HashMap::new();
         let plugin_root_value = plugin_root.display().to_string();
+        let plugin_data_root_value = plugin_data_root.display().to_string();
         env.insert("PLUGIN_ROOT".to_string(), plugin_root_value.clone());
         // For OOTB compat with existing plugins that use this env var.
         env.insert("CLAUDE_PLUGIN_ROOT".to_string(), plugin_root_value);
+        env.insert("PLUGIN_DATA".to_string(), plugin_data_root_value.clone());
+        // For OOTB compat with existing plugins that use this env var.
+        env.insert("CLAUDE_PLUGIN_DATA".to_string(), plugin_data_root_value);
         let plugin_id = plugin_id.as_key();
         append_hook_events(
             handlers,
@@ -232,7 +196,6 @@ fn append_plugin_hook_sources(
                 hook_config_rules,
                 env,
                 plugin_id: Some(plugin_id),
-                source_relative_path: Some(source_relative_path),
             },
             hooks,
         );
@@ -439,6 +402,9 @@ fn append_matcher_groups(
                         ));
                         continue;
                     }
+                    let command = source.env.iter().fold(command, |command, (key, value)| {
+                        command.replace(&format!("${{{key}}}"), value)
+                    });
                     let timeout_sec = timeout_sec.unwrap_or(600).max(1);
                     // TODO(abhinav): replace this positional selector with a durable hook id.
                     let key = format!(
@@ -461,7 +427,6 @@ fn append_matcher_groups(
                         source_path: source.path.clone(),
                         source: source.source,
                         plugin_id: source.plugin_id.clone(),
-                        source_relative_path: source.source_relative_path.clone(),
                         display_order: *display_order,
                         enabled,
                     });
@@ -571,7 +536,6 @@ mod tests {
             hook_config_rules,
             env: std::collections::HashMap::new(),
             plugin_id: None,
-            source_relative_path: None,
         }
     }
 

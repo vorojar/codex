@@ -84,12 +84,6 @@
         "sourcePath": {
           "$ref": "#/definitions/AbsolutePathBuf"
         },
-        "sourceRelativePath": {
-          "type": [
-            "string",
-            "null"
-          ]
-        },
         "statusMessage": {
           "type": [
             "string",

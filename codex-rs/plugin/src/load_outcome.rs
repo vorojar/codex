@@ -23,6 +23,7 @@ pub struct LoadedPlugin<M> {
     pub mcp_servers: HashMap<String, M>,
     pub apps: Vec<AppConnectorId>,
     pub hook_sources: Vec<PluginHookSource>,
+    pub hook_load_warnings: Vec<String>,
     pub error: Option<String>,
 }
 
@@ -147,6 +148,14 @@ impl<M: Clone> PluginLoadOutcome<M> {
             .iter()
             .filter(|plugin| plugin.is_active())
             .flat_map(|plugin| plugin.hook_sources.iter().cloned())
+            .collect()
+    }
+
+    pub fn effective_plugin_hook_warnings(&self) -> Vec<String> {
+        self.plugins
+            .iter()
+            .filter(|plugin| plugin.is_active())
+            .flat_map(|plugin| plugin.hook_load_warnings.iter().cloned())
             .collect()
     }
 

@@ -664,7 +664,6 @@ mod tests {
             source_path: test_path_buf("/tmp/hooks.json").abs(),
             source,
             plugin_id: plugin_id.map(str::to_string),
-            source_relative_path: None,
             display_order,
             enabled,
         }

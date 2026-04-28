@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
 
@@ -108,6 +109,7 @@ with Path(r"{log_path}").open("a", encoding="utf-8") as handle:
     let engine = ClaudeHooksEngine::new(
         /*enabled*/ true,
         Some(&config_layer_stack),
+        Vec::new(),
         Vec::new(),
         CommandShell {
             program: String::new(),
@@ -259,6 +261,7 @@ fn user_disablement_filters_non_managed_hooks_but_not_managed_hooks() {
         /*enabled*/ true,
         Some(&config_layer_stack),
         Vec::new(),
+        Vec::new(),
         CommandShell {
             program: String::new(),
             args: Vec::new(),
@@ -267,7 +270,8 @@ fn user_disablement_filters_non_managed_hooks_but_not_managed_hooks() {
 
     assert_eq!(engine.handlers.len(), 1);
     assert!(engine.handlers[0].is_managed);
-    let discovered = super::discovery::discover_handlers(Some(&config_layer_stack), Vec::new());
+    let discovered =
+        super::discovery::discover_handlers(Some(&config_layer_stack), Vec::new(), Vec::new());
     assert_eq!(discovered.hook_entries.len(), 2);
     assert_eq!(discovered.hook_entries[0].enabled, true);
     assert_eq!(discovered.hook_entries[1].enabled, false);
@@ -311,6 +315,7 @@ fn requirements_managed_hooks_warn_when_managed_dir_is_missing() {
     let engine = ClaudeHooksEngine::new(
         /*enabled*/ true,
         Some(&config_layer_stack),
+        Vec::new(),
         Vec::new(),
         CommandShell {
             program: String::new(),
@@ -420,6 +425,7 @@ fn discovers_hooks_from_json_and_toml_in_the_same_layer() {
         /*enabled*/ true,
         Some(&config_layer_stack),
         Vec::new(),
+        Vec::new(),
         CommandShell {
             program: String::new(),
             args: Vec::new(),
@@ -456,6 +462,8 @@ async fn plugin_hook_sources_run_with_plugin_env_and_plugin_source() {
     let temp = tempdir().expect("create temp dir");
     let plugin_root =
         AbsolutePathBuf::try_from(temp.path().join("demo-plugin")).expect("plugin root");
+    let plugin_data_root =
+        AbsolutePathBuf::try_from(temp.path().join("plugin-data")).expect("plugin data root");
     fs::create_dir_all(plugin_root.join("hooks")).expect("create hooks dir");
     let source_path = plugin_root.join("hooks/hooks.json");
     let log_path = plugin_root.join("env.json");
@@ -480,6 +488,7 @@ Path(r"{log_path}").write_text(json.dumps({{
     let plugin_hook_sources = vec![PluginHookSource {
         plugin_id,
         plugin_root: plugin_root.clone(),
+        plugin_data_root: plugin_data_root.clone(),
         source_path: source_path.clone(),
         source_relative_path: "hooks/hooks.json".to_string(),
         hooks: HookEventsToml {
@@ -499,6 +508,7 @@ Path(r"{log_path}").write_text(json.dumps({{
         /*enabled*/ true,
         /*config_layer_stack*/ None,
         plugin_hook_sources.clone(),
+        Vec::new(),
         CommandShell {
             program: String::new(),
             args: Vec::new(),
@@ -560,4 +570,90 @@ Path(r"{log_path}").write_text(json.dumps({{
             "claude": plugin_root.display().to_string(),
         })
     );
+}
+
+#[test]
+fn plugin_hook_sources_expand_plugin_placeholders() {
+    let temp = tempdir().expect("create temp dir");
+    let plugin_root =
+        AbsolutePathBuf::try_from(temp.path().join("demo-plugin")).expect("plugin root");
+    let plugin_data_root =
+        AbsolutePathBuf::try_from(temp.path().join("plugin-data")).expect("plugin data root");
+    let source_path = plugin_root.join("hooks/hooks.json");
+    let plugin_id = PluginId::parse("demo-plugin@test-marketplace").expect("plugin id");
+    let plugin_hook_sources = vec![PluginHookSource {
+        plugin_id,
+        plugin_root: plugin_root.clone(),
+        plugin_data_root: plugin_data_root.clone(),
+        source_path,
+        source_relative_path: "hooks/hooks.json".to_string(),
+        hooks: HookEventsToml {
+            pre_tool_use: vec![MatcherGroup {
+                matcher: Some("Bash".to_string()),
+                hooks: vec![HookHandlerConfig::Command {
+                    command: "run ${PLUGIN_ROOT} ${CLAUDE_PLUGIN_ROOT} ${PLUGIN_DATA} ${CLAUDE_PLUGIN_DATA}"
+                        .to_string(),
+                    timeout_sec: Some(5),
+                    r#async: false,
+                    status_message: None,
+                }],
+            }],
+            ..Default::default()
+        },
+    }];
+    let engine = ClaudeHooksEngine::new(
+        /*enabled*/ true,
+        /*config_layer_stack*/ None,
+        plugin_hook_sources,
+        Vec::new(),
+        CommandShell {
+            program: String::new(),
+            args: Vec::new(),
+        },
+    );
+
+    assert_eq!(
+        engine.handlers[0].command,
+        format!(
+            "run {} {} {} {}",
+            plugin_root.display(),
+            plugin_root.display(),
+            plugin_data_root.display(),
+            plugin_data_root.display()
+        )
+    );
+    assert_eq!(
+        engine.handlers[0].env,
+        HashMap::from([
+            ("PLUGIN_ROOT".to_string(), plugin_root.display().to_string()),
+            (
+                "CLAUDE_PLUGIN_ROOT".to_string(),
+                plugin_root.display().to_string()
+            ),
+            (
+                "PLUGIN_DATA".to_string(),
+                plugin_data_root.display().to_string()
+            ),
+            (
+                "CLAUDE_PLUGIN_DATA".to_string(),
+                plugin_data_root.display().to_string()
+            ),
+        ])
+    );
+}
+
+#[test]
+fn plugin_hook_load_warnings_are_startup_warnings() {
+    let engine = ClaudeHooksEngine::new(
+        /*enabled*/ true,
+        /*config_layer_stack*/ None,
+        Vec::new(),
+        vec!["failed plugin hook".to_string()],
+        CommandShell {
+            program: String::new(),
+            args: Vec::new(),
+        },
+    );
+
+    assert_eq!(engine.warnings(), &["failed plugin hook".to_string()]);
 }

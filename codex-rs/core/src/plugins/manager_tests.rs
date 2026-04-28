@@ -1,10 +1,6 @@
 use super::*;
 use crate::config::CONFIG_TOML_FILE;
 use crate::config::ConfigBuilder;
-use crate::config_loader::ConfigLayerEntry;
-use crate::config_loader::ConfigLayerStack;
-use crate::config_loader::ConfigRequirements;
-use crate::config_loader::ConfigRequirementsToml;
 use crate::plugins::LoadedPlugin;
 use crate::plugins::PluginLoadOutcome;
 use crate::plugins::test_support::TEST_CURATED_PLUGIN_CACHE_VERSION;
@@ -13,6 +9,10 @@ use crate::plugins::test_support::write_curated_plugin_sha_with as write_curated
 use crate::plugins::test_support::write_file;
 use crate::plugins::test_support::write_openai_curated_marketplace;
 use codex_app_server_protocol::ConfigLayerSource;
+use codex_config::ConfigLayerEntry;
+use codex_config::ConfigLayerStack;
+use codex_config::ConfigRequirements;
+use codex_config::ConfigRequirementsToml;
 use codex_config::McpServerConfig;
 use codex_config::types::McpServerTransportConfig;
 use codex_core_plugins::installed_marketplaces::marketplace_install_root;
@@ -220,6 +220,7 @@ async fn load_plugins_loads_default_skills_and_mcp_servers() {
             )]),
             apps: vec![AppConnectorId("connector_example".to_string())],
             hook_sources: Vec::new(),
+            hook_load_warnings: Vec::new(),
             error: None,
         }]
     );
@@ -721,6 +722,7 @@ async fn load_plugins_preserves_disabled_plugins_without_effective_contributions
             mcp_servers: HashMap::new(),
             apps: Vec::new(),
             hook_sources: Vec::new(),
+            hook_load_warnings: Vec::new(),
             error: None,
         }]
     );
@@ -839,6 +841,7 @@ fn capability_index_filters_inactive_and_zero_capability_plugins() {
         mcp_servers: HashMap::new(),
         apps: Vec::new(),
         hook_sources: Vec::new(),
+        hook_load_warnings: Vec::new(),
         error: None,
     };
     let summary = |config_name: &str, display_name: &str| PluginCapabilitySummary {
@@ -3299,6 +3302,7 @@ async fn load_plugins_ignores_project_config_files() {
         &stack,
         &PluginStore::new(codex_home.path().to_path_buf()),
         Some(Product::Codex),
+        /*plugin_hooks_enabled*/ false,
     )
     .await;
 
