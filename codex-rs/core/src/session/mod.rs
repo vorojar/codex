@@ -1365,6 +1365,9 @@ impl Session {
     }
 
     pub(crate) async fn reload_user_config_layer(&self) {
+        // Refresh layer-backed runtime state for an existing session, including enabled plugin,
+        // skill, and hook state. Derived config fields such as feature gates and legacy notify
+        // settings remain session-static.
         let config_toml_path = {
             let state = self.state.lock().await;
             state
