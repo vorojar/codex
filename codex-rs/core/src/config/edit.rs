@@ -61,8 +61,6 @@ pub enum ConfigEdit {
     SetSkillConfig { path: PathBuf, enabled: bool },
     /// Set or clear a skill config entry under `[[skills.config]]` by name.
     SetSkillConfigByName { name: String, enabled: bool },
-    /// Set or clear a hook config entry under `[[hooks.config]]` by key.
-    SetHookConfig { key: String, enabled: bool },
     /// Set trust_level under `[projects."<path>"]`,
     /// migrating inline tables to explicit tables.
     SetProjectTrustLevel { path: PathBuf, level: TrustLevel },
@@ -560,9 +558,6 @@ impl ConfigDocument {
             ConfigEdit::SetSkillConfigByName { name, enabled } => {
                 Ok(self.set_skill_config(SkillConfigSelector::Name(name.clone()), *enabled))
             }
-            ConfigEdit::SetHookConfig { key, enabled } => {
-                Ok(self.set_hook_config(key.clone(), *enabled))
-            }
             ConfigEdit::SetPath { segments, value } => Ok(self.insert(segments, value.clone())),
             ConfigEdit::ClearPath { segments } => Ok(self.clear_owned(segments)),
             ConfigEdit::SetProjectTrustLevel { path, level } => {
@@ -763,121 +758,6 @@ impl ConfigDocument {
         mutated
     }
 
-    /// Set or clear a `[[hooks.config]]` entry by hook key.
-    ///
-    /// Disabled state is represented explicitly as `enabled = false`. Enabled
-    /// state is represented by removing the matching override, matching the
-    /// skills config behavior.
-    fn set_hook_config(&mut self, key: String, enabled: bool) -> bool {
-        let key = key.trim().to_string();
-        if key.is_empty() {
-            return false;
-        }
-        let mut remove_hooks_table = false;
-        let mut mutated = false;
-
-        {
-            let root = self.doc.as_table_mut();
-            let hooks_item = match root.get_mut("hooks") {
-                Some(item) => item,
-                None => {
-                    if enabled {
-                        return false;
-                    }
-                    root.insert(
-                        "hooks",
-                        TomlItem::Table(document_helpers::new_implicit_table()),
-                    );
-                    let Some(item) = root.get_mut("hooks") else {
-                        return false;
-                    };
-                    item
-                }
-            };
-
-            if document_helpers::ensure_table_for_write(hooks_item).is_none() {
-                if enabled {
-                    return false;
-                }
-                *hooks_item = TomlItem::Table(document_helpers::new_implicit_table());
-            }
-            let Some(hooks_table) = hooks_item.as_table_mut() else {
-                return false;
-            };
-
-            let config_item = match hooks_table.get_mut("config") {
-                Some(item) => item,
-                None => {
-                    if enabled {
-                        return false;
-                    }
-                    hooks_table.insert("config", TomlItem::ArrayOfTables(ArrayOfTables::new()));
-                    let Some(item) = hooks_table.get_mut("config") else {
-                        return false;
-                    };
-                    item
-                }
-            };
-
-            if !matches!(config_item, TomlItem::ArrayOfTables(_)) {
-                if enabled {
-                    return false;
-                }
-                *config_item = TomlItem::ArrayOfTables(ArrayOfTables::new());
-            }
-
-            let TomlItem::ArrayOfTables(overrides) = config_item else {
-                return false;
-            };
-
-            // Only persist negative overrides. Re-enabling removes the entry so
-            // the hook's default discovered state applies again.
-            let existing_index = overrides.iter().enumerate().find_map(|(idx, table)| {
-                hook_config_key_from_table(table)
-                    .filter(|value| value == &key)
-                    .map(|_| idx)
-            });
-
-            if enabled {
-                if let Some(index) = existing_index {
-                    overrides.remove(index);
-                    mutated = true;
-                    if overrides.is_empty() {
-                        hooks_table.remove("config");
-                        if hooks_table.is_empty() {
-                            remove_hooks_table = true;
-                        }
-                    }
-                }
-            } else if let Some(index) = existing_index {
-                for (idx, table) in overrides.iter_mut().enumerate() {
-                    if idx == index {
-                        table["key"] = value(key);
-                        table["enabled"] = value(false);
-                        mutated = true;
-                        break;
-                    }
-                }
-            } else {
-                let mut entry = TomlTable::new();
-                entry.set_implicit(false);
-                entry["key"] = value(key);
-                entry["enabled"] = value(false);
-                overrides.push(entry);
-                mutated = true;
-            }
-        }
-
-        // Defer removing the parent table until the nested borrows above are
-        // dropped.
-        if remove_hooks_table {
-            let root = self.doc.as_table_mut();
-            root.remove("hooks");
-        }
-
-        mutated
-    }
-
     fn scoped_segments(&self, scope: Scope, segments: &[&str]) -> Vec<String> {
         let resolved: Vec<String> = segments
             .iter()
@@ -1022,15 +902,6 @@ fn write_skill_config_selector(table: &mut TomlTable, selector: &SkillConfigSele
             table["path"] = value(path.to_string_lossy().to_string());
         }
     }
-}
-
-fn hook_config_key_from_table(table: &TomlTable) -> Option<String> {
-    table
-        .get("key")
-        .and_then(|item| item.as_str())
-        .map(str::trim)
-        .filter(|key| !key.is_empty())
-        .map(str::to_string)
 }
 
 /// Persist edits using a blocking strategy.

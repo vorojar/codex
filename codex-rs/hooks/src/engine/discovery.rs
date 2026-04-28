@@ -415,8 +415,10 @@ fn append_matcher_groups(
                         handler_index
                     );
                     let enabled = source.is_managed || !source.disabled_hook_keys.contains(&key);
+                    let config_key_path = (!source.is_managed).then(|| "hooks.state".to_string());
                     hook_entries.push(HookListEntry {
                         key,
+                        config_key_path,
                         event_name,
                         handler_type: HookHandlerType::Command,
                         matcher: matcher.map(ToOwned::to_owned),

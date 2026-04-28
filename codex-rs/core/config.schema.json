@@ -859,20 +859,6 @@
         }
       ]
     },
-    "HookConfig": {
-      "properties": {
-        "enabled": {
-          "type": "boolean"
-        },
-        "key": {
-          "type": "string"
-        }
-      },
-      "required": [
-        "enabled"
-      ],
-      "type": "object"
-    },
     "HookHandlerConfig": {
       "oneOf": [
         {
@@ -937,6 +923,14 @@
         }
       ]
     },
+    "HookStateToml": {
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        }
+      },
+      "type": "object"
+    },
     "HooksToml": {
       "properties": {
         "PermissionRequest": {
@@ -981,11 +975,11 @@
           },
           "type": "array"
         },
-        "config": {
-          "items": {
-            "$ref": "#/definitions/HookConfig"
+        "state": {
+          "additionalProperties": {
+            "$ref": "#/definitions/HookStateToml"
           },
-          "type": "array"
+          "type": "object"
         }
       },
       "type": "object"

@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::path::Path;
 use std::path::PathBuf;
 
@@ -16,8 +17,14 @@ pub struct HooksFile {
 pub struct HooksToml {
     #[serde(flatten)]
     pub events: HookEventsToml,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub config: Vec<HookConfig>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub state: BTreeMap<String, HookStateToml>,
+}
+
+#[derive(Debug, Default, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct HookStateToml {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub enabled: Option<bool>,
 }
 
 #[derive(Debug, Default, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -34,13 +41,6 @@ pub struct HookEventsToml {
     pub user_prompt_submit: Vec<MatcherGroup>,
     #[serde(rename = "Stop", default)]
     pub stop: Vec<MatcherGroup>,
-}
-
-#[derive(Debug, Default, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-pub struct HookConfig {
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub key: Option<String>,
-    pub enabled: bool,
 }
 
 impl HookEventsToml {

@@ -2,7 +2,6 @@ use crate::bespoke_event_handling::apply_bespoke_event_handling;
 use crate::bespoke_event_handling::maybe_emit_hook_prompt_item_completed;
 use crate::command_exec::CommandExecManager;
 use crate::command_exec::StartCommandExecParams;
-use crate::config_api::UserConfigReloader;
 use crate::config_manager::ConfigManager;
 use crate::error_code::INPUT_TOO_LARGE_ERROR_CODE;
 use crate::error_code::INTERNAL_ERROR_CODE;
@@ -78,8 +77,6 @@ use codex_app_server_protocol::GetConversationSummaryResponse;
 use codex_app_server_protocol::GitDiffToRemoteResponse;
 use codex_app_server_protocol::GitInfo as ApiGitInfo;
 use codex_app_server_protocol::HookMetadata;
-use codex_app_server_protocol::HooksConfigWriteParams;
-use codex_app_server_protocol::HooksConfigWriteResponse;
 use codex_app_server_protocol::HooksListParams;
 use codex_app_server_protocol::HooksListResponse;
 use codex_app_server_protocol::JSONRPCErrorError;
@@ -1110,10 +1107,6 @@ impl CodexMessageProcessor {
             }
             ClientRequest::SkillsConfigWrite { request_id, params } => {
                 self.skills_config_write(to_connection_request_id(request_id), params)
-                    .await;
-            }
-            ClientRequest::HooksConfigWrite { request_id, params } => {
-                self.hooks_config_write(to_connection_request_id(request_id), params)
                     .await;
             }
             ClientRequest::PluginInstall { request_id, params } => {
@@ -6506,62 +6499,6 @@ impl CodexMessageProcessor {
             .map_err(|err| internal_error(format!("failed to update skill settings: {err}")))
     }
 
-    /// Handle `hooks/config/write` by updating user-level hook enablement.
-    async fn hooks_config_write(
-        &self,
-        request_id: ConnectionRequestId,
-        params: HooksConfigWriteParams,
-    ) {
-        let HooksConfigWriteParams { key, enabled } = params;
-        if key.trim().is_empty() {
-            let error = JSONRPCErrorError {
-                code: INVALID_PARAMS_ERROR_CODE,
-                message: "hooks/config/write requires a non-empty key".to_string(),
-                data: None,
-            };
-            self.outgoing.send_error(request_id, error).await;
-            return;
-        }
-
-        if key.starts_with("managed:") {
-            let error = JSONRPCErrorError {
-                code: INVALID_PARAMS_ERROR_CODE,
-                message: format!("hook {key} is managed and cannot be configured"),
-                data: None,
-            };
-            self.outgoing.send_error(request_id, error).await;
-            return;
-        }
-
-        let result = ConfigEditsBuilder::new(&self.config.codex_home)
-            .with_edits(vec![ConfigEdit::SetHookConfig { key, enabled }])
-            .apply()
-            .await;
-
-        match result {
-            Ok(()) => {
-                self.clear_plugin_related_caches();
-                self.thread_manager.reload_user_config().await;
-                self.outgoing
-                    .send_response(
-                        request_id,
-                        HooksConfigWriteResponse {
-                            effective_enabled: enabled,
-                        },
-                    )
-                    .await;
-            }
-            Err(err) => {
-                let error = JSONRPCErrorError {
-                    code: INTERNAL_ERROR_CODE,
-                    message: format!("failed to update hook settings: {err}"),
-                    data: None,
-                };
-                self.outgoing.send_error(request_id, error).await;
-            }
-        }
-    }
-
     async fn turn_start(
         &self,
         request_id: ConnectionRequestId,
@@ -8733,6 +8670,7 @@ fn hooks_to_info(hooks: &[codex_hooks::HookListEntry]) -> Vec<HookMetadata> {
         .iter()
         .map(|hook| HookMetadata {
             key: hook.key.clone(),
+            config_key_path: hook.config_key_path.clone(),
             event_name: hook.event_name.into(),
             handler_type: hook.handler_type.into(),
             matcher: hook.matcher.clone(),

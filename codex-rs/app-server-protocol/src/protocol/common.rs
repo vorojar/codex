@@ -579,11 +579,6 @@ client_request_definitions! {
         serialization: global("config"),
         response: v2::SkillsConfigWriteResponse,
     },
-    HooksConfigWrite => "hooks/config/write" {
-        params: v2::HooksConfigWriteParams,
-        serialization: global("config"),
-        response: v2::HooksConfigWriteResponse,
-    },
     PluginInstall => "plugin/install" {
         params: v2::PluginInstallParams,
         serialization: global("config"),

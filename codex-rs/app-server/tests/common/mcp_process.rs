@@ -37,7 +37,6 @@ use codex_app_server_protocol::FsWriteFileParams;
 use codex_app_server_protocol::GetAccountParams;
 use codex_app_server_protocol::GetAuthStatusParams;
 use codex_app_server_protocol::GetConversationSummaryParams;
-use codex_app_server_protocol::HooksConfigWriteParams;
 use codex_app_server_protocol::HooksListParams;
 use codex_app_server_protocol::InitializeCapabilities;
 use codex_app_server_protocol::InitializeParams;
@@ -569,15 +568,6 @@ impl McpProcess {
     ) -> anyhow::Result<i64> {
         let params = Some(serde_json::to_value(params)?);
         self.send_request("hooks/list", params).await
-    }
-
-    /// Send a `hooks/config/write` JSON-RPC request.
-    pub async fn send_hooks_config_write_request(
-        &mut self,
-        params: HooksConfigWriteParams,
-    ) -> anyhow::Result<i64> {
-        let params = Some(serde_json::to_value(params)?);
-        self.send_request("hooks/config/write", params).await
     }
 
     /// Send a `marketplace/add` JSON-RPC request.

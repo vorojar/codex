@@ -3,16 +3,17 @@ use std::time::Duration;
 use anyhow::Result;
 use app_test_support::McpProcess;
 use app_test_support::to_response;
+use codex_app_server_protocol::ConfigBatchWriteParams;
+use codex_app_server_protocol::ConfigEdit;
 use codex_app_server_protocol::HookEventName;
 use codex_app_server_protocol::HookHandlerType;
 use codex_app_server_protocol::HookMetadata;
 use codex_app_server_protocol::HookSource;
-use codex_app_server_protocol::HooksConfigWriteParams;
-use codex_app_server_protocol::HooksConfigWriteResponse;
 use codex_app_server_protocol::HooksListEntry;
 use codex_app_server_protocol::HooksListParams;
 use codex_app_server_protocol::HooksListResponse;
 use codex_app_server_protocol::JSONRPCResponse;
+use codex_app_server_protocol::MergeStrategy;
 use codex_app_server_protocol::RequestId;
 use codex_utils_absolute_path::AbsolutePathBuf;
 use pretty_assertions::assert_eq;
@@ -91,6 +92,7 @@ async fn hooks_list_shows_discovered_hook() -> Result<()> {
             cwd: cwd.path().to_path_buf(),
             hooks: vec![HookMetadata {
                 key: format!("file:{}:pre_tool_use:0:0", config_path.as_path().display()),
+                config_key_path: Some("hooks.state".to_string()),
                 event_name: HookEventName::PreToolUse,
                 handler_type: HookHandlerType::Command,
                 matcher: Some("Bash".to_string()),
@@ -160,6 +162,7 @@ async fn hooks_list_shows_discovered_plugin_hook() -> Result<()> {
             cwd: cwd.path().to_path_buf(),
             hooks: vec![HookMetadata {
                 key: "plugin:demo@test:hooks/hooks.json:pre_tool_use:0:0".to_string(),
+                config_key_path: Some("hooks.state".to_string()),
                 event_name: HookEventName::PreToolUse,
                 handler_type: HookHandlerType::Command,
                 matcher: Some("Bash".to_string()),
@@ -212,7 +215,7 @@ async fn hooks_list_shows_plugin_hook_load_warnings() -> Result<()> {
 }
 
 #[tokio::test]
-async fn hooks_config_write_disables_user_hook() -> Result<()> {
+async fn config_batch_write_toggles_user_hook() -> Result<()> {
     let codex_home = TempDir::new()?;
     let cwd = TempDir::new()?;
     write_user_hook_config(codex_home.path())?;
@@ -235,9 +238,22 @@ async fn hooks_config_write_disables_user_hook() -> Result<()> {
     assert_eq!(hook.enabled, true);
 
     let write_id = mcp
-        .send_hooks_config_write_request(HooksConfigWriteParams {
-            key: hook.key.clone(),
-            enabled: false,
+        .send_config_batch_write_request(ConfigBatchWriteParams {
+            edits: vec![ConfigEdit {
+                key_path: hook
+                    .config_key_path
+                    .clone()
+                    .expect("non-managed hook should be configurable"),
+                value: serde_json::json!({
+                    hook.key.clone(): {
+                        "enabled": false
+                    }
+                }),
+                merge_strategy: MergeStrategy::Upsert,
+            }],
+            file_path: None,
+            expected_version: None,
+            reload_user_config: true,
         })
         .await?;
     let response: JSONRPCResponse = timeout(
@@ -245,8 +261,7 @@ async fn hooks_config_write_disables_user_hook() -> Result<()> {
         mcp.read_stream_until_response_message(RequestId::Integer(write_id)),
     )
     .await??;
-    let HooksConfigWriteResponse { effective_enabled } = to_response(response)?;
-    assert_eq!(effective_enabled, false);
+    let _: codex_app_server_protocol::ConfigWriteResponse = to_response(response)?;
 
     let request_id = mcp
         .send_hooks_list_request(HooksListParams {
@@ -262,5 +277,44 @@ async fn hooks_config_write_disables_user_hook() -> Result<()> {
     assert_eq!(data[0].hooks.len(), 1);
     assert_eq!(data[0].hooks[0].key, hook.key);
     assert_eq!(data[0].hooks[0].enabled, false);
+
+    let write_id = mcp
+        .send_config_batch_write_request(ConfigBatchWriteParams {
+            edits: vec![ConfigEdit {
+                key_path: hook
+                    .config_key_path
+                    .clone()
+                    .expect("non-managed hook should be configurable"),
+                value: serde_json::json!({
+                    hook.key.clone(): {
+                        "enabled": true
+                    }
+                }),
+                merge_strategy: MergeStrategy::Upsert,
+            }],
+            file_path: None,
+            expected_version: None,
+            reload_user_config: true,
+        })
+        .await?;
+    let response: JSONRPCResponse = timeout(
+        DEFAULT_TIMEOUT,
+        mcp.read_stream_until_response_message(RequestId::Integer(write_id)),
+    )
+    .await??;
+    let _: codex_app_server_protocol::ConfigWriteResponse = to_response(response)?;
+
+    let request_id = mcp
+        .send_hooks_list_request(HooksListParams {
+            cwds: vec![cwd.path().to_path_buf()],
+        })
+        .await?;
+    let response: JSONRPCResponse = timeout(
+        DEFAULT_TIMEOUT,
+        mcp.read_stream_until_response_message(RequestId::Integer(request_id)),
+    )
+    .await??;
+    let HooksListResponse { data } = to_response(response)?;
+    assert_eq!(data[0].hooks[0].enabled, true);
     Ok(())
 }

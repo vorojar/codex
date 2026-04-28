@@ -3,7 +3,6 @@ use std::collections::HashSet;
 use codex_config::ConfigLayerSource;
 use codex_config::ConfigLayerStack;
 use codex_config::ConfigLayerStackOrdering;
-use codex_config::HookConfig;
 use codex_config::HooksToml;
 
 /// Build hook enablement rules from config layers that are allowed to override
@@ -42,30 +41,26 @@ pub(crate) fn disabled_hook_keys_from_stack(
             }
         };
 
-        for entry in hooks.config {
-            let Some(key) = hook_config_key(&entry) else {
+        for (key, state) in hooks.state {
+            let key = key.trim();
+            if key.is_empty() {
                 continue;
-            };
-            // Later layers win: an enabled entry removes a disabled override
-            // for the same key, while a disabled entry inserts it.
-            if entry.enabled {
-                disabled_keys.remove(&key);
-            } else {
-                disabled_keys.insert(key);
+            }
+            // Later layers win. Hooks without an explicit enabled override can
+            // still carry future per-hook state without changing enablement.
+            match state.enabled {
+                Some(false) => {
+                    disabled_keys.insert(key.to_string());
+                }
+                Some(true) => {
+                    disabled_keys.remove(key);
+                }
+                None => {}
             }
         }
     }
 
     disabled_keys
-}
-
-fn hook_config_key(entry: &HookConfig) -> Option<String> {
-    let key = entry.key.as_deref().map(str::trim).unwrap_or_default();
-    if key.is_empty() {
-        None
-    } else {
-        Some(key.to_string())
-    }
 }
 
 #[cfg(test)]
@@ -87,11 +82,11 @@ mod tests {
                     ConfigLayerSource::User {
                         file: test_path_buf("/tmp/config.toml").abs(),
                     },
-                    config_with_hook_override(key, /*enabled*/ false),
+                    config_with_hook_override(key, Some(false)),
                 ),
                 ConfigLayerEntry::new(
                     ConfigLayerSource::SessionFlags,
-                    config_with_hook_override(key, /*enabled*/ true),
+                    config_with_hook_override(key, Some(true)),
                 ),
             ],
             Default::default(),
@@ -102,7 +97,7 @@ mod tests {
         assert_eq!(disabled_hook_keys_from_stack(Some(&stack)), HashSet::new());
     }
 
-    fn config_with_hook_override(key: &str, enabled: bool) -> TomlValue {
+    fn config_with_hook_override(key: &str, enabled: Option<bool>) -> TomlValue {
         let mut config = TomlValue::Table(Default::default());
         let TomlValue::Table(config_entries) = &mut config else {
             unreachable!("config root should be a table");
@@ -111,13 +106,19 @@ mod tests {
         let TomlValue::Table(hook_entries) = &mut hooks else {
             unreachable!("hooks should be a table");
         };
-        let mut hook_override = TomlValue::Table(Default::default());
-        let TomlValue::Table(hook_override_entries) = &mut hook_override else {
-            unreachable!("hook override should be a table");
+        let mut state_entries = TomlValue::Table(Default::default());
+        let TomlValue::Table(state_map) = &mut state_entries else {
+            unreachable!("state should be a table");
         };
-        hook_override_entries.insert("key".to_string(), TomlValue::String(key.to_string()));
-        hook_override_entries.insert("enabled".to_string(), TomlValue::Boolean(enabled));
-        hook_entries.insert("config".to_string(), TomlValue::Array(vec![hook_override]));
+        let mut hook_state = TomlValue::Table(Default::default());
+        let TomlValue::Table(hook_state_entries) = &mut hook_state else {
+            unreachable!("hook state should be a table");
+        };
+        if let Some(enabled) = enabled {
+            hook_state_entries.insert("enabled".to_string(), TomlValue::Boolean(enabled));
+        }
+        state_map.insert(key.to_string(), hook_state);
+        hook_entries.insert("state".to_string(), state_entries);
         config_entries.insert("hooks".to_string(), hooks);
         config
     }

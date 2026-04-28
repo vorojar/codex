@@ -1835,30 +1835,6 @@
             },
             "method": {
               "enum": [
-                "hooks/config/write"
-              ],
-              "title": "Hooks/config/writeRequestMethod",
-              "type": "string"
-            },
-            "params": {
-              "$ref": "#/definitions/HooksConfigWriteParams"
-            }
-          },
-          "required": [
-            "id",
-            "method",
-            "params"
-          ],
-          "title": "Hooks/config/writeRequest",
-          "type": "object"
-        },
-        {
-          "properties": {
-            "id": {
-              "$ref": "#/definitions/RequestId"
-            },
-            "method": {
-              "enum": [
                 "plugin/install"
               ],
               "title": "Plugin/installRequestMethod",
@@ -6237,6 +6213,12 @@
             "null"
           ]
         },
+        "configKeyPath": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "displayOrder": {
           "format": "int64",
           "type": "integer"
@@ -6467,36 +6449,6 @@
         "threadId"
       ],
       "title": "HookStartedNotification",
-      "type": "object"
-    },
-    "HooksConfigWriteParams": {
-      "$schema": "http://json-schema.org/draft-07/schema#",
-      "properties": {
-        "enabled": {
-          "type": "boolean"
-        },
-        "key": {
-          "type": "string"
-        }
-      },
-      "required": [
-        "enabled",
-        "key"
-      ],
-      "title": "HooksConfigWriteParams",
-      "type": "object"
-    },
-    "HooksConfigWriteResponse": {
-      "$schema": "http://json-schema.org/draft-07/schema#",
-      "properties": {
-        "effectiveEnabled": {
-          "type": "boolean"
-        }
-      },
-      "required": [
-        "effectiveEnabled"
-      ],
-      "title": "HooksConfigWriteResponse",
       "type": "object"
     },
     "HooksListEntry": {

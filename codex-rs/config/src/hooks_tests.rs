@@ -1,5 +1,7 @@
 use pretty_assertions::assert_eq;
 
+use std::collections::BTreeMap;
+
 use super::HookEventsToml;
 use super::HookHandlerConfig;
 use super::HooksFile;
@@ -83,11 +85,10 @@ statusMessage = "checking"
 }
 
 #[test]
-fn hooks_toml_deserializes_inline_events_and_config() {
+fn hooks_toml_deserializes_inline_events_and_state_map() {
     let parsed: HooksToml = toml::from_str(
         r#"
-[[config]]
-key = "file:/tmp/hooks.json:pre_tool_use:0:0"
+[state."file:/tmp/hooks.json:pre_tool_use:0:0"]
 enabled = false
 
 [[PreToolUse]]
@@ -115,10 +116,12 @@ command = "python3 /tmp/pre.py"
                 }],
                 ..Default::default()
             },
-            config: vec![super::HookConfig {
-                key: Some("file:/tmp/hooks.json:pre_tool_use:0:0".to_string()),
-                enabled: false,
-            }],
+            state: BTreeMap::from([(
+                "file:/tmp/hooks.json:pre_tool_use:0:0".to_string(),
+                super::HookStateToml {
+                    enabled: Some(false),
+                },
+            )]),
         }
     );
 }

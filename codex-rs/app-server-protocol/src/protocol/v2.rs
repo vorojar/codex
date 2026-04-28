@@ -4510,6 +4510,7 @@ pub struct HooksListEntry {
 #[ts(export_to = "v2/")]
 pub struct HookMetadata {
     pub key: String,
+    pub config_key_path: Option<String>,
     pub event_name: HookEventName,
     pub handler_type: HookHandlerType,
     pub matcher: Option<String>,
@@ -4683,21 +4684,6 @@ pub struct SkillsConfigWriteParams {
 #[serde(rename_all = "camelCase")]
 #[ts(export_to = "v2/")]
 pub struct SkillsConfigWriteResponse {
-    pub effective_enabled: bool,
-}
-
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, JsonSchema, TS)]
-#[serde(rename_all = "camelCase")]
-#[ts(export_to = "v2/")]
-pub struct HooksConfigWriteParams {
-    pub key: String,
-    pub enabled: bool,
-}
-
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, JsonSchema, TS)]
-#[serde(rename_all = "camelCase")]
-#[ts(export_to = "v2/")]
-pub struct HooksConfigWriteResponse {
     pub effective_enabled: bool,
 }
 

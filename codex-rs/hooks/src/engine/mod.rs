@@ -72,6 +72,7 @@ impl ConfiguredHandler {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HookListEntry {
     pub key: String,
+    pub config_key_path: Option<String>,
     pub event_name: HookEventName,
     pub handler_type: HookHandlerType,
     pub matcher: Option<String>,

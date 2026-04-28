@@ -164,8 +164,6 @@ export type { HookRunSummary } from "./HookRunSummary";
 export type { HookScope } from "./HookScope";
 export type { HookSource } from "./HookSource";
 export type { HookStartedNotification } from "./HookStartedNotification";
-export type { HooksConfigWriteParams } from "./HooksConfigWriteParams";
-export type { HooksConfigWriteResponse } from "./HooksConfigWriteResponse";
 export type { HooksListEntry } from "./HooksListEntry";
 export type { HooksListParams } from "./HooksListParams";
 export type { HooksListResponse } from "./HooksListResponse";

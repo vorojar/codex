@@ -207,7 +207,6 @@ Example with notification opt-out:
 - `device/key/public` — return a device key's SPKI DER public key as base64 plus its `algorithm` and `protectionClass`.
 - `device/key/sign` — sign one of the accepted structured payload variants with a controller-local device key. The only accepted payload today is `remoteControlClientConnection`, which binds a server-issued `/client` websocket challenge to the enrolled controller device without signing the bearer token itself; this is intentionally not an arbitrary-byte signing API.
 - `skills/config/write` — write user-level skill config by name or absolute path.
-- `hooks/config/write` — write user-level hook config by hook key.
 - `plugin/install` — install a plugin from a discovered marketplace entry, rejecting marketplace entries marked unavailable for install, install MCPs if any, and return the effective plugin auth policy plus any apps that still need auth (**under development; do not call from production clients yet**).
 - `plugin/uninstall` — uninstall a local plugin by `pluginId` in `<plugin>@<marketplace>` form by removing its cached files and clearing its user-level config entry, or uninstall a remote ChatGPT plugin by backend `pluginId` by forwarding the uninstall to the ChatGPT plugin backend and removing any downloaded remote-plugin cache (**under development; do not call from production clients yet**).
 - `mcpServer/oauth/login` — start an OAuth login for a configured MCP server; returns an `authorization_url` and later emits `mcpServer/oauthLogin/completed` once the browser flow finishes.
@@ -1452,7 +1451,7 @@ To enable or disable a skill by name:
 }
 ```
 
-Use `hooks/list` to fetch the discovered hooks for one or more `cwds`. Disabled hooks are still returned with `"enabled": false` so clients can render and re-enable them. Managed hook keys use the `managed:` prefix and cannot be changed through `hooks/config/write`. Hook keys are source-namespaced with `file:`, `managed:`, or `plugin:` prefixes; the trailing event/group/handler selector is currently positional.
+Use `hooks/list` to fetch the discovered hooks for one or more `cwds`. Disabled hooks are still returned with `"enabled": false` so clients can render and re-enable them. Non-managed hooks include a `configKeyPath` that clients can pass to `config/batchWrite` when upserting user-level hook state. Managed hook keys use the `managed:` prefix and omit `configKeyPath`; user config entries for those keys are ignored during loading. Hook keys are source-namespaced with `file:`, `managed:`, or `plugin:` prefixes; the trailing event/group/handler selector is currently positional.
 
 ```json
 {
@@ -1472,6 +1471,7 @@ Use `hooks/list` to fetch the discovered hooks for one or more `cwds`. Disabled 
       "cwd": "/Users/me/project",
       "hooks": [{
         "key": "file:/Users/me/.codex/config.toml:pre_tool_use:0:0",
+        "configKeyPath": "hooks.state",
         "eventName": "pre_tool_use",
         "handlerType": "command",
         "matcher": "Bash",
@@ -1491,18 +1491,28 @@ Use `hooks/list` to fetch the discovered hooks for one or more `cwds`. Disabled 
 }
 ```
 
-To enable or disable a non-managed hook, write the hook key returned by `hooks/list`:
+To disable a non-managed hook, upsert a state entry at the returned `configKeyPath` with `config/batchWrite`:
 
 ```json
 {
-  "method": "hooks/config/write",
+  "method": "config/batchWrite",
   "id": 29,
   "params": {
-    "key": "file:/Users/me/.codex/config.toml:pre_tool_use:0:0",
-    "enabled": false
+    "edits": [{
+      "keyPath": "hooks.state",
+      "value": {
+        "file:/Users/me/.codex/config.toml:pre_tool_use:0:0": {
+          "enabled": false
+        }
+      },
+      "mergeStrategy": "upsert"
+    }],
+    "reloadUserConfig": true
   }
 }
 ```
+
+To re-enable it, upsert the same hook key with `"enabled": true`.
 
 ## Apps
 
