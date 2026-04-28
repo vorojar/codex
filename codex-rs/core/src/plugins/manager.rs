@@ -467,7 +467,7 @@ impl PluginsManager {
             config_layer_stack,
             &self.store,
             self.restriction_product,
-            /*plugin_hooks_enabled*/ true,
+            plugin_hooks_feature_enabled,
         )
         .await;
         (
