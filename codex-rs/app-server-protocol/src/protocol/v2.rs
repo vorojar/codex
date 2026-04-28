@@ -1092,6 +1092,9 @@ pub enum ExternalAgentConfigMigrationItemType {
     #[serde(rename = "MCP_SERVER_CONFIG")]
     #[ts(rename = "MCP_SERVER_CONFIG")]
     McpServerConfig,
+    #[serde(rename = "SESSIONS")]
+    #[ts(rename = "SESSIONS")]
+    Sessions,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, JsonSchema, TS)]
@@ -1109,8 +1112,20 @@ pub struct PluginsMigration {
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, JsonSchema, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export_to = "v2/")]
+pub struct SessionMigration {
+    pub path: PathBuf,
+    pub cwd: PathBuf,
+    pub title: Option<String>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "v2/")]
 pub struct MigrationDetails {
+    #[serde(default)]
     pub plugins: Vec<PluginsMigration>,
+    #[serde(default)]
+    pub sessions: Vec<SessionMigration>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, JsonSchema, TS)]
@@ -1997,6 +2012,8 @@ impl From<CoreSessionSource> for SessionSource {
             CoreSessionSource::Exec => SessionSource::Exec,
             CoreSessionSource::Mcp => SessionSource::AppServer,
             CoreSessionSource::Custom(source) => SessionSource::Custom(source),
+            // We do not want to render those at the app-server level.
+            CoreSessionSource::Internal(_) => SessionSource::Unknown,
             CoreSessionSource::SubAgent(sub) => SessionSource::SubAgent(sub),
             CoreSessionSource::Unknown => SessionSource::Unknown,
         }
@@ -3164,7 +3181,7 @@ pub struct CommandExecTerminalSize {
 /// The final `command/exec` response is deferred until the process exits and is
 /// sent only after all `command/exec/outputDelta` notifications for that
 /// connection have been emitted.
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, JsonSchema, TS)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, JsonSchema, TS, ExperimentalApi)]
 #[serde(rename_all = "camelCase")]
 #[ts(export_to = "v2/")]
 pub struct CommandExecParams {
@@ -3243,6 +3260,7 @@ pub struct CommandExecParams {
     ///
     /// Defaults to the user's configured permissions when omitted. Cannot be
     /// combined with `sandboxPolicy`.
+    #[experimental("command/exec.permissionProfile")]
     #[ts(optional = nullable)]
     pub permission_profile: Option<PermissionProfile>,
 }
@@ -3365,6 +3383,7 @@ pub struct ThreadStartParams {
     pub sandbox: Option<SandboxMode>,
     /// Full permissions override for this thread. Cannot be combined with
     /// `sandbox`.
+    #[experimental("thread/start.permissionProfile")]
     #[ts(optional = nullable)]
     pub permission_profile: Option<PermissionProfile>,
     #[ts(optional = nullable)]
@@ -3448,6 +3467,7 @@ pub struct ThreadStartResponse {
     /// view.
     pub sandbox: SandboxPolicy,
     /// Canonical active permissions view for this thread.
+    #[experimental("thread/start.permissionProfile")]
     #[serde(default)]
     pub permission_profile: Option<PermissionProfile>,
     pub reasoning_effort: Option<ReasoningEffort>,
@@ -3509,6 +3529,7 @@ pub struct ThreadResumeParams {
     pub sandbox: Option<SandboxMode>,
     /// Full permissions override for the resumed thread. Cannot be combined
     /// with `sandbox`.
+    #[experimental("thread/resume.permissionProfile")]
     #[ts(optional = nullable)]
     pub permission_profile: Option<PermissionProfile>,
     #[ts(optional = nullable)]
@@ -3552,6 +3573,7 @@ pub struct ThreadResumeResponse {
     /// view.
     pub sandbox: SandboxPolicy,
     /// Canonical active permissions view for this thread.
+    #[experimental("thread/resume.permissionProfile")]
     #[serde(default)]
     pub permission_profile: Option<PermissionProfile>,
     pub reasoning_effort: Option<ReasoningEffort>,
@@ -3604,6 +3626,7 @@ pub struct ThreadForkParams {
     pub sandbox: Option<SandboxMode>,
     /// Full permissions override for the forked thread. Cannot be combined
     /// with `sandbox`.
+    #[experimental("thread/fork.permissionProfile")]
     #[ts(optional = nullable)]
     pub permission_profile: Option<PermissionProfile>,
     #[ts(optional = nullable)]
@@ -3647,6 +3670,7 @@ pub struct ThreadForkResponse {
     /// view.
     pub sandbox: SandboxPolicy,
     /// Canonical active permissions view for this thread.
+    #[experimental("thread/fork.permissionProfile")]
     #[serde(default)]
     pub permission_profile: Option<PermissionProfile>,
     pub reasoning_effort: Option<ReasoningEffort>,
@@ -5252,6 +5276,7 @@ pub struct TurnStartParams {
     pub sandbox_policy: Option<SandboxPolicy>,
     /// Override the full permissions profile for this turn and subsequent
     /// turns. Cannot be combined with `sandboxPolicy`.
+    #[experimental("turn/start.permissionProfile")]
     #[ts(optional = nullable)]
     pub permission_profile: Option<PermissionProfile>,
     /// Override the model for this turn and subsequent turns.
@@ -7899,7 +7924,46 @@ mod tests {
                         marketplace_name: "team-marketplace".to_string(),
                         plugin_names: vec!["asana".to_string()],
                     }],
+                    sessions: Vec::new(),
                 }),
+            }
+        );
+    }
+
+    #[test]
+    fn external_agent_config_import_params_accept_legacy_plugin_details() {
+        let params: ExternalAgentConfigImportParams = serde_json::from_value(json!({
+            "migrationItems": [{
+                "itemType": "PLUGINS",
+                "description": "Install supported plugins from Claude settings",
+                "cwd": absolute_path_string("repo"),
+                "details": {
+                    "plugins": [
+                        {
+                            "marketplaceName": "team-marketplace",
+                            "pluginNames": ["asana"]
+                        }
+                    ]
+                }
+            }]
+        }))
+        .expect("legacy plugin import params should deserialize");
+
+        assert_eq!(
+            params,
+            ExternalAgentConfigImportParams {
+                migration_items: vec![ExternalAgentConfigMigrationItem {
+                    item_type: ExternalAgentConfigMigrationItemType::Plugins,
+                    description: "Install supported plugins from Claude settings".to_string(),
+                    cwd: Some(PathBuf::from(absolute_path_string("repo"))),
+                    details: Some(MigrationDetails {
+                        plugins: vec![PluginsMigration {
+                            marketplace_name: "team-marketplace".to_string(),
+                            plugin_names: vec!["asana".to_string()],
+                        }],
+                        sessions: Vec::new(),
+                    }),
+                }],
             }
         );
     }
@@ -10363,6 +10427,27 @@ mod tests {
             .unwrap(),
             PluginUninstallParams {
                 plugin_id: "gmail@openai-curated".to_string(),
+            },
+        );
+
+        assert_eq!(
+            serde_json::to_value(PluginUninstallParams {
+                plugin_id: "plugins~Plugin_gmail".to_string(),
+            })
+            .unwrap(),
+            json!({
+                "pluginId": "plugins~Plugin_gmail",
+            }),
+        );
+
+        assert_eq!(
+            serde_json::from_value::<PluginUninstallParams>(json!({
+                "pluginId": "plugins~Plugin_gmail",
+                "forceRemoteSync": true,
+            }))
+            .unwrap(),
+            PluginUninstallParams {
+                plugin_id: "plugins~Plugin_gmail".to_string(),
             },
         );
     }

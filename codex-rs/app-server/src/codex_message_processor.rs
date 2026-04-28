@@ -248,11 +248,10 @@ use codex_core::ForkSnapshot;
 use codex_core::NewThread;
 use codex_core::RolloutRecorder;
 use codex_core::SessionMeta;
-use codex_core::StartThreadWithToolsOptions;
+use codex_core::StartThreadOptions;
 use codex_core::SteerInputError;
 use codex_core::ThreadConfigSnapshot;
 use codex_core::ThreadManager;
-use codex_core::clear_memory_roots_contents;
 use codex_core::config::Config;
 use codex_core::config::ConfigOverrides;
 use codex_core::config::NetworkProxyAuditMetadata;
@@ -297,6 +296,7 @@ use codex_core_plugins::remote::RemotePluginServiceConfig;
 use codex_core_plugins::remote::RemotePluginSummary as RemoteCatalogPluginSummary;
 use codex_exec_server::EnvironmentManager;
 use codex_exec_server::LOCAL_FS;
+use codex_external_agent_sessions::ImportedExternalAgentSession;
 use codex_features::FEATURES;
 use codex_features::Feature;
 use codex_features::Stage;
@@ -322,6 +322,7 @@ use codex_mcp::discover_supported_scopes;
 use codex_mcp::effective_mcp_servers;
 use codex_mcp::read_mcp_resource as read_mcp_resource_without_thread;
 use codex_mcp::resolve_oauth_scopes;
+use codex_memories_write::clear_memory_roots_contents;
 use codex_model_provider::ProviderAccountError;
 use codex_model_provider::create_model_provider;
 use codex_models_manager::collaboration_mode_presets::CollaborationModesConfig;
@@ -399,6 +400,8 @@ use std::sync::atomic::Ordering;
 use std::time::Duration;
 use std::time::Instant;
 use tokio::sync::Mutex;
+use tokio::sync::Semaphore;
+use tokio::sync::SemaphorePermit;
 use tokio::sync::broadcast;
 use tokio::sync::oneshot;
 use tokio::sync::watch;
@@ -530,6 +533,10 @@ pub(crate) struct CodexMessageProcessor {
     pending_thread_unloads: Arc<Mutex<HashSet<ThreadId>>>,
     thread_state_manager: ThreadStateManager,
     thread_watch_manager: ThreadWatchManager,
+    /// Serializes mutations of list membership or fields rendered from list
+    /// results. `thread/list` is intentionally not serialized so it can run
+    /// concurrently against mostly append-only storage.
+    thread_list_state_permit: Arc<Semaphore>,
     command_exec_manager: CommandExecManager,
     workspace_settings_cache: Arc<workspace_settings::WorkspaceSettingsCache>,
     pending_fuzzy_searches: Arc<Mutex<HashMap<String, Arc<AtomicBool>>>>,
@@ -555,6 +562,7 @@ struct ListenerTaskContext {
     pending_thread_unloads: Arc<Mutex<HashSet<ThreadId>>>,
     analytics_events_client: AnalyticsEventsClient,
     thread_watch_manager: ThreadWatchManager,
+    thread_list_state_permit: Arc<Semaphore>,
     fallback_model_provider: String,
     codex_home: PathBuf,
 }
@@ -813,6 +821,7 @@ impl CodexMessageProcessor {
             pending_thread_unloads: Arc::new(Mutex::new(HashSet::new())),
             thread_state_manager: ThreadStateManager::new(),
             thread_watch_manager: ThreadWatchManager::new_with_outgoing(outgoing),
+            thread_list_state_permit: Arc::new(Semaphore::new(/*permits*/ 1)),
             command_exec_manager: CommandExecManager::default(),
             workspace_settings_cache: Arc::new(
                 workspace_settings::WorkspaceSettingsCache::default(),
@@ -1355,6 +1364,17 @@ impl CodexMessageProcessor {
                 .to_string(),
             data: None,
         }
+    }
+
+    async fn acquire_thread_list_state_permit(
+        &self,
+    ) -> Result<SemaphorePermit<'_>, JSONRPCErrorError> {
+        self.thread_list_state_permit
+            .acquire()
+            .await
+            .map_err(|err| {
+                internal_error(format!("failed to acquire thread list state permit: {err}"))
+            })
     }
 
     async fn login_api_key_common(
@@ -2452,6 +2472,7 @@ impl CodexMessageProcessor {
             pending_thread_unloads: Arc::clone(&self.pending_thread_unloads),
             analytics_events_client: self.analytics_events_client.clone(),
             thread_watch_manager: self.thread_watch_manager.clone(),
+            thread_list_state_permit: self.thread_list_state_permit.clone(),
             fallback_model_provider: self.config.model_provider_id.clone(),
             codex_home: self.config.codex_home.to_path_buf(),
         };
@@ -2478,6 +2499,64 @@ impl CodexMessageProcessor {
         };
         self.background_tasks
             .spawn(thread_start_task.instrument(request_context.span()));
+    }
+
+    pub(crate) async fn import_external_agent_session(
+        &self,
+        session: ImportedExternalAgentSession,
+    ) -> Result<ThreadId, JSONRPCErrorError> {
+        let ImportedExternalAgentSession {
+            cwd,
+            title,
+            rollout_items,
+        } = session;
+        let typesafe_overrides = self.build_thread_config_overrides(
+            /*model*/ None,
+            /*model_provider*/ None,
+            /*service_tier*/ None,
+            Some(cwd.to_string_lossy().into_owned()),
+            /*approval_policy*/ None,
+            /*approvals_reviewer*/ None,
+            /*sandbox*/ None,
+            /*permission_profile*/ None,
+            /*base_instructions*/ None,
+            /*developer_instructions*/ None,
+            /*personality*/ None,
+        );
+        let config = self
+            .config_manager
+            .load_with_overrides(/*request_overrides*/ None, typesafe_overrides)
+            .await
+            .map_err(|err| {
+                internal_error(format!("failed to load imported session config: {err}"))
+            })?;
+        let environments = self
+            .thread_manager
+            .default_environment_selections(&config.cwd);
+        let imported_thread = self
+            .thread_manager
+            .start_thread_with_options(StartThreadOptions {
+                config,
+                initial_history: InitialHistory::Forked(rollout_items),
+                session_source: None,
+                dynamic_tools: Vec::new(),
+                persist_extended_history: true,
+                metrics_service_name: None,
+                parent_trace: None,
+                environments,
+            })
+            .await
+            .map_err(|err| internal_error(format!("failed to import session: {err}")))?;
+        if let Some(title) = title
+            && let Some(name) = codex_core::util::normalize_thread_name(&title)
+        {
+            imported_thread
+                .thread
+                .submit(Op::SetThreadName { name })
+                .await
+                .map_err(|err| internal_error(format!("failed to name imported session: {err}")))?;
+        }
+        Ok(imported_thread.thread_id)
     }
 
     pub(crate) async fn drain_background_tasks(&self) {
@@ -2653,7 +2732,7 @@ impl CodexMessageProcessor {
                 ..
             } = listener_task_context
                 .thread_manager
-                .start_thread_with_tools_and_service_name(StartThreadWithToolsOptions {
+                .start_thread_with_options(StartThreadOptions {
                     config,
                     initial_history: match session_start_source
                         .unwrap_or(codex_app_server_protocol::ThreadStartSource::Startup)
@@ -2665,6 +2744,7 @@ impl CodexMessageProcessor {
                             InitialHistory::Cleared
                         }
                     },
+                    session_source: None,
                     dynamic_tools: core_dynamic_tools,
                     persist_extended_history,
                     metrics_service_name: service_name,
@@ -2744,6 +2824,10 @@ impl CodexMessageProcessor {
                 /*has_in_progress_turn*/ false,
             );
 
+            let sandbox = thread_response_sandbox_policy(
+                &config_snapshot.permission_profile,
+                config_snapshot.cwd.as_path(),
+            );
             let permission_profile =
                 thread_response_permission_profile(config_snapshot.permission_profile);
 
@@ -2756,7 +2840,7 @@ impl CodexMessageProcessor {
                 instruction_sources,
                 approval_policy: config_snapshot.approval_policy.into(),
                 approvals_reviewer: config_snapshot.approvals_reviewer.into(),
-                sandbox: config_snapshot.sandbox_policy.into(),
+                sandbox,
                 permission_profile,
                 reasoning_effort: config_snapshot.reasoning_effort,
             };
@@ -2839,6 +2923,13 @@ impl CodexMessageProcessor {
     }
 
     async fn thread_archive(&self, request_id: ConnectionRequestId, params: ThreadArchiveParams) {
+        let _thread_list_state_permit = match self.acquire_thread_list_state_permit().await {
+            Ok(permit) => permit,
+            Err(error) => {
+                self.outgoing.send_error(request_id, error).await;
+                return;
+            }
+        };
         let result = self.thread_archive_response(params).await;
         let archived_thread_ids = result
             .as_ref()
@@ -3045,6 +3136,7 @@ impl CodexMessageProcessor {
             return Err(invalid_request("thread name must not be empty"));
         };
 
+        let _thread_list_state_permit = self.acquire_thread_list_state_permit().await?;
         if let Ok(thread) = self.thread_manager.get_thread(thread_id).await {
             self.submit_core_op(request_id, thread.as_ref(), Op::SetThreadName { name })
                 .await
@@ -3186,6 +3278,7 @@ impl CodexMessageProcessor {
             return Err(invalid_request("gitInfo must include at least one field"));
         }
 
+        let _thread_list_state_permit = self.acquire_thread_list_state_permit().await?;
         let loaded_thread = self.thread_manager.get_thread(thread_uuid).await.ok();
         let mut state_db_ctx = loaded_thread.as_ref().and_then(|thread| thread.state_db());
         if state_db_ctx.is_none() {
@@ -3316,7 +3409,7 @@ impl CodexMessageProcessor {
             builder.model_provider = Some(model_provider.clone());
             builder.cwd = config_snapshot.cwd.to_path_buf();
             builder.cli_version = Some(env!("CARGO_PKG_VERSION").to_string());
-            builder.sandbox_policy = config_snapshot.sandbox_policy.clone();
+            builder.sandbox_policy = config_snapshot.sandbox_policy();
             builder.approval_mode = config_snapshot.approval_policy;
             let metadata = builder.build(model_provider.as_str());
             if let Err(err) = state_db_ctx.insert_thread_if_absent(&metadata).await {
@@ -3382,6 +3475,13 @@ impl CodexMessageProcessor {
         request_id: ConnectionRequestId,
         params: ThreadUnarchiveParams,
     ) {
+        let _thread_list_state_permit = match self.acquire_thread_list_state_permit().await {
+            Ok(permit) => permit,
+            Err(error) => {
+                self.outgoing.send_error(request_id, error).await;
+                return;
+            }
+        };
         let result = self.thread_unarchive_response(params).await;
         let notification =
             result
@@ -3687,13 +3787,13 @@ impl CodexMessageProcessor {
         params: ThreadLoadedListParams,
     ) -> Result<ThreadLoadedListResponse, JSONRPCErrorError> {
         let ThreadLoadedListParams { cursor, limit } = params;
-        let mut data = self
+        let mut data: Vec<String> = self
             .thread_manager
             .list_thread_ids()
             .await
             .into_iter()
             .map(|thread_id| thread_id.to_string())
-            .collect::<Vec<_>>();
+            .collect();
 
         if data.is_empty() {
             return Ok(ThreadLoadedListResponse {
@@ -4111,6 +4211,13 @@ impl CodexMessageProcessor {
             return;
         }
 
+        let _thread_list_state_permit = match self.acquire_thread_list_state_permit().await {
+            Ok(permit) => permit,
+            Err(error) => {
+                self.outgoing.send_error(request_id, error).await;
+                return;
+            }
+        };
         match self.resume_running_thread(&request_id, &params).await {
             Ok(true) => return,
             Ok(false) => {}
@@ -4267,9 +4374,13 @@ impl CodexMessageProcessor {
                     thread_status,
                     /*has_live_in_progress_turn*/ false,
                 );
-                let permission_profile = thread_response_permission_profile(
-                    codex_thread.config_snapshot().await.permission_profile,
+                let config_snapshot = codex_thread.config_snapshot().await;
+                let sandbox = thread_response_sandbox_policy(
+                    &config_snapshot.permission_profile,
+                    config_snapshot.cwd.as_path(),
                 );
+                let permission_profile =
+                    thread_response_permission_profile(config_snapshot.permission_profile.clone());
 
                 let response = ThreadResumeResponse {
                     thread,
@@ -4280,7 +4391,7 @@ impl CodexMessageProcessor {
                     instruction_sources,
                     approval_policy: session_configured.approval_policy.into(),
                     approvals_reviewer: session_configured.approvals_reviewer.into(),
-                    sandbox: session_configured.sandbox_policy.into(),
+                    sandbox,
                     permission_profile,
                     reasoning_effort: session_configured.reasoning_effort,
                 };
@@ -4863,9 +4974,13 @@ impl CodexMessageProcessor {
                     .await,
                 /*has_in_progress_turn*/ false,
             );
-            let permission_profile = thread_response_permission_profile(
-                forked_thread.config_snapshot().await.permission_profile,
+            let config_snapshot = forked_thread.config_snapshot().await;
+            let sandbox = thread_response_sandbox_policy(
+                &config_snapshot.permission_profile,
+                config_snapshot.cwd.as_path(),
             );
+            let permission_profile =
+                thread_response_permission_profile(config_snapshot.permission_profile);
 
             let response = ThreadForkResponse {
                 thread: thread.clone(),
@@ -4876,7 +4991,7 @@ impl CodexMessageProcessor {
                 instruction_sources,
                 approval_policy: session_configured.approval_policy.into(),
                 approvals_reviewer: session_configured.approvals_reviewer.into(),
-                sandbox: session_configured.sandbox_policy.into(),
+                sandbox,
                 permission_profile,
                 reasoning_effort: session_configured.reasoning_effort,
             };
@@ -4898,7 +5013,6 @@ impl CodexMessageProcessor {
                 return;
             }
         };
-
         self.analytics_events_client.track_response(
             request_id.connection_id.0,
             ClientResponse::ThreadFork {
@@ -5703,24 +5817,6 @@ impl CodexMessageProcessor {
         }
     }
 
-    async fn send_internal_error(&self, request_id: ConnectionRequestId, message: String) {
-        let error = JSONRPCErrorError {
-            code: INTERNAL_ERROR_CODE,
-            message,
-            data: None,
-        };
-        self.outgoing.send_error(request_id, error).await;
-    }
-
-    async fn send_invalid_request_error(&self, request_id: ConnectionRequestId, message: String) {
-        let error = JSONRPCErrorError {
-            code: INVALID_REQUEST_ERROR_CODE,
-            message,
-            data: None,
-        };
-        self.outgoing.send_error(request_id, error).await;
-    }
-
     fn input_too_large_error(actual_chars: usize) -> JSONRPCErrorError {
         JSONRPCErrorError {
             code: INVALID_PARAMS_ERROR_CODE,
@@ -6176,15 +6272,16 @@ impl CodexMessageProcessor {
             let extra_roots = extra_roots_by_cwd
                 .get(&cwd)
                 .map_or(&[][..], std::vec::Vec::as_slice);
-            let effective_skill_roots = plugins_manager
-                .effective_skill_roots_for_layer_stack(
+            let plugin_outcome = plugins_manager
+                .plugins_for_layer_stack(
                     &config_layer_stack,
                     config.features.enabled(Feature::Plugins) && workspace_codex_plugins_enabled,
+                    /*plugin_hooks_feature_enabled*/ false,
                 )
                 .await;
             let skills_input = codex_core::skills::SkillsLoadInput::new(
                 cwd_abs.clone(),
-                effective_skill_roots,
+                plugin_outcome.effective_skill_roots(),
                 config_layer_stack,
                 config.bundled_skills_enabled(),
             );
@@ -6250,18 +6347,22 @@ impl CodexMessageProcessor {
                     continue;
                 }
             };
-            let (plugin_hook_sources, plugin_hook_load_warnings) = plugins_manager
-                .effective_plugin_hooks_for_layer_stack(
-                    &config_layer_stack,
-                    plugins_enabled,
-                    config.features.enabled(Feature::PluginHooks),
-                )
-                .await;
+            let plugin_outcome = if config.features.enabled(Feature::PluginHooks) {
+                plugins_manager
+                    .plugins_for_layer_stack(
+                        &config_layer_stack,
+                        plugins_enabled,
+                        /*plugin_hooks_feature_enabled*/ true,
+                    )
+                    .await
+            } else {
+                codex_core::plugins::PluginLoadOutcome::default()
+            };
             let hooks = codex_hooks::list_hooks(codex_hooks::HooksConfig {
                 feature_enabled: config.features.enabled(Feature::CodexHooks),
                 config_layer_stack: Some(config_layer_stack),
-                plugin_hook_sources,
-                plugin_hook_load_warnings,
+                plugin_hook_sources: plugin_outcome.effective_plugin_hook_sources(),
+                plugin_hook_load_warnings: plugin_outcome.effective_plugin_hook_warnings(),
                 ..Default::default()
             });
             data.push(codex_app_server_protocol::HooksListEntry {
@@ -6477,12 +6578,12 @@ impl CodexMessageProcessor {
                 );
                 return Err(error);
             }
-            let (_, thread) = self
-                .load_thread(&params.thread_id)
-                .await
-                .inspect_err(|error| {
-                    self.track_error_response(&request_id, error, /*error_type*/ None);
-                })?;
+            let (thread_id, thread) =
+                self.load_thread(&params.thread_id)
+                    .await
+                    .inspect_err(|error| {
+                        self.track_error_response(&request_id, error, /*error_type*/ None);
+                    })?;
             Self::set_app_server_client_info(
                 thread.as_ref(),
                 app_server_client_name,
@@ -6522,6 +6623,7 @@ impl CodexMessageProcessor {
                 .into_iter()
                 .map(V2UserInput::into_core)
                 .collect();
+            let turn_has_input = !mapped_items.is_empty();
 
             let has_any_overrides = params.cwd.is_some()
                 || params.approval_policy.is_some()
@@ -6615,6 +6717,18 @@ impl CodexMessageProcessor {
                     self.track_error_response(&request_id, &error, /*error_type*/ None);
                     error
                 })?;
+
+            if turn_has_input {
+                let config_snapshot = thread.config_snapshot().await;
+                codex_memories_write::start_memories_startup_task(
+                    Arc::clone(&self.thread_manager),
+                    Arc::clone(&self.auth_manager),
+                    thread_id,
+                    Arc::clone(&thread),
+                    thread.config().await,
+                    &config_snapshot.session_source,
+                );
+            }
 
             self.outgoing
                 .record_request_turn_id(&request_id, &turn_id)
@@ -7193,139 +7307,104 @@ impl CodexMessageProcessor {
             target,
             delivery,
         } = params;
-        let (parent_thread_id, parent_thread) = match self.load_thread(&thread_id).await {
-            Ok(v) => v,
-            Err(error) => {
-                self.outgoing.send_error(request_id, error).await;
-                return;
-            }
-        };
-
-        let (review_request, display_text) = match Self::review_request_from_target(target) {
-            Ok(value) => value,
-            Err(err) => {
-                self.outgoing.send_error(request_id, err).await;
-                return;
-            }
-        };
-
-        let delivery = delivery.unwrap_or(ApiReviewDelivery::Inline).to_core();
-        match delivery {
-            CoreReviewDelivery::Inline => {
-                if let Err(err) = self
-                    .start_inline_review(
+        let result = async {
+            let (parent_thread_id, parent_thread) = self.load_thread(&thread_id).await?;
+            let (review_request, display_text) = Self::review_request_from_target(target)?;
+            match delivery.unwrap_or(ApiReviewDelivery::Inline).to_core() {
+                CoreReviewDelivery::Inline => {
+                    self.start_inline_review(
                         &request_id,
                         parent_thread,
                         review_request,
                         display_text.as_str(),
-                        thread_id.clone(),
+                        thread_id,
                     )
-                    .await
-                {
-                    self.outgoing.send_error(request_id, err).await;
+                    .await?;
                 }
-            }
-            CoreReviewDelivery::Detached => {
-                if let Err(err) = self
-                    .start_detached_review(
+                CoreReviewDelivery::Detached => {
+                    self.start_detached_review(
                         &request_id,
                         parent_thread_id,
                         parent_thread,
                         review_request,
                         display_text.as_str(),
                     )
-                    .await
-                {
-                    self.outgoing.send_error(request_id, err).await;
+                    .await?;
                 }
             }
+            Ok::<_, JSONRPCErrorError>(None::<ReviewStartResponse>)
         }
+        .await;
+        self.send_optional_result(request_id, result).await;
     }
 
     async fn turn_interrupt(&self, request_id: ConnectionRequestId, params: TurnInterruptParams) {
         let TurnInterruptParams { thread_id, turn_id } = params;
         let is_startup_interrupt = turn_id.is_empty();
 
-        let (thread_uuid, thread) = match self.load_thread(&thread_id).await {
-            Ok(v) => v,
-            Err(error) => {
-                self.outgoing.send_error(request_id, error).await;
-                return;
-            }
-        };
+        let result = async {
+            let (thread_uuid, thread) = self.load_thread(&thread_id).await?;
 
-        // Record turn interrupts so we can reply when TurnAborted arrives. Startup
-        // interrupts do not have a turn and are acknowledged after submission.
-        if !is_startup_interrupt {
-            let thread_state = self.thread_state_manager.thread_state(thread_uuid).await;
-            let is_running = matches!(thread.agent_status().await, AgentStatus::Running);
-            let interrupt_outcome = {
-                let mut thread_state = thread_state.lock().await;
-                if let Some(active_turn) = thread_state.active_turn_snapshot() {
-                    if active_turn.id != turn_id {
-                        Err(format!(
-                            "expected active turn id {turn_id} but found {}",
-                            active_turn.id
-                        ))
-                    } else {
-                        thread_state
-                            .pending_interrupts
-                            .push((request_id.clone(), ApiVersion::V2));
-                        Ok(())
+            // Record turn interrupts so we can reply when TurnAborted arrives. Startup
+            // interrupts do not have a turn and are acknowledged after submission.
+            if !is_startup_interrupt {
+                let thread_state = self.thread_state_manager.thread_state(thread_uuid).await;
+                let is_running = matches!(thread.agent_status().await, AgentStatus::Running);
+                {
+                    let mut thread_state = thread_state.lock().await;
+                    if let Some(active_turn) = thread_state.active_turn_snapshot() {
+                        if active_turn.id != turn_id {
+                            return Err(invalid_request(format!(
+                                "expected active turn id {turn_id} but found {}",
+                                active_turn.id
+                            )));
+                        }
+                    } else if thread_state.last_terminal_turn_id.as_deref()
+                        == Some(turn_id.as_str())
+                        || !is_running
+                    {
+                        return Err(invalid_request("no active turn to interrupt"));
                     }
-                } else if thread_state.last_terminal_turn_id.as_deref() == Some(turn_id.as_str()) {
-                    Err("no active turn to interrupt".to_string())
-                } else if is_running {
                     thread_state
                         .pending_interrupts
                         .push((request_id.clone(), ApiVersion::V2));
-                    Ok(())
-                } else {
-                    Err("no active turn to interrupt".to_string())
                 }
-            };
-            if let Err(message) = interrupt_outcome {
-                self.send_invalid_request_error(request_id, message).await;
-                return;
-            }
 
-            self.outgoing
-                .record_request_turn_id(&request_id, &turn_id)
-                .await;
-        }
-
-        // Submit the interrupt. Turn interrupts respond upon TurnAborted; startup
-        // interrupts respond here because startup cancellation has no turn event.
-        let submit_result = self
-            .submit_core_op(&request_id, thread.as_ref(), Op::Interrupt)
-            .await;
-        match submit_result {
-            Ok(_) if is_startup_interrupt => {
                 self.outgoing
-                    .send_response(request_id, TurnInterruptResponse {})
+                    .record_request_turn_id(&request_id, &turn_id)
                     .await;
             }
-            Ok(_) => {}
-            Err(err) => {
-                if !is_startup_interrupt {
-                    let thread_state = self.thread_state_manager.thread_state(thread_uuid).await;
-                    let mut thread_state = thread_state.lock().await;
-                    thread_state
-                        .pending_interrupts
-                        .retain(|(pending_request_id, _)| pending_request_id != &request_id);
+
+            // Submit the interrupt. Turn interrupts respond upon TurnAborted; startup
+            // interrupts respond here because startup cancellation has no turn event.
+            match self
+                .submit_core_op(&request_id, thread.as_ref(), Op::Interrupt)
+                .await
+            {
+                Ok(_) if is_startup_interrupt => Ok(Some(TurnInterruptResponse {})),
+                Ok(_) => Ok(None),
+                Err(err) => {
+                    if !is_startup_interrupt {
+                        let thread_state =
+                            self.thread_state_manager.thread_state(thread_uuid).await;
+                        let mut thread_state = thread_state.lock().await;
+                        thread_state
+                            .pending_interrupts
+                            .retain(|(pending_request_id, _)| pending_request_id != &request_id);
+                    }
+                    let interrupt_target = if is_startup_interrupt {
+                        "startup"
+                    } else {
+                        "turn"
+                    };
+                    Err(internal_error(format!(
+                        "failed to interrupt {interrupt_target}: {err}"
+                    )))
                 }
-                let interrupt_target = if is_startup_interrupt {
-                    "startup"
-                } else {
-                    "turn"
-                };
-                self.send_internal_error(
-                    request_id,
-                    format!("failed to interrupt {interrupt_target}: {err}"),
-                )
-                .await;
             }
         }
+        .await;
+        self.send_optional_result(request_id, result).await;
     }
 
     async fn ensure_conversation_listener(
@@ -7343,6 +7422,7 @@ impl CodexMessageProcessor {
                 pending_thread_unloads: Arc::clone(&self.pending_thread_unloads),
                 analytics_events_client: self.analytics_events_client.clone(),
                 thread_watch_manager: self.thread_watch_manager.clone(),
+                thread_list_state_permit: self.thread_list_state_permit.clone(),
                 fallback_model_provider: self.config.model_provider_id.clone(),
                 codex_home: self.config.codex_home.to_path_buf(),
             },
@@ -7460,6 +7540,7 @@ impl CodexMessageProcessor {
                 pending_thread_unloads: Arc::clone(&self.pending_thread_unloads),
                 analytics_events_client: self.analytics_events_client.clone(),
                 thread_watch_manager: self.thread_watch_manager.clone(),
+                thread_list_state_permit: self.thread_list_state_permit.clone(),
                 fallback_model_provider: self.config.model_provider_id.clone(),
                 codex_home: self.config.codex_home.to_path_buf(),
             },
@@ -7508,6 +7589,7 @@ impl CodexMessageProcessor {
             pending_thread_unloads,
             analytics_events_client: _,
             thread_watch_manager,
+            thread_list_state_permit,
             fallback_model_provider,
             codex_home,
         } = listener_task_context;
@@ -7586,6 +7668,7 @@ impl CodexMessageProcessor {
                             thread_outgoing,
                             thread_state.clone(),
                             thread_watch_manager.clone(),
+                            thread_list_state_permit.clone(),
                             api_version,
                             fallback_model_provider.clone(),
                             codex_home.as_path(),
@@ -7636,24 +7719,18 @@ impl CodexMessageProcessor {
         Ok(())
     }
     async fn git_diff_to_origin(&self, request_id: ConnectionRequestId, cwd: PathBuf) {
-        let diff = git_diff_to_remote(&cwd).await;
-        match diff {
-            Some(value) => {
-                let response = GitDiffToRemoteResponse {
-                    sha: value.sha,
-                    diff: value.diff,
-                };
-                self.outgoing.send_response(request_id, response).await;
-            }
-            None => {
-                let error = JSONRPCErrorError {
-                    code: INVALID_REQUEST_ERROR_CODE,
-                    message: format!("failed to compute git diff to remote for cwd: {cwd:?}"),
-                    data: None,
-                };
-                self.outgoing.send_error(request_id, error).await;
-            }
-        }
+        let result = git_diff_to_remote(&cwd)
+            .await
+            .map(|value| GitDiffToRemoteResponse {
+                sha: value.sha,
+                diff: value.diff,
+            })
+            .ok_or_else(|| {
+                invalid_request(format!(
+                    "failed to compute git diff to remote for cwd: {cwd:?}"
+                ))
+            });
+        self.outgoing.send_result(request_id, result).await;
     }
 
     async fn fuzzy_file_search(
@@ -7705,38 +7782,29 @@ impl CodexMessageProcessor {
         request_id: ConnectionRequestId,
         params: FuzzyFileSearchSessionStartParams,
     ) {
+        let result = self.fuzzy_file_search_session_start_response(params).await;
+        self.outgoing.send_result(request_id, result).await;
+    }
+
+    async fn fuzzy_file_search_session_start_response(
+        &self,
+        params: FuzzyFileSearchSessionStartParams,
+    ) -> Result<FuzzyFileSearchSessionStartResponse, JSONRPCErrorError> {
         let FuzzyFileSearchSessionStartParams { session_id, roots } = params;
         if session_id.is_empty() {
-            let error = JSONRPCErrorError {
-                code: INVALID_REQUEST_ERROR_CODE,
-                message: "sessionId must not be empty".to_string(),
-                data: None,
-            };
-            self.outgoing.send_error(request_id, error).await;
-            return;
+            return Err(invalid_request("sessionId must not be empty"));
         }
 
         let session =
-            start_fuzzy_file_search_session(session_id.clone(), roots, self.outgoing.clone());
-        match session {
-            Ok(session) => {
-                self.fuzzy_search_sessions
-                    .lock()
-                    .await
-                    .insert(session_id, session);
-                self.outgoing
-                    .send_response(request_id, FuzzyFileSearchSessionStartResponse {})
-                    .await;
-            }
-            Err(err) => {
-                let error = JSONRPCErrorError {
-                    code: INTERNAL_ERROR_CODE,
-                    message: format!("failed to start fuzzy file search session: {err}"),
-                    data: None,
-                };
-                self.outgoing.send_error(request_id, error).await;
-            }
-        }
+            start_fuzzy_file_search_session(session_id.clone(), roots, self.outgoing.clone())
+                .map_err(|err| {
+                    internal_error(format!("failed to start fuzzy file search session: {err}"))
+                })?;
+        self.fuzzy_search_sessions
+            .lock()
+            .await
+            .insert(session_id, session);
+        Ok(FuzzyFileSearchSessionStartResponse {})
     }
 
     async fn fuzzy_file_search_session_update(
@@ -7744,6 +7812,14 @@ impl CodexMessageProcessor {
         request_id: ConnectionRequestId,
         params: FuzzyFileSearchSessionUpdateParams,
     ) {
+        let result = self.fuzzy_file_search_session_update_response(params).await;
+        self.outgoing.send_result(request_id, result).await;
+    }
+
+    async fn fuzzy_file_search_session_update_response(
+        &self,
+        params: FuzzyFileSearchSessionUpdateParams,
+    ) -> Result<FuzzyFileSearchSessionUpdateResponse, JSONRPCErrorError> {
         let FuzzyFileSearchSessionUpdateParams { session_id, query } = params;
         let found = {
             let sessions = self.fuzzy_search_sessions.lock().await;
@@ -7755,18 +7831,12 @@ impl CodexMessageProcessor {
             }
         };
         if !found {
-            let error = JSONRPCErrorError {
-                code: INVALID_REQUEST_ERROR_CODE,
-                message: format!("fuzzy file search session not found: {session_id}"),
-                data: None,
-            };
-            self.outgoing.send_error(request_id, error).await;
-            return;
+            return Err(invalid_request(format!(
+                "fuzzy file search session not found: {session_id}"
+            )));
         }
 
-        self.outgoing
-            .send_response(request_id, FuzzyFileSearchSessionUpdateResponse {})
-            .await;
+        Ok(FuzzyFileSearchSessionUpdateResponse {})
     }
 
     async fn fuzzy_file_search_session_stop(
@@ -7786,14 +7856,18 @@ impl CodexMessageProcessor {
     }
 
     async fn upload_feedback(&self, request_id: ConnectionRequestId, params: FeedbackUploadParams) {
+        let result = self.upload_feedback_response(params).await;
+        self.outgoing.send_result(request_id, result).await;
+    }
+
+    async fn upload_feedback_response(
+        &self,
+        params: FeedbackUploadParams,
+    ) -> Result<FeedbackUploadResponse, JSONRPCErrorError> {
         if !self.config.feedback_enabled {
-            let error = JSONRPCErrorError {
-                code: INVALID_REQUEST_ERROR_CODE,
-                message: "sending feedback is disabled by configuration".to_string(),
-                data: None,
-            };
-            self.outgoing.send_error(request_id, error).await;
-            return;
+            return Err(invalid_request(
+                "sending feedback is disabled by configuration",
+            ));
         }
 
         let FeedbackUploadParams {
@@ -7808,15 +7882,7 @@ impl CodexMessageProcessor {
         let conversation_id = match thread_id.as_deref() {
             Some(thread_id) => match ThreadId::from_string(thread_id) {
                 Ok(conversation_id) => Some(conversation_id),
-                Err(err) => {
-                    let error = JSONRPCErrorError {
-                        code: INVALID_REQUEST_ERROR_CODE,
-                        message: format!("invalid thread id: {err}"),
-                        data: None,
-                    };
-                    self.outgoing.send_error(request_id, error).await;
-                    return;
-                }
+                Err(err) => return Err(invalid_request(format!("invalid thread id: {err}"))),
             },
             None => None,
         };
@@ -7945,30 +8011,14 @@ impl CodexMessageProcessor {
         let upload_result = match upload_result {
             Ok(result) => result,
             Err(join_err) => {
-                let error = JSONRPCErrorError {
-                    code: INTERNAL_ERROR_CODE,
-                    message: format!("failed to upload feedback: {join_err}"),
-                    data: None,
-                };
-                self.outgoing.send_error(request_id, error).await;
-                return;
+                return Err(internal_error(format!(
+                    "failed to upload feedback: {join_err}"
+                )));
             }
         };
 
-        match upload_result {
-            Ok(()) => {
-                let response = FeedbackUploadResponse { thread_id };
-                self.outgoing.send_response(request_id, response).await;
-            }
-            Err(err) => {
-                let error = JSONRPCErrorError {
-                    code: INTERNAL_ERROR_CODE,
-                    message: format!("failed to upload feedback: {err}"),
-                    data: None,
-                };
-                self.outgoing.send_error(request_id, error).await;
-            }
-        }
+        upload_result.map_err(|err| internal_error(format!("failed to upload feedback: {err}")))?;
+        Ok(FeedbackUploadResponse { thread_id })
     }
 
     async fn windows_sandbox_setup_start(
@@ -8060,6 +8110,26 @@ impl CodexMessageProcessor {
                 warn!("failed to resolve rollout path for thread_id={conversation_id}: {err}");
                 None
             })
+    }
+
+    async fn send_invalid_request_error(
+        &self,
+        request_id: ConnectionRequestId,
+        message: impl Into<String>,
+    ) {
+        self.outgoing
+            .send_error(request_id, invalid_request(message))
+            .await;
+    }
+
+    async fn send_internal_error(
+        &self,
+        request_id: ConnectionRequestId,
+        message: impl Into<String>,
+    ) {
+        self.outgoing
+            .send_error(request_id, internal_error(message))
+            .await;
     }
 }
 
@@ -8294,13 +8364,13 @@ async fn handle_pending_thread_resume_request(
         service_tier,
         approval_policy,
         approvals_reviewer,
-        sandbox_policy,
         permission_profile,
         cwd,
         reasoning_effort,
         ..
     } = pending.config_snapshot;
     let instruction_sources = pending.instruction_sources;
+    let sandbox = thread_response_sandbox_policy(&permission_profile, cwd.as_path());
     let permission_profile = thread_response_permission_profile(permission_profile);
 
     let response = ThreadResumeResponse {
@@ -8312,7 +8382,7 @@ async fn handle_pending_thread_resume_request(
         instruction_sources,
         approval_policy: approval_policy.into(),
         approvals_reviewer: approvals_reviewer.into(),
-        sandbox: sandbox_policy.into(),
+        sandbox,
         permission_profile,
         reasoning_effort,
     };
@@ -8517,8 +8587,9 @@ fn collect_resume_override_mismatches(
         }
     }
     if let Some(requested_sandbox) = request.sandbox.as_ref() {
+        let active_sandbox = config_snapshot.sandbox_policy();
         let sandbox_matches = matches!(
-            (requested_sandbox, &config_snapshot.sandbox_policy),
+            (requested_sandbox, &active_sandbox),
             (
                 SandboxMode::ReadOnly,
                 codex_protocol::protocol::SandboxPolicy::ReadOnly { .. }
@@ -8535,8 +8606,7 @@ fn collect_resume_override_mismatches(
         );
         if !sandbox_matches {
             mismatch_details.push(format!(
-                "sandbox requested={requested_sandbox:?} active={:?}",
-                config_snapshot.sandbox_policy
+                "sandbox requested={requested_sandbox:?} active={active_sandbox:?}"
             ));
         }
     }
@@ -9463,6 +9533,20 @@ fn thread_response_permission_profile(
     Some(permission_profile.into())
 }
 
+fn thread_response_sandbox_policy(
+    permission_profile: &codex_protocol::models::PermissionProfile,
+    cwd: &Path,
+) -> codex_app_server_protocol::SandboxPolicy {
+    let file_system_policy = permission_profile.file_system_sandbox_policy();
+    let sandbox_policy = codex_sandboxing::compatibility_sandbox_policy_for_permission_profile(
+        permission_profile,
+        &file_system_policy,
+        permission_profile.network_sandbox_policy(),
+        cwd,
+    );
+    sandbox_policy.into()
+}
+
 fn requested_permissions_trust_project(overrides: &ConfigOverrides, cwd: &Path) -> bool {
     if matches!(
         overrides.sandbox_mode,
@@ -10242,7 +10326,6 @@ mod tests {
             service_tier: Some(codex_protocol::config_types::ServiceTier::Flex),
             approval_policy: codex_protocol::protocol::AskForApproval::OnRequest,
             approvals_reviewer: codex_protocol::config_types::ApprovalsReviewer::User,
-            sandbox_policy: codex_protocol::protocol::SandboxPolicy::DangerFullAccess,
             permission_profile: codex_protocol::models::PermissionProfile::Disabled,
             cwd,
             ephemeral: false,
