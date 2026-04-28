@@ -2,6 +2,7 @@ use crate::bespoke_event_handling::apply_bespoke_event_handling;
 use crate::bespoke_event_handling::maybe_emit_hook_prompt_item_completed;
 use crate::command_exec::CommandExecManager;
 use crate::command_exec::StartCommandExecParams;
+use crate::config_api::UserConfigReloader;
 use crate::config_manager::ConfigManager;
 use crate::error_code::INPUT_TOO_LARGE_ERROR_CODE;
 use crate::error_code::INTERNAL_ERROR_CODE;
@@ -6443,6 +6444,7 @@ impl CodexMessageProcessor {
         match result {
             Ok(()) => {
                 self.clear_plugin_related_caches();
+                self.thread_manager.reload_user_config().await;
                 self.outgoing
                     .send_response(
                         request_id,
