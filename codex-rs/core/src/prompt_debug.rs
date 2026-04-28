@@ -29,7 +29,7 @@ pub async fn build_prompt_input(
     config.ephemeral = true;
 
     let auth_manager =
-        AuthManager::shared_from_config(&config, /*enable_codex_api_key_env*/ false);
+        AuthManager::shared_from_config(&config, /*enable_codex_api_key_env*/ false).await;
 
     let local_runtime_paths = ExecServerRuntimePaths::from_optional_paths(
         config.codex_self_exe.clone(),
@@ -97,63 +97,4 @@ pub(crate) async fn build_prompt_input_from_session(
     );
 
     Ok(prompt.get_formatted_input())
-}
-
-#[cfg(test)]
-mod tests {
-    use codex_protocol::models::ContentItem;
-    use codex_protocol::models::ResponseItem;
-    use codex_protocol::user_input::UserInput;
-    use codex_utils_absolute_path::AbsolutePathBuf;
-    use pretty_assertions::assert_eq;
-
-    use crate::config::test_config;
-
-    use super::build_prompt_input;
-
-    #[tokio::test]
-    async fn build_prompt_input_includes_context_and_user_message() {
-        let codex_home = tempfile::tempdir().expect("create codex home");
-        let cwd = tempfile::tempdir().expect("create cwd");
-        let mut config = test_config().await;
-        config.codex_home =
-            AbsolutePathBuf::from_absolute_path(codex_home.path()).expect("codex home is absolute");
-        config.cwd = AbsolutePathBuf::try_from(cwd.path().to_path_buf()).expect("absolute cwd");
-        config.user_instructions = Some("Project-specific test instructions".to_string());
-
-        let input = build_prompt_input(
-            config,
-            vec![UserInput::Text {
-                text: "hello from debug prompt".to_string(),
-                text_elements: Vec::new(),
-            }],
-        )
-        .await
-        .expect("build prompt input");
-
-        let expected_user_message = ResponseItem::Message {
-            id: None,
-            role: "user".to_string(),
-            content: vec![ContentItem::InputText {
-                text: "hello from debug prompt".to_string(),
-            }],
-            end_turn: None,
-            phase: None,
-        };
-        assert_eq!(input.last(), Some(&expected_user_message));
-        assert!(input.iter().any(|item| {
-            let ResponseItem::Message { content, .. } = item else {
-                return false;
-            };
-
-            content.iter().any(|content_item| {
-                let (ContentItem::InputText { text } | ContentItem::OutputText { text }) =
-                    content_item
-                else {
-                    return false;
-                };
-                text.contains("Project-specific test instructions")
-            })
-        }));
-    }
 }
