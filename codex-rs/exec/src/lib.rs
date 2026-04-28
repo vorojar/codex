@@ -1050,6 +1050,7 @@ fn session_configured_from_thread_response(
         permission_profile: permission_profile.unwrap_or_else(|| {
             PermissionProfile::from_legacy_sandbox_policy_for_cwd(&sandbox_policy, cwd.as_path())
         }),
+        active_permission_profile: None,
         cwd,
         reasoning_effort,
         history_log_id: 0,

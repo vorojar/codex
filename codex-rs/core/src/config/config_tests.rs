@@ -906,6 +906,14 @@ async fn default_permissions_profile_populates_runtime_sandbox_policy() -> std::
         config.permissions.network_sandbox_policy(),
         NetworkSandboxPolicy::Restricted
     );
+    assert_eq!(
+        config
+            .permissions
+            .active_permission_profile()
+            .as_ref()
+            .map(|active| active.id.as_str()),
+        Some("workspace")
+    );
     Ok(())
 }
 
@@ -927,6 +935,7 @@ async fn permission_profile_override_populates_runtime_permissions() -> std::io:
     .await?;
 
     assert_eq!(config.permissions.permission_profile(), permission_profile);
+    assert_eq!(config.permissions.active_permission_profile(), None);
     assert_eq!(
         &config.legacy_sandbox_policy(),
         &SandboxPolicy::DangerFullAccess
@@ -1266,6 +1275,14 @@ async fn default_permissions_can_select_builtin_profile_without_permissions_tabl
     .await?;
 
     let policy = config.permissions.file_system_sandbox_policy();
+    assert_eq!(
+        config
+            .permissions
+            .active_permission_profile()
+            .as_ref()
+            .map(|active| active.id.as_str()),
+        Some(":workspace")
+    );
     assert!(
         policy.can_write_path_with_cwd(cwd.path(), cwd.path()),
         "expected :workspace to allow writing the project root, policy: {policy:?}"
@@ -1302,6 +1319,18 @@ async fn empty_config_defaults_to_builtin_profile_for_trusted_project() -> std::
     .await?;
 
     let policy = config.permissions.file_system_sandbox_policy();
+    assert_eq!(
+        config
+            .permissions
+            .active_permission_profile()
+            .as_ref()
+            .map(|active| active.id.as_str()),
+        Some(if cfg!(target_os = "windows") {
+            ":read-only"
+        } else {
+            ":workspace"
+        })
+    );
     if cfg!(target_os = "windows") {
         assert!(
             !policy.can_write_path_with_cwd(cwd.path(), cwd.path()),
@@ -1482,6 +1511,14 @@ async fn default_permissions_can_select_builtin_no_sandbox_profile() -> std::io:
     assert_eq!(
         config.permissions.permission_profile(),
         PermissionProfile::Disabled
+    );
+    assert_eq!(
+        config
+            .permissions
+            .active_permission_profile()
+            .as_ref()
+            .map(|active| active.id.as_str()),
+        Some(":danger-no-sandbox")
     );
     Ok(())
 }
@@ -5893,6 +5930,7 @@ async fn test_precedence_fixture_with_o3_profile() -> std::io::Result<()> {
             permissions: Permissions {
                 approval_policy: Constrained::allow_any(AskForApproval::Never),
                 permission_profile: Constrained::allow_any(PermissionProfile::read_only()),
+                active_permission_profile: None,
                 network: None,
                 allow_login_shell: true,
                 shell_environment_policy: ShellEnvironmentPolicy::default(),
@@ -6087,6 +6125,7 @@ async fn test_precedence_fixture_with_gpt3_profile() -> std::io::Result<()> {
         permissions: Permissions {
             approval_policy: Constrained::allow_any(AskForApproval::UnlessTrusted),
             permission_profile: Constrained::allow_any(PermissionProfile::read_only()),
+            active_permission_profile: None,
             network: None,
             allow_login_shell: true,
             shell_environment_policy: ShellEnvironmentPolicy::default(),
@@ -6235,6 +6274,7 @@ async fn test_precedence_fixture_with_zdr_profile() -> std::io::Result<()> {
         permissions: Permissions {
             approval_policy: Constrained::allow_any(AskForApproval::OnFailure),
             permission_profile: Constrained::allow_any(PermissionProfile::read_only()),
+            active_permission_profile: None,
             network: None,
             allow_login_shell: true,
             shell_environment_policy: ShellEnvironmentPolicy::default(),
@@ -6368,6 +6408,7 @@ async fn test_precedence_fixture_with_gpt5_profile() -> std::io::Result<()> {
         permissions: Permissions {
             approval_policy: Constrained::allow_any(AskForApproval::OnFailure),
             permission_profile: Constrained::allow_any(PermissionProfile::read_only()),
+            active_permission_profile: None,
             network: None,
             allow_login_shell: true,
             shell_environment_policy: ShellEnvironmentPolicy::default(),

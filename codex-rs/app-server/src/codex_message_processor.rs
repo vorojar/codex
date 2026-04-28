@@ -2798,6 +2798,9 @@ impl CodexMessageProcessor {
             );
             let permission_profile =
                 thread_response_permission_profile(config_snapshot.permission_profile);
+            let active_permission_profile = thread_response_active_permission_profile(
+                config_snapshot.active_permission_profile,
+            );
 
             let response = ThreadStartResponse {
                 thread: thread.clone(),
@@ -2810,6 +2813,7 @@ impl CodexMessageProcessor {
                 approvals_reviewer: config_snapshot.approvals_reviewer.into(),
                 sandbox,
                 permission_profile,
+                active_permission_profile,
                 reasoning_effort: config_snapshot.reasoning_effort,
             };
             Ok::<_, JSONRPCErrorError>((response, thread_started_notification(thread)))
@@ -4348,7 +4352,10 @@ impl CodexMessageProcessor {
                     config_snapshot.cwd.as_path(),
                 );
                 let permission_profile =
-                    thread_response_permission_profile(config_snapshot.permission_profile.clone());
+                    thread_response_permission_profile(config_snapshot.permission_profile);
+                let active_permission_profile = thread_response_active_permission_profile(
+                    config_snapshot.active_permission_profile,
+                );
 
                 let response = ThreadResumeResponse {
                     thread,
@@ -4361,6 +4368,7 @@ impl CodexMessageProcessor {
                     approvals_reviewer: session_configured.approvals_reviewer.into(),
                     sandbox,
                     permission_profile,
+                    active_permission_profile,
                     reasoning_effort: session_configured.reasoning_effort,
                 };
                 self.analytics_events_client.track_response(
@@ -4949,6 +4957,9 @@ impl CodexMessageProcessor {
             );
             let permission_profile =
                 thread_response_permission_profile(config_snapshot.permission_profile);
+            let active_permission_profile = thread_response_active_permission_profile(
+                config_snapshot.active_permission_profile,
+            );
 
             let response = ThreadForkResponse {
                 thread: thread.clone(),
@@ -4961,6 +4972,7 @@ impl CodexMessageProcessor {
                 approvals_reviewer: session_configured.approvals_reviewer.into(),
                 sandbox,
                 permission_profile,
+                active_permission_profile,
                 reasoning_effort: session_configured.reasoning_effort,
             };
 
@@ -8223,6 +8235,7 @@ async fn handle_pending_thread_resume_request(
         approval_policy,
         approvals_reviewer,
         permission_profile,
+        active_permission_profile,
         cwd,
         reasoning_effort,
         ..
@@ -8230,6 +8243,8 @@ async fn handle_pending_thread_resume_request(
     let instruction_sources = pending.instruction_sources;
     let sandbox = thread_response_sandbox_policy(&permission_profile, cwd.as_path());
     let permission_profile = thread_response_permission_profile(permission_profile);
+    let active_permission_profile =
+        thread_response_active_permission_profile(active_permission_profile);
 
     let response = ThreadResumeResponse {
         thread,
@@ -8242,6 +8257,7 @@ async fn handle_pending_thread_resume_request(
         approvals_reviewer: approvals_reviewer.into(),
         sandbox,
         permission_profile,
+        active_permission_profile,
         reasoning_effort,
     };
     let token_usage_thread = pending.include_turns.then(|| response.thread.clone());
@@ -9371,6 +9387,12 @@ fn thread_response_permission_profile(
     Some(permission_profile.into())
 }
 
+fn thread_response_active_permission_profile(
+    active_permission_profile: Option<codex_protocol::models::ActivePermissionProfile>,
+) -> Option<codex_app_server_protocol::ActivePermissionProfile> {
+    active_permission_profile.map(Into::into)
+}
+
 fn thread_response_sandbox_policy(
     permission_profile: &codex_protocol::models::PermissionProfile,
     cwd: &Path,
@@ -10165,6 +10187,7 @@ mod tests {
             approval_policy: codex_protocol::protocol::AskForApproval::OnRequest,
             approvals_reviewer: codex_protocol::config_types::ApprovalsReviewer::User,
             permission_profile: codex_protocol::models::PermissionProfile::Disabled,
+            active_permission_profile: None,
             cwd,
             ephemeral: false,
             reasoning_effort: None,

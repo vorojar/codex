@@ -130,6 +130,26 @@
       "title": "AccountUpdatedNotification",
       "type": "object"
     },
+    "ActivePermissionProfile": {
+      "properties": {
+        "extends": {
+          "default": null,
+          "description": "Parent profile identifier once permissions profiles support inheritance. This is currently always `null`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "id": {
+          "description": "Identifier from `default_permissions`, such as a built-in `:workspace` profile or a user-defined `[permissions.<id>]` profile.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id"
+      ],
+      "type": "object"
+    },
     "AddCreditsNudgeCreditType": {
       "enum": [
         "credits",
@@ -6310,6 +6330,7 @@
         "project",
         "mdm",
         "sessionFlags",
+        "plugin",
         "legacyManagedConfigFile",
         "legacyManagedConfigMdm",
         "unknown"
