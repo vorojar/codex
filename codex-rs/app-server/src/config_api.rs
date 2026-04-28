@@ -307,7 +307,6 @@ fn map_hooks_requirements_to_api(hooks: ManagedHooksRequirementsToml) -> Managed
         session_start,
         user_prompt_submit,
         stop,
-        config: _,
     } = hooks;
 
     ManagedHooksRequirements {

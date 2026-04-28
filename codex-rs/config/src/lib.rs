@@ -73,6 +73,7 @@ pub use hook_config::HookConfig;
 pub use hook_config::HookEventsToml;
 pub use hook_config::HookHandlerConfig;
 pub use hook_config::HooksFile;
+pub use hook_config::HooksToml;
 pub use hook_config::ManagedHooksRequirementsToml;
 pub use hook_config::MatcherGroup;
 pub use host_name::host_name;

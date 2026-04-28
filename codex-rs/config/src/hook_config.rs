@@ -13,6 +13,14 @@ pub struct HooksFile {
 }
 
 #[derive(Debug, Default, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct HooksToml {
+    #[serde(flatten)]
+    pub events: HookEventsToml,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub config: Vec<HookConfig>,
+}
+
+#[derive(Debug, Default, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct HookEventsToml {
     #[serde(rename = "PreToolUse", default)]
     pub pre_tool_use: Vec<MatcherGroup>,
@@ -26,8 +34,6 @@ pub struct HookEventsToml {
     pub user_prompt_submit: Vec<MatcherGroup>,
     #[serde(rename = "Stop", default)]
     pub stop: Vec<MatcherGroup>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub config: Vec<HookConfig>,
 }
 
 #[derive(Debug, Default, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -46,7 +52,6 @@ impl HookEventsToml {
             session_start,
             user_prompt_submit,
             stop,
-            config: _,
         } = self;
         pre_tool_use.is_empty()
             && permission_request.is_empty()
@@ -64,7 +69,6 @@ impl HookEventsToml {
             session_start,
             user_prompt_submit,
             stop,
-            config: _,
         } = self;
         [
             pre_tool_use,

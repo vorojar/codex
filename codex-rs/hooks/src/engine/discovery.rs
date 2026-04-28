@@ -16,11 +16,11 @@ use codex_plugin::PluginHookSource;
 use codex_utils_absolute_path::AbsolutePathBuf;
 use serde::Deserialize;
 use std::collections::HashMap;
+use std::collections::HashSet;
 
 use super::ConfiguredHandler;
 use super::HookListEntry;
-use crate::config_rules::HookConfigRules;
-use crate::config_rules::hook_config_rules_from_stack;
+use crate::config_rules::disabled_hook_keys_from_stack;
 use crate::events::common::matcher_pattern_for_event;
 use crate::events::common::validate_matcher_pattern;
 use codex_protocol::protocol::HookHandlerType;
@@ -38,7 +38,7 @@ struct HookHandlerSource<'a> {
     key_prefix: String,
     is_managed: bool,
     source: HookSource,
-    hook_config_rules: &'a HookConfigRules,
+    disabled_hook_keys: &'a HashSet<String>,
     env: HashMap<String, String>,
     plugin_id: Option<String>,
 }
@@ -52,7 +52,7 @@ pub(crate) fn discover_handlers(
     let mut hook_entries = Vec::new();
     let mut warnings = plugin_hook_load_warnings;
     let mut display_order = 0_i64;
-    let hook_config_rules = hook_config_rules_from_stack(config_layer_stack);
+    let disabled_hook_keys = disabled_hook_keys_from_stack(config_layer_stack);
 
     if let Some(config_layer_stack) = config_layer_stack {
         append_managed_requirement_handlers(
@@ -61,7 +61,7 @@ pub(crate) fn discover_handlers(
             &mut warnings,
             &mut display_order,
             config_layer_stack,
-            &hook_config_rules,
+            &disabled_hook_keys,
         );
 
         for layer in config_layer_stack.get_layers(
@@ -95,7 +95,7 @@ pub(crate) fn discover_handlers(
                         key_prefix: format!("file:{}", source_path.display()),
                         is_managed: false,
                         source: hook_source,
-                        hook_config_rules: &hook_config_rules,
+                        disabled_hook_keys: &disabled_hook_keys,
                         env: HashMap::new(),
                         plugin_id: None,
                     },
@@ -111,7 +111,7 @@ pub(crate) fn discover_handlers(
         &mut warnings,
         &mut display_order,
         plugin_hook_sources,
-        &hook_config_rules,
+        &disabled_hook_keys,
     );
 
     DiscoveryResult {
@@ -127,7 +127,7 @@ fn append_managed_requirement_handlers(
     warnings: &mut Vec<String>,
     display_order: &mut i64,
     config_layer_stack: &ConfigLayerStack,
-    hook_config_rules: &HookConfigRules,
+    disabled_hook_keys: &HashSet<String>,
 ) {
     let Some(managed_hooks) = config_layer_stack.requirements().managed_hooks.as_ref() else {
         return;
@@ -147,7 +147,7 @@ fn append_managed_requirement_handlers(
             key_prefix: format!("managed:{}", source_path.display()),
             is_managed: true,
             source: hook_source_for_requirement_source(managed_hooks.source.as_ref()),
-            hook_config_rules,
+            disabled_hook_keys,
             env: HashMap::new(),
             plugin_id: None,
         },
@@ -161,7 +161,7 @@ fn append_plugin_hook_sources(
     warnings: &mut Vec<String>,
     display_order: &mut i64,
     plugin_hook_sources: Vec<PluginHookSource>,
-    hook_config_rules: &HookConfigRules,
+    disabled_hook_keys: &HashSet<String>,
 ) {
     // TODO(abhinav): check enabled/trusted state here before plugin hooks become runnable.
     for source in plugin_hook_sources {
@@ -193,7 +193,7 @@ fn append_plugin_hook_sources(
                 key_prefix: format!("plugin:{plugin_id}:{source_relative_path}"),
                 is_managed: false,
                 source: HookSource::Plugin,
-                hook_config_rules,
+                disabled_hook_keys,
                 env,
                 plugin_id: Some(plugin_id),
             },
@@ -296,7 +296,7 @@ fn load_toml_hooks_from_layer(
 ) -> Option<(AbsolutePathBuf, HookEventsToml)> {
     let source_path = config_toml_source_path(layer);
     let hook_value = layer.config.get("hooks")?.clone();
-    let parsed = match HookEventsToml::deserialize(hook_value) {
+    let parsed = match codex_config::HooksToml::deserialize(hook_value) {
         Ok(parsed) => parsed,
         Err(err) => {
             warnings.push(format!(
@@ -307,7 +307,7 @@ fn load_toml_hooks_from_layer(
         }
     };
 
-    (!parsed.is_empty()).then_some((source_path, parsed))
+    (!parsed.events.is_empty()).then_some((source_path, parsed.events))
 }
 
 fn config_toml_source_path(layer: &ConfigLayerEntry) -> AbsolutePathBuf {
@@ -414,7 +414,7 @@ fn append_matcher_groups(
                         group_index,
                         handler_index
                     );
-                    let enabled = source.is_managed || source.hook_config_rules.is_enabled(&key);
+                    let enabled = source.is_managed || !source.disabled_hook_keys.contains(&key);
                     hook_entries.push(HookListEntry {
                         key,
                         event_name,
@@ -511,7 +511,6 @@ mod tests {
 
     use super::ConfiguredHandler;
     use super::append_matcher_groups;
-    use crate::config_rules::HookConfigRules;
     use codex_config::HookHandlerConfig;
     use codex_config::MatcherGroup;
 
@@ -525,14 +524,14 @@ mod tests {
 
     fn hook_handler_source<'a>(
         path: &'a AbsolutePathBuf,
-        hook_config_rules: &'a HookConfigRules,
+        disabled_hook_keys: &'a std::collections::HashSet<String>,
     ) -> super::HookHandlerSource<'a> {
         super::HookHandlerSource {
             path,
             key_prefix: format!("file:{}", path.display()),
             is_managed: false,
             source: hook_source(),
-            hook_config_rules,
+            disabled_hook_keys,
             env: std::collections::HashMap::new(),
             plugin_id: None,
         }
@@ -556,14 +555,14 @@ mod tests {
         let mut warnings = Vec::new();
         let mut display_order = 0;
         let source_path = source_path();
-        let hook_config_rules = HookConfigRules::default();
+        let disabled_hook_keys = std::collections::HashSet::new();
 
         append_matcher_groups(
             &mut handlers,
             &mut Vec::new(),
             &mut warnings,
             &mut display_order,
-            hook_handler_source(&source_path, &hook_config_rules),
+            hook_handler_source(&source_path, &disabled_hook_keys),
             HookEventName::UserPromptSubmit,
             vec![command_group(Some("["))],
         );
@@ -592,14 +591,14 @@ mod tests {
         let mut warnings = Vec::new();
         let mut display_order = 0;
         let source_path = source_path();
-        let hook_config_rules = HookConfigRules::default();
+        let disabled_hook_keys = std::collections::HashSet::new();
 
         append_matcher_groups(
             &mut handlers,
             &mut Vec::new(),
             &mut warnings,
             &mut display_order,
-            hook_handler_source(&source_path, &hook_config_rules),
+            hook_handler_source(&source_path, &disabled_hook_keys),
             HookEventName::PreToolUse,
             vec![command_group(Some("^Bash$"))],
         );
@@ -628,14 +627,14 @@ mod tests {
         let mut warnings = Vec::new();
         let mut display_order = 0;
         let source_path = source_path();
-        let hook_config_rules = HookConfigRules::default();
+        let disabled_hook_keys = std::collections::HashSet::new();
 
         append_matcher_groups(
             &mut handlers,
             &mut Vec::new(),
             &mut warnings,
             &mut display_order,
-            hook_handler_source(&source_path, &hook_config_rules),
+            hook_handler_source(&source_path, &disabled_hook_keys),
             HookEventName::PreToolUse,
             vec![command_group(Some("*"))],
         );
@@ -651,14 +650,14 @@ mod tests {
         let mut warnings = Vec::new();
         let mut display_order = 0;
         let source_path = source_path();
-        let hook_config_rules = HookConfigRules::default();
+        let disabled_hook_keys = std::collections::HashSet::new();
 
         append_matcher_groups(
             &mut handlers,
             &mut Vec::new(),
             &mut warnings,
             &mut display_order,
-            hook_handler_source(&source_path, &hook_config_rules),
+            hook_handler_source(&source_path, &disabled_hook_keys),
             HookEventName::PostToolUse,
             vec![command_group(Some("Edit|Write"))],
         );
