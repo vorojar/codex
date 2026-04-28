@@ -4488,7 +4488,6 @@ pub struct HookMetadata {
     pub key: String,
     pub event_name: HookEventName,
     pub handler_type: HookHandlerType,
-    pub is_managed: bool,
     pub matcher: Option<String>,
     pub command: Option<String>,
     pub timeout_sec: u64,
@@ -4498,6 +4497,7 @@ pub struct HookMetadata {
     pub plugin_id: Option<String>,
     pub display_order: i64,
     pub enabled: bool,
+    pub is_managed: bool,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, JsonSchema, TS)]

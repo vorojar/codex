@@ -419,7 +419,6 @@ fn append_matcher_groups(
                         key,
                         event_name,
                         handler_type: HookHandlerType::Command,
-                        is_managed: source.is_managed,
                         matcher: matcher.map(ToOwned::to_owned),
                         command: Some(command.clone()),
                         timeout_sec,
@@ -429,6 +428,7 @@ fn append_matcher_groups(
                         plugin_id: source.plugin_id.clone(),
                         display_order: *display_order,
                         enabled,
+                        is_managed: source.is_managed,
                     });
                     if enabled {
                         handlers.push(ConfiguredHandler {

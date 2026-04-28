@@ -275,7 +275,9 @@ fn user_disablement_filters_non_managed_hooks_but_not_managed_hooks() {
         super::discovery::discover_handlers(Some(&config_layer_stack), Vec::new(), Vec::new());
     assert_eq!(discovered.hook_entries.len(), 2);
     assert_eq!(discovered.hook_entries[0].enabled, true);
+    assert!(discovered.hook_entries[0].is_managed);
     assert_eq!(discovered.hook_entries[1].enabled, false);
+    assert!(!discovered.hook_entries[1].is_managed);
 }
 
 #[test]
