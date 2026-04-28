@@ -1932,6 +1932,7 @@ async fn try_run_sampling_request(
                     )
                     .await
                 {
+                    crate::guardian::enqueue_proactive_guardian_trunk_sync(&sess, &turn_context);
                     continue;
                 }
 
@@ -1968,6 +1969,7 @@ async fn try_run_sampling_request(
                         Ok(output_result) => output_result,
                         Err(err) => break Err(err),
                     };
+                crate::guardian::enqueue_proactive_guardian_trunk_sync(&sess, &turn_context);
                 if let Some(tool_future) = output_result.tool_future {
                     in_flight.push_back(tool_future);
                 }
