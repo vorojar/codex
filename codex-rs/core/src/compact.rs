@@ -4,7 +4,7 @@ use std::time::Instant;
 use crate::Prompt;
 use crate::client::ModelClientSession;
 use crate::client_common::ResponseEvent;
-use crate::hook_runtime::PostCompactHookResult;
+use crate::hook_runtime::PreCompactHookOutcome;
 use crate::hook_runtime::run_post_compact_hooks;
 use crate::hook_runtime::run_pre_compact_hooks;
 #[cfg(test)]
@@ -30,6 +30,7 @@ use codex_protocol::models::ContentItem;
 use codex_protocol::models::ResponseInputItem;
 use codex_protocol::models::ResponseItem;
 use codex_protocol::protocol::CompactedItem;
+use codex_protocol::protocol::ErrorEvent;
 use codex_protocol::protocol::EventMsg;
 use codex_protocol::protocol::TurnStartedEvent;
 use codex_protocol::protocol::WarningEvent;
@@ -72,7 +73,7 @@ pub(crate) async fn run_inline_auto_compact_task(
     initial_context_injection: InitialContextInjection,
     reason: CompactionReason,
     phase: CompactionPhase,
-) -> CodexResult<()> {
+) -> CodexResult<bool> {
     let prompt = turn_context.compact_prompt().to_string();
     let input = vec![UserInput::Text {
         text: prompt,
@@ -89,8 +90,7 @@ pub(crate) async fn run_inline_auto_compact_task(
         reason,
         phase,
     )
-    .await?;
-    Ok(())
+    .await
 }
 
 pub(crate) async fn run_compact_task(
@@ -114,7 +114,8 @@ pub(crate) async fn run_compact_task(
         CompactionReason::UserRequested,
         CompactionPhase::StandaloneTurn,
     )
-    .await
+    .await?;
+    Ok(())
 }
 
 async fn run_compact_task_inner(
@@ -125,7 +126,7 @@ async fn run_compact_task_inner(
     trigger: CompactionTrigger,
     reason: CompactionReason,
     phase: CompactionPhase,
-) -> CodexResult<()> {
+) -> CodexResult<bool> {
     let attempt = CompactionAnalyticsAttempt::begin(
         sess.as_ref(),
         turn_context.as_ref(),
@@ -135,15 +136,25 @@ async fn run_compact_task_inner(
         phase,
     )
     .await;
-    run_pre_compact_hooks(
-        &sess,
-        &turn_context,
-        trigger,
-        reason,
-        phase,
-        CompactionImplementation::Responses,
-    )
-    .await;
+    let pre_compact_outcome =
+        run_pre_compact_hooks(&sess, &turn_context, trigger, String::new()).await;
+    if let PreCompactHookOutcome::Blocked { reason } = pre_compact_outcome {
+        let error = format!("Compaction blocked by PreCompact hook: {reason}");
+        if matches!(trigger, CompactionTrigger::Manual) {
+            sess.send_event(
+                &turn_context,
+                EventMsg::Error(ErrorEvent {
+                    message: error.clone(),
+                    codex_error_info: None,
+                }),
+            )
+            .await;
+        }
+        attempt
+            .track(sess.as_ref(), CompactionStatus::Interrupted, Some(error))
+            .await;
+        return Ok(false);
+    }
     let result = run_compact_task_inner_impl(
         Arc::clone(&sess),
         Arc::clone(&turn_context),
@@ -153,21 +164,11 @@ async fn run_compact_task_inner(
     .await;
     let status = compaction_status_from_result(&result);
     let error = result.as_ref().err().map(ToString::to_string);
-    run_post_compact_hooks(
-        &sess,
-        &turn_context,
-        trigger,
-        reason,
-        phase,
-        CompactionImplementation::Responses,
-        PostCompactHookResult {
-            status,
-            error: error.clone(),
-        },
-    )
-    .await;
+    if let Ok(compact_summary) = &result {
+        run_post_compact_hooks(&sess, &turn_context, trigger, compact_summary.clone()).await;
+    }
     attempt.track(sess.as_ref(), status, error).await;
-    result
+    result.map(|_| true)
 }
 
 async fn run_compact_task_inner_impl(
@@ -175,7 +176,7 @@ async fn run_compact_task_inner_impl(
     turn_context: Arc<TurnContext>,
     input: Vec<UserInput>,
     initial_context_injection: InitialContextInjection,
-) -> CodexResult<()> {
+) -> CodexResult<String> {
     let compaction_item = TurnItem::ContextCompaction(ContextCompactionItem::new());
     sess.emit_turn_item_started(&turn_context, &compaction_item)
         .await;
@@ -312,7 +313,7 @@ async fn run_compact_task_inner_impl(
         message: "Heads up: Long threads and multiple compactions can cause the model to be less accurate. Start a new thread when possible to keep threads small and targeted.".to_string(),
     });
     sess.send_event(&turn_context, warning).await;
-    Ok(())
+    Ok(summary_suffix)
 }
 
 pub(crate) struct CompactionAnalyticsAttempt {

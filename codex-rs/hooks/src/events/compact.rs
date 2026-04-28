@@ -27,9 +27,7 @@ pub struct PreCompactRequest {
     pub model: String,
     pub permission_mode: String,
     pub trigger: String,
-    pub reason: String,
-    pub phase: String,
-    pub implementation: String,
+    pub custom_instructions: String,
 }
 
 #[derive(Debug, Clone)]
@@ -41,11 +39,7 @@ pub struct PostCompactRequest {
     pub model: String,
     pub permission_mode: String,
     pub trigger: String,
-    pub reason: String,
-    pub phase: String,
-    pub implementation: String,
-    pub status: String,
-    pub error: Option<String>,
+    pub compact_summary: String,
 }
 
 #[derive(Debug)]
@@ -53,14 +47,21 @@ pub struct StatelessHookOutcome {
     pub hook_events: Vec<HookCompletedEvent>,
 }
 
+#[derive(Debug)]
+pub struct PreCompactOutcome {
+    pub hook_events: Vec<HookCompletedEvent>,
+    pub should_block: bool,
+    pub block_reason: Option<String>,
+}
+
 pub(crate) fn preview_pre(
     handlers: &[ConfiguredHandler],
-    _request: &PreCompactRequest,
+    request: &PreCompactRequest,
 ) -> Vec<HookRunSummary> {
     dispatcher::select_handlers(
         handlers,
         HookEventName::PreCompact,
-        /*matcher_input*/ None,
+        Some(request.trigger.as_str()),
     )
     .into_iter()
     .map(|handler| dispatcher::running_summary(&handler))
@@ -71,27 +72,31 @@ pub(crate) async fn run_pre(
     handlers: &[ConfiguredHandler],
     shell: &CommandShell,
     request: PreCompactRequest,
-) -> StatelessHookOutcome {
+) -> PreCompactOutcome {
     let matched = dispatcher::select_handlers(
         handlers,
         HookEventName::PreCompact,
-        /*matcher_input*/ None,
+        Some(request.trigger.as_str()),
     );
     if matched.is_empty() {
-        return StatelessHookOutcome {
+        return PreCompactOutcome {
             hook_events: Vec::new(),
+            should_block: false,
+            block_reason: None,
         };
     }
 
     let input_json = match pre_command_input_json(&request) {
         Ok(input_json) => input_json,
         Err(error) => {
-            return StatelessHookOutcome {
+            return PreCompactOutcome {
                 hook_events: common::serialization_failure_hook_events(
                     matched,
                     Some(request.turn_id),
                     format!("failed to serialize pre compact hook input: {error}"),
                 ),
+                should_block: false,
+                block_reason: None,
             };
         }
     };
@@ -105,8 +110,14 @@ pub(crate) async fn run_pre(
         parse_pre_completed,
     )
     .await;
-    StatelessHookOutcome {
+    let should_block = results.iter().any(|result| result.data.should_block);
+    let block_reason = results
+        .iter()
+        .find_map(|result| result.data.block_reason.clone());
+    PreCompactOutcome {
         hook_events: results.into_iter().map(|result| result.completed).collect(),
+        should_block,
+        block_reason,
     }
 }
 
@@ -120,20 +131,18 @@ fn pre_command_input_json(request: &PreCompactRequest) -> Result<String, serde_j
         model: request.model.clone(),
         permission_mode: request.permission_mode.clone(),
         trigger: request.trigger.clone(),
-        reason: request.reason.clone(),
-        phase: request.phase.clone(),
-        implementation: request.implementation.clone(),
+        custom_instructions: request.custom_instructions.clone(),
     })
 }
 
 pub(crate) fn preview_post(
     handlers: &[ConfiguredHandler],
-    _request: &PostCompactRequest,
+    request: &PostCompactRequest,
 ) -> Vec<HookRunSummary> {
     dispatcher::select_handlers(
         handlers,
         HookEventName::PostCompact,
-        /*matcher_input*/ None,
+        Some(request.trigger.as_str()),
     )
     .into_iter()
     .map(|handler| dispatcher::running_summary(&handler))
@@ -148,7 +157,7 @@ pub(crate) async fn run_post(
     let matched = dispatcher::select_handlers(
         handlers,
         HookEventName::PostCompact,
-        /*matcher_input*/ None,
+        Some(request.trigger.as_str()),
     );
     if matched.is_empty() {
         return StatelessHookOutcome {
@@ -193,29 +202,121 @@ fn post_command_input_json(request: &PostCompactRequest) -> Result<String, serde
         model: request.model.clone(),
         permission_mode: request.permission_mode.clone(),
         trigger: request.trigger.clone(),
-        reason: request.reason.clone(),
-        phase: request.phase.clone(),
-        implementation: request.implementation.clone(),
-        status: request.status.clone(),
-        error: crate::schema::NullableString::from_string(request.error.clone()),
+        compact_summary: request.compact_summary.clone(),
     })
 }
 
 #[derive(Default)]
-struct CompactHandlerData;
+struct CompactHandlerData {
+    should_block: bool,
+    block_reason: Option<String>,
+}
 
 fn parse_pre_completed(
     handler: &ConfiguredHandler,
     run_result: CommandRunResult,
     turn_id: Option<String>,
 ) -> dispatcher::ParsedHandler<CompactHandlerData> {
-    parse_completed(
-        handler,
-        run_result,
-        turn_id,
-        "PreCompact",
-        output_parser::parse_pre_compact,
-    )
+    let mut entries = Vec::new();
+    let mut status = HookRunStatus::Completed;
+    let mut should_block = false;
+    let mut block_reason = None;
+
+    match run_result.error.as_deref() {
+        Some(error) => {
+            status = HookRunStatus::Failed;
+            entries.push(HookOutputEntry {
+                kind: HookOutputEntryKind::Error,
+                text: error.to_string(),
+            });
+        }
+        None => match run_result.exit_code {
+            Some(0) => {
+                let trimmed_stdout = run_result.stdout.trim();
+                if trimmed_stdout.is_empty() {
+                } else if let Some(parsed) = output_parser::parse_pre_compact(&run_result.stdout) {
+                    if let Some(system_message) = parsed.universal.system_message {
+                        entries.push(HookOutputEntry {
+                            kind: HookOutputEntryKind::Warning,
+                            text: system_message,
+                        });
+                    }
+                    if let Some(invalid_reason) = parsed.invalid_reason {
+                        status = HookRunStatus::Failed;
+                        entries.push(HookOutputEntry {
+                            kind: HookOutputEntryKind::Error,
+                            text: invalid_reason,
+                        });
+                    } else if let Some(invalid_block_reason) = parsed.invalid_block_reason {
+                        status = HookRunStatus::Failed;
+                        entries.push(HookOutputEntry {
+                            kind: HookOutputEntryKind::Error,
+                            text: invalid_block_reason,
+                        });
+                    } else if parsed.should_block {
+                        status = HookRunStatus::Blocked;
+                        should_block = true;
+                        if let Some(reason) = parsed.reason {
+                            block_reason = Some(reason.clone());
+                            entries.push(HookOutputEntry {
+                                kind: HookOutputEntryKind::Feedback,
+                                text: reason,
+                            });
+                        }
+                    }
+                } else {
+                    status = HookRunStatus::Failed;
+                    entries.push(HookOutputEntry {
+                        kind: HookOutputEntryKind::Error,
+                        text: "hook returned invalid PreCompact hook JSON output".to_string(),
+                    });
+                }
+            }
+            Some(2) => {
+                if let Some(reason) = common::trimmed_non_empty(&run_result.stderr) {
+                    status = HookRunStatus::Blocked;
+                    should_block = true;
+                    block_reason = Some(reason.clone());
+                    entries.push(HookOutputEntry {
+                        kind: HookOutputEntryKind::Feedback,
+                        text: reason,
+                    });
+                } else {
+                    status = HookRunStatus::Failed;
+                    entries.push(HookOutputEntry {
+                        kind: HookOutputEntryKind::Error,
+                        text: "PreCompact hook exited with code 2 but did not write a blocking reason to stderr".to_string(),
+                    });
+                }
+            }
+            Some(code) => {
+                status = HookRunStatus::Failed;
+                entries.push(HookOutputEntry {
+                    kind: HookOutputEntryKind::Error,
+                    text: common::trimmed_non_empty(&run_result.stderr)
+                        .unwrap_or_else(|| format!("hook exited with code {code}")),
+                });
+            }
+            None => {
+                status = HookRunStatus::Failed;
+                entries.push(HookOutputEntry {
+                    kind: HookOutputEntryKind::Error,
+                    text: "hook process terminated without an exit code".to_string(),
+                });
+            }
+        },
+    }
+
+    dispatcher::ParsedHandler {
+        completed: HookCompletedEvent {
+            turn_id,
+            run: dispatcher::completed_summary(handler, &run_result, status, entries),
+        },
+        data: CompactHandlerData {
+            should_block,
+            block_reason,
+        },
+    }
 }
 
 fn parse_post_completed(
@@ -299,7 +400,7 @@ fn parse_completed(
             turn_id,
             run: dispatcher::completed_summary(handler, &run_result, status, entries),
         },
-        data: CompactHandlerData,
+        data: CompactHandlerData::default(),
     }
 }
 
@@ -338,15 +439,13 @@ mod tests {
                 "model": "gpt-test",
                 "permission_mode": "default",
                 "trigger": "manual",
-                "reason": "user_requested",
-                "phase": "manual",
-                "implementation": "responses",
+                "custom_instructions": "",
             })
         );
     }
 
     #[test]
-    fn post_compact_input_includes_result_metadata() {
+    fn post_compact_input_includes_summary() {
         let input_json = post_command_input_json(&post_request()).expect("serialize command input");
         let input: serde_json::Value =
             serde_json::from_str(&input_json).expect("parse command input");
@@ -362,17 +461,40 @@ mod tests {
                 "model": "gpt-test",
                 "permission_mode": "default",
                 "trigger": "manual",
-                "reason": "user_requested",
-                "phase": "manual",
-                "implementation": "responses",
-                "status": "failed",
-                "error": "summary request failed",
+                "compact_summary": "summary request complete",
             })
         );
     }
 
     #[test]
-    fn stateless_output_cannot_stop_compaction() {
+    fn block_decision_stops_compaction() {
+        let parsed = parse_pre_completed(
+            &handler(HookEventName::PreCompact),
+            run_result(
+                Some(0),
+                r#"{"decision":"block","reason":"policy blocked compaction"}"#,
+                "",
+            ),
+            Some("turn-1".to_string()),
+        );
+
+        assert_eq!(parsed.completed.run.status, HookRunStatus::Blocked);
+        assert_eq!(parsed.data.should_block, true);
+        assert_eq!(
+            parsed.data.block_reason,
+            Some("policy blocked compaction".to_string())
+        );
+        assert_eq!(
+            parsed.completed.run.entries,
+            vec![HookOutputEntry {
+                kind: HookOutputEntryKind::Feedback,
+                text: "policy blocked compaction".to_string(),
+            }]
+        );
+    }
+
+    #[test]
+    fn continue_false_is_not_a_compaction_block_decision() {
         let parsed = parse_pre_completed(
             &handler(HookEventName::PreCompact),
             run_result(Some(0), r#"{"continue":false,"stopReason":"nope"}"#, ""),
@@ -399,9 +521,7 @@ mod tests {
             model: "gpt-test".to_string(),
             permission_mode: "default".to_string(),
             trigger: "manual".to_string(),
-            reason: "user_requested".to_string(),
-            phase: "manual".to_string(),
-            implementation: "responses".to_string(),
+            custom_instructions: String::new(),
         }
     }
 
@@ -415,11 +535,7 @@ mod tests {
             model: "gpt-test".to_string(),
             permission_mode: "default".to_string(),
             trigger: "manual".to_string(),
-            reason: "user_requested".to_string(),
-            phase: "manual".to_string(),
-            implementation: "responses".to_string(),
-            status: "failed".to_string(),
-            error: Some("summary request failed".to_string()),
+            compact_summary: "summary request complete".to_string(),
         }
     }
 

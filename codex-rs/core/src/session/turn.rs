@@ -487,7 +487,7 @@ pub(crate) async fn run_turn(
 
                 // as long as compaction works well in getting us way below the token limit, we shouldn't worry about being in an infinite loop.
                 if token_limit_reached && needs_follow_up {
-                    if run_auto_compact(
+                    let compacted = match run_auto_compact(
                         &sess,
                         &turn_context,
                         InitialContextInjection::BeforeLastUserMessage,
@@ -495,11 +495,13 @@ pub(crate) async fn run_turn(
                         CompactionPhase::MidTurn,
                     )
                     .await
-                    .is_err()
                     {
-                        return None;
+                        Ok(compacted) => compacted,
+                        Err(_) => return None,
+                    };
+                    if compacted {
+                        client_session.reset_websocket_session();
                     }
-                    client_session.reset_websocket_session();
                     can_drain_pending_input = !model_needs_follow_up;
                     continue;
                 }
@@ -723,7 +725,7 @@ async fn run_pre_sampling_compact(
         .unwrap_or(i64::MAX);
     // Compact if the total usage tokens are greater than the auto compact limit
     if total_usage_tokens >= auto_compact_limit {
-        run_auto_compact(
+        let compacted = run_auto_compact(
             sess,
             turn_context,
             InitialContextInjection::DoNotInject,
@@ -731,7 +733,7 @@ async fn run_pre_sampling_compact(
             CompactionPhase::PreTurn,
         )
         .await?;
-        pre_sampling_compacted = true;
+        pre_sampling_compacted |= compacted;
     }
     Ok(pre_sampling_compacted)
 }
@@ -770,15 +772,14 @@ async fn maybe_run_previous_model_inline_compact(
         && previous_model_turn_context.model_info.slug != turn_context.model_info.slug
         && old_context_window > new_context_window;
     if should_run {
-        run_auto_compact(
+        return run_auto_compact(
             sess,
             &previous_model_turn_context,
             InitialContextInjection::DoNotInject,
             CompactionReason::ModelDownshift,
             CompactionPhase::PreTurn,
         )
-        .await?;
-        return Ok(true);
+        .await;
     }
     Ok(false)
 }
@@ -789,8 +790,8 @@ async fn run_auto_compact(
     initial_context_injection: InitialContextInjection,
     reason: CompactionReason,
     phase: CompactionPhase,
-) -> CodexResult<()> {
-    if should_use_remote_compact_task(turn_context.provider.info()) {
+) -> CodexResult<bool> {
+    let compacted = if should_use_remote_compact_task(turn_context.provider.info()) {
         run_inline_remote_auto_compact_task(
             Arc::clone(sess),
             Arc::clone(turn_context),
@@ -798,7 +799,7 @@ async fn run_auto_compact(
             reason,
             phase,
         )
-        .await?;
+        .await?
     } else {
         run_inline_auto_compact_task(
             Arc::clone(sess),
@@ -807,9 +808,9 @@ async fn run_auto_compact(
             reason,
             phase,
         )
-        .await?;
-    }
-    Ok(())
+        .await?
+    };
+    Ok(compacted)
 }
 
 pub(super) fn collect_explicit_app_ids_from_skill_items(

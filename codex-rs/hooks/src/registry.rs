@@ -4,6 +4,7 @@ use tokio::process::Command;
 use crate::engine::ClaudeHooksEngine;
 use crate::engine::CommandShell;
 use crate::events::compact::PostCompactRequest;
+use crate::events::compact::PreCompactOutcome;
 use crate::events::compact::PreCompactRequest;
 use crate::events::compact::StatelessHookOutcome;
 use crate::events::permission_request::PermissionRequestOutcome;
@@ -152,7 +153,7 @@ impl Hooks {
         self.engine.preview_pre_compact(request)
     }
 
-    pub async fn run_pre_compact(&self, request: PreCompactRequest) -> StatelessHookOutcome {
+    pub async fn run_pre_compact(&self, request: PreCompactRequest) -> PreCompactOutcome {
         self.engine.run_pre_compact(request).await
     }
 

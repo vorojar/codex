@@ -2,10 +2,6 @@ use std::future::Future;
 use std::sync::Arc;
 use std::time::Duration;
 
-use codex_analytics::CompactionImplementation;
-use codex_analytics::CompactionPhase;
-use codex_analytics::CompactionReason;
-use codex_analytics::CompactionStatus;
 use codex_analytics::CompactionTrigger;
 use codex_analytics::HookRunFact;
 use codex_analytics::build_track_events_context;
@@ -259,10 +255,8 @@ pub(crate) async fn run_pre_compact_hooks(
     sess: &Arc<Session>,
     turn_context: &Arc<TurnContext>,
     trigger: CompactionTrigger,
-    reason: CompactionReason,
-    phase: CompactionPhase,
-    implementation: CompactionImplementation,
-) {
+    custom_instructions: String,
+) -> PreCompactHookOutcome {
     let request = codex_hooks::PreCompactRequest {
         session_id: sess.conversation_id,
         turn_id: turn_context.sub_id.clone(),
@@ -271,30 +265,34 @@ pub(crate) async fn run_pre_compact_hooks(
         model: turn_context.model_info.slug.clone(),
         permission_mode: hook_permission_mode(turn_context),
         trigger: compaction_trigger_label(trigger).to_string(),
-        reason: compaction_reason_label(reason).to_string(),
-        phase: compaction_phase_label(phase).to_string(),
-        implementation: compaction_implementation_label(implementation).to_string(),
+        custom_instructions,
     };
     let preview_runs = sess.hooks().preview_pre_compact(&request);
     emit_hook_started_events(sess, turn_context, preview_runs).await;
 
     let outcome = sess.hooks().run_pre_compact(request).await;
     emit_hook_completed_events(sess, turn_context, outcome.hook_events).await;
+    if outcome.should_block {
+        PreCompactHookOutcome::Blocked {
+            reason: outcome
+                .block_reason
+                .unwrap_or_else(|| "compaction blocked by hook".to_string()),
+        }
+    } else {
+        PreCompactHookOutcome::Continue
+    }
 }
 
-pub(crate) struct PostCompactHookResult {
-    pub(crate) status: CompactionStatus,
-    pub(crate) error: Option<String>,
+pub(crate) enum PreCompactHookOutcome {
+    Continue,
+    Blocked { reason: String },
 }
 
 pub(crate) async fn run_post_compact_hooks(
     sess: &Arc<Session>,
     turn_context: &Arc<TurnContext>,
     trigger: CompactionTrigger,
-    reason: CompactionReason,
-    phase: CompactionPhase,
-    implementation: CompactionImplementation,
-    result: PostCompactHookResult,
+    compact_summary: String,
 ) {
     let request = codex_hooks::PostCompactRequest {
         session_id: sess.conversation_id,
@@ -304,11 +302,7 @@ pub(crate) async fn run_post_compact_hooks(
         model: turn_context.model_info.slug.clone(),
         permission_mode: hook_permission_mode(turn_context),
         trigger: compaction_trigger_label(trigger).to_string(),
-        reason: compaction_reason_label(reason).to_string(),
-        phase: compaction_phase_label(phase).to_string(),
-        implementation: compaction_implementation_label(implementation).to_string(),
-        status: compaction_status_label(result.status).to_string(),
-        error: result.error,
+        compact_summary,
     };
     let preview_runs = sess.hooks().preview_post_compact(&request);
     emit_hook_started_events(sess, turn_context, preview_runs).await;
@@ -576,37 +570,6 @@ fn compaction_trigger_label(value: CompactionTrigger) -> &'static str {
     match value {
         CompactionTrigger::Manual => "manual",
         CompactionTrigger::Auto => "auto",
-    }
-}
-
-fn compaction_reason_label(value: CompactionReason) -> &'static str {
-    match value {
-        CompactionReason::UserRequested => "user_requested",
-        CompactionReason::ContextLimit => "context_limit",
-        CompactionReason::ModelDownshift => "model_downshift",
-    }
-}
-
-fn compaction_implementation_label(value: CompactionImplementation) -> &'static str {
-    match value {
-        CompactionImplementation::Responses => "responses",
-        CompactionImplementation::ResponsesCompact => "responses_compact",
-    }
-}
-
-fn compaction_phase_label(value: CompactionPhase) -> &'static str {
-    match value {
-        CompactionPhase::StandaloneTurn => "standalone_turn",
-        CompactionPhase::PreTurn => "pre_turn",
-        CompactionPhase::MidTurn => "mid_turn",
-    }
-}
-
-fn compaction_status_label(value: CompactionStatus) -> &'static str {
-    match value {
-        CompactionStatus::Completed => "completed",
-        CompactionStatus::Failed => "failed",
-        CompactionStatus::Interrupted => "interrupted",
     }
 }
 

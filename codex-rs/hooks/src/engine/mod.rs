@@ -10,6 +10,7 @@ use codex_protocol::protocol::HookSource;
 use codex_utils_absolute_path::AbsolutePathBuf;
 
 use crate::events::compact::PostCompactRequest;
+use crate::events::compact::PreCompactOutcome;
 use crate::events::compact::PreCompactRequest;
 use crate::events::compact::StatelessHookOutcome;
 use crate::events::permission_request::PermissionRequestOutcome;
@@ -157,7 +158,7 @@ impl ClaudeHooksEngine {
         crate::events::compact::preview_pre(&self.handlers, request)
     }
 
-    pub(crate) async fn run_pre_compact(&self, request: PreCompactRequest) -> StatelessHookOutcome {
+    pub(crate) async fn run_pre_compact(&self, request: PreCompactRequest) -> PreCompactOutcome {
         crate::events::compact::run_pre(&self.handlers, &self.shell, request).await
     }
 

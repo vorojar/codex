@@ -10,18 +10,14 @@
     }
   },
   "properties": {
+    "custom_instructions": {
+      "type": "string"
+    },
     "cwd": {
       "type": "string"
     },
     "hook_event_name": {
       "const": "PreCompact",
-      "type": "string"
-    },
-    "implementation": {
-      "enum": [
-        "responses",
-        "responses_compact"
-      ],
       "type": "string"
     },
     "model": {
@@ -34,22 +30,6 @@
         "plan",
         "dontAsk",
         "bypassPermissions"
-      ],
-      "type": "string"
-    },
-    "phase": {
-      "enum": [
-        "standalone_turn",
-        "pre_turn",
-        "mid_turn"
-      ],
-      "type": "string"
-    },
-    "reason": {
-      "enum": [
-        "user_requested",
-        "context_limit",
-        "model_downshift"
       ],
       "type": "string"
     },
@@ -72,13 +52,11 @@
     }
   },
   "required": [
+    "custom_instructions",
     "cwd",
     "hook_event_name",
-    "implementation",
     "model",
     "permission_mode",
-    "phase",
-    "reason",
     "session_id",
     "transcript_path",
     "trigger",

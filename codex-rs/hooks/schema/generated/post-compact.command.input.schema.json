@@ -10,21 +10,14 @@
     }
   },
   "properties": {
+    "compact_summary": {
+      "type": "string"
+    },
     "cwd": {
       "type": "string"
     },
-    "error": {
-      "$ref": "#/definitions/NullableString"
-    },
     "hook_event_name": {
       "const": "PostCompact",
-      "type": "string"
-    },
-    "implementation": {
-      "enum": [
-        "responses",
-        "responses_compact"
-      ],
       "type": "string"
     },
     "model": {
@@ -40,31 +33,7 @@
       ],
       "type": "string"
     },
-    "phase": {
-      "enum": [
-        "standalone_turn",
-        "pre_turn",
-        "mid_turn"
-      ],
-      "type": "string"
-    },
-    "reason": {
-      "enum": [
-        "user_requested",
-        "context_limit",
-        "model_downshift"
-      ],
-      "type": "string"
-    },
     "session_id": {
-      "type": "string"
-    },
-    "status": {
-      "enum": [
-        "completed",
-        "failed",
-        "interrupted"
-      ],
       "type": "string"
     },
     "transcript_path": {
@@ -83,16 +52,12 @@
     }
   },
   "required": [
+    "compact_summary",
     "cwd",
-    "error",
     "hook_event_name",
-    "implementation",
     "model",
     "permission_mode",
-    "phase",
-    "reason",
     "session_id",
-    "status",
     "transcript_path",
     "trigger",
     "turn_id"

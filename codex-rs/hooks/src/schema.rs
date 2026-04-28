@@ -139,6 +139,12 @@ pub(crate) struct PermissionRequestCommandOutputWire {
 pub(crate) struct PreCompactCommandOutputWire {
     #[serde(flatten)]
     pub universal: HookUniversalOutputWire,
+    #[serde(default)]
+    pub decision: Option<BlockDecisionWire>,
+    /// Claude requires `reason` when `decision` is `block`; we enforce that
+    /// semantic rule during output parsing rather than in the JSON schema.
+    #[serde(default)]
+    pub reason: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
@@ -309,12 +315,7 @@ pub(crate) struct PreCompactCommandInput {
     pub permission_mode: String,
     #[schemars(schema_with = "compaction_trigger_schema")]
     pub trigger: String,
-    #[schemars(schema_with = "compaction_reason_schema")]
-    pub reason: String,
-    #[schemars(schema_with = "compaction_phase_schema")]
-    pub phase: String,
-    #[schemars(schema_with = "compaction_implementation_schema")]
-    pub implementation: String,
+    pub custom_instructions: String,
 }
 
 #[derive(Debug, Clone, Serialize, JsonSchema)]
@@ -333,15 +334,7 @@ pub(crate) struct PostCompactCommandInput {
     pub permission_mode: String,
     #[schemars(schema_with = "compaction_trigger_schema")]
     pub trigger: String,
-    #[schemars(schema_with = "compaction_reason_schema")]
-    pub reason: String,
-    #[schemars(schema_with = "compaction_phase_schema")]
-    pub phase: String,
-    #[schemars(schema_with = "compaction_implementation_schema")]
-    pub implementation: String,
-    #[schemars(schema_with = "compaction_status_schema")]
-    pub status: String,
-    pub error: NullableString,
+    pub compact_summary: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
@@ -652,22 +645,6 @@ fn session_start_source_schema(_gen: &mut SchemaGenerator) -> Schema {
 
 fn compaction_trigger_schema(_gen: &mut SchemaGenerator) -> Schema {
     string_enum_schema(&["manual", "auto"])
-}
-
-fn compaction_reason_schema(_gen: &mut SchemaGenerator) -> Schema {
-    string_enum_schema(&["user_requested", "context_limit", "model_downshift"])
-}
-
-fn compaction_phase_schema(_gen: &mut SchemaGenerator) -> Schema {
-    string_enum_schema(&["standalone_turn", "pre_turn", "mid_turn"])
-}
-
-fn compaction_implementation_schema(_gen: &mut SchemaGenerator) -> Schema {
-    string_enum_schema(&["responses", "responses_compact"])
-}
-
-fn compaction_status_schema(_gen: &mut SchemaGenerator) -> Schema {
-    string_enum_schema(&["completed", "failed", "interrupted"])
 }
 
 fn string_const_schema(value: &str) -> Schema {

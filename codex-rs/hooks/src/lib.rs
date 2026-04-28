@@ -6,6 +6,7 @@ mod schema;
 mod types;
 
 pub use events::compact::PostCompactRequest;
+pub use events::compact::PreCompactOutcome;
 pub use events::compact::PreCompactRequest;
 pub use events::compact::StatelessHookOutcome;
 pub use events::permission_request::PermissionRequestDecision;
