@@ -259,33 +259,22 @@ async fn plugin_install_writes_remote_plugin_to_cloud_and_cache() -> Result<()> 
 }
 
 #[tokio::test]
-async fn config_batch_write_enables_remote_plugin_via_remote_install_and_cache() -> Result<()> {
+async fn config_batch_write_enables_remote_plugin_via_remote_enable_without_cache_install()
+-> Result<()> {
     let codex_home = TempDir::new()?;
     let server = MockServer::start().await;
     let installed_path = codex_home
         .path()
         .join("plugins/cache/chatgpt-global/linear/1.2.3");
-    let bundle_url = mount_remote_plugin_bundle(
-        &server,
-        /*status_code*/ 200,
-        remote_plugin_bundle_tar_gz_bytes("linear")?,
-    )
-    .await;
-    configure_remote_plugin_test(codex_home.path(), &server)?;
-    mount_remote_plugin_marketplaces_for_toggle(&server, REMOTE_PLUGIN_ID, /*enabled*/ false).await;
-    mount_remote_plugin_detail(&server, REMOTE_PLUGIN_ID, "1.2.3", Some(&bundle_url)).await;
-    mount_remote_plugin_install_after_cache_write(
-        &server,
-        REMOTE_PLUGIN_ID,
+    std::fs::create_dir_all(installed_path.join(".codex-plugin"))?;
+    std::fs::write(
         installed_path.join(".codex-plugin/plugin.json"),
-    )
-    .await;
+        r#"{"name":"linear"}"#,
+    )?;
+    configure_remote_plugin_test(codex_home.path(), &server)?;
+    mount_remote_plugin_enablement(&server, REMOTE_PLUGIN_ID, /*enabled*/ true).await;
 
-    let mut mcp = McpProcess::new_with_env(
-        codex_home.path(),
-        &[(TEST_ALLOW_HTTP_REMOTE_PLUGIN_BUNDLE_DOWNLOADS, Some("1"))],
-    )
-    .await?;
+    let mut mcp = McpProcess::new(codex_home.path()).await?;
     timeout(DEFAULT_TIMEOUT, mcp.initialize()).await??;
 
     let request_id =
@@ -302,8 +291,15 @@ async fn config_batch_write_enables_remote_plugin_via_remote_install_and_cache()
     wait_for_remote_plugin_request_count(
         &server,
         "POST",
-        &format!("/ps/plugins/{REMOTE_PLUGIN_ID}/install"),
+        &format!("/backend-api/plugins/{REMOTE_PLUGIN_ID}/enable"),
         /*expected_count*/ 1,
+    )
+    .await?;
+    wait_for_remote_plugin_request_count(
+        &server,
+        "POST",
+        &format!("/backend-api/ps/plugins/{REMOTE_PLUGIN_ID}/install"),
+        /*expected_count*/ 0,
     )
     .await?;
     assert!(installed_path.join(".codex-plugin/plugin.json").is_file());
@@ -312,7 +308,7 @@ async fn config_batch_write_enables_remote_plugin_via_remote_install_and_cache()
 }
 
 #[tokio::test]
-async fn config_batch_write_disables_remote_plugin_via_remote_uninstall_and_cache_removal()
+async fn config_batch_write_disables_remote_plugin_via_remote_disable_without_cache_removal()
 -> Result<()> {
     let codex_home = TempDir::new()?;
     let server = MockServer::start().await;
@@ -325,20 +321,7 @@ async fn config_batch_write_disables_remote_plugin_via_remote_uninstall_and_cach
         r#"{"name":"linear"}"#,
     )?;
     configure_remote_plugin_test(codex_home.path(), &server)?;
-    Mock::given(method("POST"))
-        .and(path(format!(
-            "/backend-api/plugins/{REMOTE_PLUGIN_ID}/uninstall"
-        )))
-        .and(header("authorization", "Bearer chatgpt-token"))
-        .and(header("chatgpt-account-id", "account-123"))
-        .respond_with(
-            ResponseTemplate::new(200)
-                .set_body_string(format!(r#"{{"id":"{REMOTE_PLUGIN_ID}","enabled":false}}"#)),
-        )
-        .mount(&server)
-        .await;
-    mount_remote_plugin_detail_without_download_urls(&server, REMOTE_PLUGIN_ID, "1.2.3").await;
-    mount_empty_remote_installed_plugins(&server).await;
+    mount_remote_plugin_enablement(&server, REMOTE_PLUGIN_ID, /*enabled*/ false).await;
 
     let mut mcp = McpProcess::new(codex_home.path()).await?;
     timeout(DEFAULT_TIMEOUT, mcp.initialize()).await??;
@@ -357,16 +340,18 @@ async fn config_batch_write_disables_remote_plugin_via_remote_uninstall_and_cach
     wait_for_remote_plugin_request_count(
         &server,
         "POST",
-        &format!("/plugins/{REMOTE_PLUGIN_ID}/uninstall"),
+        &format!("/backend-api/plugins/{REMOTE_PLUGIN_ID}/disable"),
         /*expected_count*/ 1,
     )
     .await?;
-    assert!(
-        !codex_home
-            .path()
-            .join("plugins/cache/chatgpt-global/linear")
-            .exists()
-    );
+    wait_for_remote_plugin_request_count(
+        &server,
+        "POST",
+        &format!("/backend-api/plugins/{REMOTE_PLUGIN_ID}/uninstall"),
+        /*expected_count*/ 0,
+    )
+    .await?;
+    assert!(installed_path.join(".codex-plugin/plugin.json").is_file());
     assert_config_does_not_contain_remote_plugin_id(codex_home.path(), REMOTE_PLUGIN_ID)?;
     Ok(())
 }
@@ -1379,115 +1364,23 @@ async fn mount_empty_remote_installed_plugins(server: &MockServer) {
         .await;
 }
 
-async fn mount_remote_plugin_marketplaces_for_toggle(
+async fn mount_remote_plugin_enablement(
     server: &MockServer,
     remote_plugin_id: &str,
     enabled: bool,
 ) {
-    let global_directory_body = format!(
-        r#"{{
-  "plugins": [
-    {{
-      "id": "{remote_plugin_id}",
-      "name": "linear",
-      "scope": "GLOBAL",
-      "installation_policy": "AVAILABLE",
-      "authentication_policy": "ON_USE",
-      "release": {{
-        "display_name": "Linear",
-        "description": "Track work in Linear",
-        "app_ids": [],
-        "interface": {{
-          "short_description": "Plan and track work"
-        }},
-        "skills": []
-      }}
-    }}
-  ],
-  "pagination": {{
-    "limit": 50,
-    "next_page_token": null
-  }}
-}}"#
-    );
-    let global_installed_body = if enabled {
-        format!(
-            r#"{{
-  "plugins": [
-    {{
-      "id": "{remote_plugin_id}",
-      "name": "linear",
-      "scope": "GLOBAL",
-      "installation_policy": "AVAILABLE",
-      "authentication_policy": "ON_USE",
-      "release": {{
-        "display_name": "Linear",
-        "description": "Track work in Linear",
-        "app_ids": [],
-        "interface": {{
-          "short_description": "Plan and track work"
-        }},
-        "skills": []
-      }},
-      "enabled": true,
-      "disabled_skill_names": []
-    }}
-  ],
-  "pagination": {{
-    "limit": 50,
-    "next_page_token": null
-  }}
-}}"#
-        )
-    } else {
-        empty_remote_plugin_page_body()
-    };
-
-    Mock::given(method("GET"))
-        .and(path("/backend-api/ps/plugins/list"))
-        .and(query_param("scope", "GLOBAL"))
-        .and(query_param("limit", "200"))
+    let action = if enabled { "enable" } else { "disable" };
+    Mock::given(method("POST"))
+        .and(path(format!(
+            "/backend-api/plugins/{remote_plugin_id}/{action}"
+        )))
         .and(header("authorization", "Bearer chatgpt-token"))
         .and(header("chatgpt-account-id", "account-123"))
-        .respond_with(ResponseTemplate::new(200).set_body_string(global_directory_body))
+        .respond_with(ResponseTemplate::new(200).set_body_string(format!(
+            r#"{{"id":"{remote_plugin_id}","enabled":{enabled}}}"#
+        )))
         .mount(server)
         .await;
-    Mock::given(method("GET"))
-        .and(path("/backend-api/ps/plugins/list"))
-        .and(query_param("scope", "WORKSPACE"))
-        .and(query_param("limit", "200"))
-        .and(header("authorization", "Bearer chatgpt-token"))
-        .and(header("chatgpt-account-id", "account-123"))
-        .respond_with(ResponseTemplate::new(200).set_body_string(empty_remote_plugin_page_body()))
-        .mount(server)
-        .await;
-    Mock::given(method("GET"))
-        .and(path("/backend-api/ps/plugins/installed"))
-        .and(query_param("scope", "GLOBAL"))
-        .and(header("authorization", "Bearer chatgpt-token"))
-        .and(header("chatgpt-account-id", "account-123"))
-        .respond_with(ResponseTemplate::new(200).set_body_string(global_installed_body))
-        .mount(server)
-        .await;
-    Mock::given(method("GET"))
-        .and(path("/backend-api/ps/plugins/installed"))
-        .and(query_param("scope", "WORKSPACE"))
-        .and(header("authorization", "Bearer chatgpt-token"))
-        .and(header("chatgpt-account-id", "account-123"))
-        .respond_with(ResponseTemplate::new(200).set_body_string(empty_remote_plugin_page_body()))
-        .mount(server)
-        .await;
-}
-
-fn empty_remote_plugin_page_body() -> String {
-    r#"{
-  "plugins": [],
-  "pagination": {
-    "limit": 50,
-    "next_page_token": null
-  }
-}"#
-    .to_string()
 }
 
 async fn mount_remote_plugin_install(server: &MockServer, remote_plugin_id: &str) {
@@ -1501,40 +1394,6 @@ async fn mount_remote_plugin_install(server: &MockServer, remote_plugin_id: &str
             ResponseTemplate::new(200)
                 .set_body_string(format!(r#"{{"id":"{remote_plugin_id}","enabled":true}}"#)),
         )
-        .mount(server)
-        .await;
-}
-
-async fn mount_remote_plugin_detail_without_download_urls(
-    server: &MockServer,
-    remote_plugin_id: &str,
-    release_version: &str,
-) {
-    let detail_body = format!(
-        r#"{{
-  "id": "{remote_plugin_id}",
-  "name": "linear",
-  "scope": "GLOBAL",
-  "installation_policy": "AVAILABLE",
-  "authentication_policy": "ON_USE",
-  "release": {{
-    "version": "{release_version}",
-    "display_name": "Linear",
-    "description": "Track work in Linear",
-    "app_ids": [],
-    "interface": {{
-      "short_description": "Plan and track work"
-    }},
-    "skills": []
-  }}
-}}"#
-    );
-
-    Mock::given(method("GET"))
-        .and(path(format!("/backend-api/ps/plugins/{remote_plugin_id}")))
-        .and(header("authorization", "Bearer chatgpt-token"))
-        .and(header("chatgpt-account-id", "account-123"))
-        .respond_with(ResponseTemplate::new(200).set_body_string(detail_body))
         .mount(server)
         .await;
 }

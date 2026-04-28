@@ -9,28 +9,13 @@ impl CodexMessageProcessor {
         plugin_id: String,
         enabled: bool,
     ) -> Result<(), JSONRPCErrorError> {
-        if enabled {
-            let remote_marketplace_name =
-                self.remote_marketplace_name_for_plugin(&plugin_id).await?;
-            self.remote_plugin_install_response(remote_marketplace_name, plugin_id)
-                .await?;
-        } else {
-            self.remote_plugin_uninstall_response(plugin_id).await?;
-        }
-        Ok(())
-    }
-
-    async fn remote_marketplace_name_for_plugin(
-        &self,
-        plugin_id: &str,
-    ) -> Result<String, JSONRPCErrorError> {
         let config = self.load_latest_config(/*fallback_cwd*/ None).await?;
         if !config.features.enabled(Feature::Plugins)
             || !config.features.enabled(Feature::RemotePlugin)
         {
-            return Err(invalid_request("remote plugin enable is not enabled"));
+            return Err(invalid_request("remote plugin enablement is not enabled"));
         }
-        if plugin_id.is_empty() || !is_valid_remote_plugin_id(plugin_id) {
+        if plugin_id.is_empty() || !is_valid_remote_plugin_id(&plugin_id) {
             return Err(invalid_request(
                 "invalid remote plugin id: only ASCII letters, digits, `_`, `-`, and `~` are allowed",
             ));
@@ -40,23 +25,24 @@ impl CodexMessageProcessor {
         let remote_plugin_service_config = RemotePluginServiceConfig {
             chatgpt_base_url: config.chatgpt_base_url.clone(),
         };
-        let remote_marketplaces = codex_core_plugins::remote::fetch_remote_marketplaces(
+        codex_core_plugins::remote::set_remote_plugin_enabled(
             &remote_plugin_service_config,
             auth.as_ref(),
+            &plugin_id,
+            enabled,
         )
         .await
-        .map_err(|err| remote_plugin_catalog_error_to_jsonrpc(err, "find remote plugin"))?;
+        .map_err(|err| {
+            let context = if enabled {
+                "enable remote plugin"
+            } else {
+                "disable remote plugin"
+            };
+            remote_plugin_catalog_error_to_jsonrpc(err, context)
+        })?;
 
-        remote_marketplaces
-            .into_iter()
-            .find_map(|marketplace| {
-                marketplace
-                    .plugins
-                    .iter()
-                    .any(|plugin| plugin.id == plugin_id)
-                    .then_some(marketplace.name)
-            })
-            .ok_or_else(|| invalid_request(format!("remote plugin `{plugin_id}` was not found")))
+        self.clear_plugin_related_caches();
+        Ok(())
     }
 
     pub(super) async fn plugin_list(

@@ -523,20 +523,25 @@ pub async fn install_remote_plugin(
     let url = format!("{base_url}/ps/plugins/{plugin_id}/install");
     let client = build_reqwest_client();
     let request = authenticated_request(client.post(&url), auth)?;
-    let response: RemotePluginMutationResponse = send_and_decode(request, &url).await?;
-    if response.id != plugin_id {
-        return Err(RemotePluginCatalogError::UnexpectedPluginId {
-            expected: plugin_id.to_string(),
-            actual: response.id,
-        });
-    }
-    if !response.enabled {
-        return Err(RemotePluginCatalogError::UnexpectedEnabledState {
-            plugin_id: plugin_id.to_string(),
-            expected_enabled: true,
-            actual_enabled: response.enabled,
-        });
-    }
+    send_remote_plugin_mutation(request, &url, plugin_id, /*expected_enabled*/ true).await?;
+
+    Ok(())
+}
+
+pub async fn set_remote_plugin_enabled(
+    config: &RemotePluginServiceConfig,
+    auth: Option<&CodexAuth>,
+    plugin_id: &str,
+    enabled: bool,
+) -> Result<(), RemotePluginCatalogError> {
+    let auth = ensure_chatgpt_auth(auth)?;
+
+    let action = if enabled { "enable" } else { "disable" };
+    let base_url = config.chatgpt_base_url.trim_end_matches('/');
+    let url = format!("{base_url}/plugins/{plugin_id}/{action}");
+    let client = build_reqwest_client();
+    let request = authenticated_request(client.post(&url), auth)?;
+    send_remote_plugin_mutation(request, &url, plugin_id, enabled).await?;
 
     Ok(())
 }
@@ -553,20 +558,7 @@ pub async fn uninstall_remote_plugin(
     let url = format!("{base_url}/plugins/{plugin_id}/uninstall");
     let client = build_reqwest_client();
     let request = authenticated_request(client.post(&url), auth)?;
-    let response: RemotePluginMutationResponse = send_and_decode(request, &url).await?;
-    if response.id != plugin_id {
-        return Err(RemotePluginCatalogError::UnexpectedPluginId {
-            expected: plugin_id.to_string(),
-            actual: response.id,
-        });
-    }
-    if response.enabled {
-        return Err(RemotePluginCatalogError::UnexpectedEnabledState {
-            plugin_id: plugin_id.to_string(),
-            expected_enabled: false,
-            actual_enabled: response.enabled,
-        });
-    }
+    send_remote_plugin_mutation(request, &url, plugin_id, /*expected_enabled*/ false).await?;
 
     let remote_detail = match fetch_remote_plugin_detail_by_id(config, auth, plugin_id).await {
         Ok(remote_detail) => Some(remote_detail),
@@ -589,6 +581,30 @@ pub async fn uninstall_remote_plugin(
         ))
     })?
     .map_err(RemotePluginCatalogError::CacheRemove)?;
+
+    Ok(())
+}
+
+async fn send_remote_plugin_mutation(
+    request: RequestBuilder,
+    url: &str,
+    plugin_id: &str,
+    expected_enabled: bool,
+) -> Result<(), RemotePluginCatalogError> {
+    let response: RemotePluginMutationResponse = send_and_decode(request, url).await?;
+    if response.id != plugin_id {
+        return Err(RemotePluginCatalogError::UnexpectedPluginId {
+            expected: plugin_id.to_string(),
+            actual: response.id,
+        });
+    }
+    if response.enabled != expected_enabled {
+        return Err(RemotePluginCatalogError::UnexpectedEnabledState {
+            plugin_id: plugin_id.to_string(),
+            expected_enabled,
+            actual_enabled: response.enabled,
+        });
+    }
 
     Ok(())
 }
