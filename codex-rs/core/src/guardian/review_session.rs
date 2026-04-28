@@ -85,6 +85,7 @@ pub(crate) struct GuardianReviewSessionManager {
 struct GuardianReviewSessionState {
     trunk: Option<Arc<GuardianReviewSession>>,
     ephemeral_reviews: Vec<Arc<GuardianReviewSession>>,
+    is_shutdown: bool,
 }
 
 struct GuardianReviewSession {
@@ -262,6 +263,7 @@ impl GuardianReviewSessionManager {
     pub(crate) async fn shutdown(&self) {
         let (review_session, ephemeral_reviews) = {
             let mut state = self.state.lock().await;
+            state.is_shutdown = true;
             (
                 state.trunk.take(),
                 std::mem::take(&mut state.ephemeral_reviews),
@@ -291,6 +293,12 @@ impl GuardianReviewSessionManager {
         .await
         {
             Ok(mut state) => {
+                if state.is_shutdown {
+                    return (
+                        GuardianReviewSessionOutcome::Aborted,
+                        GuardianReviewAnalyticsResult::without_session(),
+                    );
+                }
                 if let Some(trunk) = state.trunk.as_ref()
                     && trunk.reuse_key != next_reuse_key
                     && trunk.review_lock.try_acquire().is_ok()
@@ -344,7 +352,13 @@ impl GuardianReviewSessionManager {
                 .await
                 {
                     Ok(mut state) => {
-                        if let Some(current_trunk) = state.trunk.as_ref().cloned() {
+                        if state.is_shutdown {
+                            spawned_review_session.shutdown_in_background();
+                            return (
+                                GuardianReviewSessionOutcome::Aborted,
+                                GuardianReviewAnalyticsResult::without_session(),
+                            );
+                        } else if let Some(current_trunk) = state.trunk.as_ref().cloned() {
                             if current_trunk.reuse_key != next_reuse_key
                                 && current_trunk.review_lock.try_acquire().is_ok()
                             {
@@ -493,12 +507,15 @@ impl GuardianReviewSessionManager {
         }
     }
 
-    async fn register_active_ephemeral(&self, review_session: Arc<GuardianReviewSession>) {
-        self.state
-            .lock()
-            .await
-            .ephemeral_reviews
-            .push(review_session);
+    async fn register_active_ephemeral(&self, review_session: Arc<GuardianReviewSession>) -> bool {
+        let mut state = self.state.lock().await;
+        if state.is_shutdown {
+            review_session.shutdown_in_background();
+            false
+        } else {
+            state.ephemeral_reviews.push(review_session);
+            true
+        }
     }
 
     async fn take_active_ephemeral(
@@ -546,8 +563,15 @@ impl GuardianReviewSessionManager {
             }
             Err(outcome) => return (outcome, GuardianReviewAnalyticsResult::without_session()),
         };
-        self.register_active_ephemeral(Arc::clone(&review_session))
-            .await;
+        if !self
+            .register_active_ephemeral(Arc::clone(&review_session))
+            .await
+        {
+            return (
+                GuardianReviewSessionOutcome::Aborted,
+                GuardianReviewAnalyticsResult::without_session(),
+            );
+        }
         let mut cleanup =
             EphemeralReviewCleanup::new(Arc::clone(&self.state), Arc::clone(&review_session));
 
