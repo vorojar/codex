@@ -38,10 +38,11 @@ struct HookHandlerSource<'a> {
 pub(crate) fn discover_handlers(
     config_layer_stack: Option<&ConfigLayerStack>,
     plugin_hook_sources: Vec<PluginHookSource>,
+    plugin_hook_load_warnings: Vec<String>,
 ) -> DiscoveryResult {
     let Some(config_layer_stack) = config_layer_stack else {
         let mut handlers = Vec::new();
-        let mut warnings = Vec::new();
+        let mut warnings = plugin_hook_load_warnings;
         let mut display_order = 0_i64;
         append_plugin_hook_sources(
             &mut handlers,
@@ -53,7 +54,7 @@ pub(crate) fn discover_handlers(
     };
 
     let mut handlers = Vec::new();
-    let mut warnings = Vec::new();
+    let mut warnings = plugin_hook_load_warnings;
     let mut display_order = 0_i64;
 
     append_managed_requirement_handlers(
@@ -162,15 +163,20 @@ fn append_plugin_hook_sources(
     for source in plugin_hook_sources {
         let PluginHookSource {
             plugin_root,
+            plugin_data_root,
             source_path,
             hooks,
             ..
         } = source;
         let mut env = HashMap::new();
         let plugin_root_value = plugin_root.display().to_string();
+        let plugin_data_root_value = plugin_data_root.display().to_string();
         env.insert("PLUGIN_ROOT".to_string(), plugin_root_value.clone());
         // For OOTB compat with existing plugins that use this env var.
         env.insert("CLAUDE_PLUGIN_ROOT".to_string(), plugin_root_value);
+        env.insert("PLUGIN_DATA".to_string(), plugin_data_root_value.clone());
+        // For OOTB compat with existing plugins that use this env var.
+        env.insert("CLAUDE_PLUGIN_DATA".to_string(), plugin_data_root_value);
         append_hook_events(
             handlers,
             warnings,
@@ -403,6 +409,9 @@ fn append_group_handlers(
                     ));
                     continue;
                 }
+                let command = source.env.iter().fold(command, |command, (key, value)| {
+                    command.replace(&format!("${{{key}}}"), value)
+                });
                 let timeout_sec = timeout_sec.unwrap_or(600).max(1);
                 handlers.push(ConfiguredHandler {
                     event_name,
