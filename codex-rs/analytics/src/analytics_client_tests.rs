@@ -501,8 +501,8 @@ async fn ingest_turn_prerequisites(
         reducer
             .ingest(
                 client_response_fact(
-                    7,
-                    1,
+                    /*connection_id*/ 7,
+                    /*request_id*/ 1,
                     sample_thread_start_response("thread-2", /*ephemeral*/ false, "gpt-5"),
                 ),
                 out,
@@ -523,7 +523,11 @@ async fn ingest_turn_prerequisites(
         .await;
     reducer
         .ingest(
-            client_response_fact(7, 3, sample_turn_start_response("turn-2")),
+            client_response_fact(
+                /*connection_id*/ 7,
+                /*request_id*/ 3,
+                sample_turn_start_response("turn-2"),
+            ),
             out,
         )
         .await;
@@ -904,8 +908,8 @@ async fn initialize_caches_client_and_thread_lifecycle_publishes_once_initialize
     reducer
         .ingest(
             client_response_fact(
-                7,
-                1,
+                /*connection_id*/ 7,
+                /*request_id*/ 1,
                 sample_thread_start_response("thread-no-client", /*ephemeral*/ false, "gpt-5"),
             ),
             &mut events,
@@ -945,8 +949,8 @@ async fn initialize_caches_client_and_thread_lifecycle_publishes_once_initialize
     reducer
         .ingest(
             client_response_fact(
-                7,
-                2,
+                /*connection_id*/ 7,
+                /*request_id*/ 2,
                 sample_thread_resume_response("thread-1", /*ephemeral*/ true, "gpt-5"),
             ),
             &mut events,
@@ -1013,7 +1017,11 @@ async fn unrelated_client_requests_are_ignored_by_reducer() {
         .await;
     reducer
         .ingest(
-            client_response_fact(7, 3, sample_turn_start_response("turn-2")),
+            client_response_fact(
+                /*connection_id*/ 7,
+                /*request_id*/ 3,
+                sample_turn_start_response("turn-2"),
+            ),
             &mut events,
         )
         .await;
@@ -1033,8 +1041,8 @@ async fn unrelated_client_responses_are_ignored_by_reducer() {
     reducer
         .ingest(
             client_response_fact(
-                7,
-                9,
+                /*connection_id*/ 7,
+                /*request_id*/ 9,
                 ClientResponsePayload::ThreadArchive(ThreadArchiveResponse {}),
             ),
             &mut events,
@@ -1077,8 +1085,8 @@ async fn compaction_event_ingests_custom_fact() {
     reducer
         .ingest(
             client_response_fact(
-                7,
-                2,
+                /*connection_id*/ 7,
+                /*request_id*/ 2,
                 sample_thread_resume_response_with_source(
                     "thread-1",
                     /*ephemeral*/ false,
@@ -1189,8 +1197,8 @@ async fn guardian_review_event_ingests_custom_fact_with_optional_target_item() {
     reducer
         .ingest(
             client_response_fact(
-                7,
-                1,
+                /*connection_id*/ 7,
+                /*request_id*/ 1,
                 sample_thread_start_response("thread-guardian", /*ephemeral*/ false, "gpt-5"),
             ),
             &mut events,
@@ -1967,7 +1975,11 @@ async fn accepted_turn_steer_emits_expected_event() {
         .await;
     reducer
         .ingest(
-            client_response_fact(7, 4, sample_turn_steer_response("turn-2")),
+            client_response_fact(
+                /*connection_id*/ 7,
+                /*request_id*/ 4,
+                sample_turn_steer_response("turn-2"),
+            ),
             &mut out,
         )
         .await;
@@ -2130,7 +2142,11 @@ async fn turn_start_error_response_discards_pending_start_request() {
     // failed turn/start request and attach request-scoped connection metadata.
     reducer
         .ingest(
-            client_response_fact(7, 3, sample_turn_start_response("turn-2")),
+            client_response_fact(
+                /*connection_id*/ 7,
+                /*request_id*/ 3,
+                sample_turn_start_response("turn-2"),
+            ),
             &mut out,
         )
         .await;
@@ -2256,7 +2272,11 @@ async fn accepted_steers_increment_turn_steer_count() {
         .await;
     reducer
         .ingest(
-            client_response_fact(7, 4, sample_turn_steer_response("turn-2")),
+            client_response_fact(
+                /*connection_id*/ 7,
+                /*request_id*/ 4,
+                sample_turn_steer_response("turn-2"),
+            ),
             &mut out,
         )
         .await;
@@ -2299,7 +2319,11 @@ async fn accepted_steers_increment_turn_steer_count() {
         .await;
     reducer
         .ingest(
-            client_response_fact(7, 6, sample_turn_steer_response("turn-2")),
+            client_response_fact(
+                /*connection_id*/ 7,
+                /*request_id*/ 6,
+                sample_turn_steer_response("turn-2"),
+            ),
             &mut out,
         )
         .await;
