@@ -6424,7 +6424,12 @@ impl CodexMessageProcessor {
             return;
         }
 
-        if let Err(error) = validate_hook_config_write_target(&key) {
+        if key.starts_with("managed:") {
+            let error = JSONRPCErrorError {
+                code: INVALID_PARAMS_ERROR_CODE,
+                message: format!("hook {key} is managed and cannot be configured"),
+                data: None,
+            };
             self.outgoing.send_error(request_id, error).await;
             return;
         }
@@ -8675,18 +8680,6 @@ fn hooks_to_info(hooks: &[codex_core::hooks::HookListEntry]) -> Vec<HookMetadata
         .collect()
 }
 
-fn validate_hook_config_write_target(key: &str) -> Result<(), JSONRPCErrorError> {
-    if key.starts_with("managed:") {
-        return Err(JSONRPCErrorError {
-            code: INVALID_PARAMS_ERROR_CODE,
-            message: format!("hook {key} is managed and cannot be configured"),
-            data: None,
-        });
-    }
-
-    Ok(())
-}
-
 fn plugin_skills_to_info(
     skills: &[codex_core::skills::SkillMetadata],
     disabled_skill_paths: &std::collections::HashSet<AbsolutePathBuf>,
@@ -9810,20 +9803,6 @@ mod tests {
     use std::path::PathBuf;
     use std::sync::Arc;
     use tempfile::TempDir;
-
-    #[test]
-    fn managed_hook_config_write_targets_are_rejected() {
-        let key = "managed:/tmp/managed-hooks:pre_tool_use:0:0";
-
-        let err = validate_hook_config_write_target(key)
-            .expect_err("managed hooks should not be user-configurable");
-
-        assert_eq!(err.code, INVALID_PARAMS_ERROR_CODE);
-        assert_eq!(
-            err.message,
-            format!("hook {key} is managed and cannot be configured")
-        );
-    }
 
     #[test]
     fn validate_dynamic_tools_rejects_unsupported_input_schema() {
