@@ -125,6 +125,7 @@ with Path(r"{log_path}").open("a", encoding="utf-8") as handle:
         feature_enabled: true,
         config_layer_stack: Some(config_layer_stack.clone()),
         plugin_hook_sources: Vec::new(),
+        plugin_hook_load_warnings: Vec::new(),
         shell_program: None,
         shell_args: Vec::new(),
     });
@@ -535,6 +536,7 @@ Path(r"{log_path}").write_text(json.dumps({{
         feature_enabled: true,
         config_layer_stack: None,
         plugin_hook_sources,
+        plugin_hook_load_warnings: Vec::new(),
         shell_program: None,
         shell_args: Vec::new(),
     });
