@@ -56,12 +56,6 @@ pub(crate) enum AppLinkSuggestionType {
     Auth,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum AuthUrlRouting {
-    CodexAppsOnly,
-    WithGenericFallback,
-}
-
 struct AuthUrlParts<'a> {
     meta: Option<&'a serde_json::Value>,
     message: &'a str,
@@ -116,7 +110,6 @@ impl AppLinkViewParams {
                 url,
                 elicitation_id,
             },
-            AuthUrlRouting::CodexAppsOnly,
         )
     }
 
@@ -145,7 +138,6 @@ impl AppLinkViewParams {
                 url,
                 elicitation_id,
             },
-            AuthUrlRouting::WithGenericFallback,
         )
     }
 
@@ -154,44 +146,21 @@ impl AppLinkViewParams {
         server_name: &str,
         request_id: McpRequestId,
         parts: AuthUrlParts<'_>,
-        routing: AuthUrlRouting,
     ) -> Option<Self> {
-        let url = validate_auth_url(parts.url, server_name == MCP_CODEX_APPS_SERVER_NAME)?;
-
-        if server_name == MCP_CODEX_APPS_SERVER_NAME
-            && let Some(params) = Self::from_codex_apps_auth_url_parts(
-                thread_id,
-                server_name,
-                request_id.clone(),
-                parts.meta,
-                parts.message,
-                url.as_str(),
-                parts.elicitation_id,
-            )
-        {
-            return Some(params);
+        if server_name != MCP_CODEX_APPS_SERVER_NAME {
+            return None;
         }
 
-        match routing {
-            AuthUrlRouting::CodexAppsOnly => None,
-            AuthUrlRouting::WithGenericFallback => Some(Self {
-                app_id: parts.elicitation_id.to_string(),
-                title: "MCP sign-in required".to_string(),
-                description: Some(format!("Server: {server_name}")),
-                instructions: "Sign in to this MCP server in your browser, then return here."
-                    .to_string(),
-                url: url.to_string(),
-                is_installed: true,
-                is_enabled: true,
-                suggest_reason: Some(parts.message.to_string()),
-                suggestion_type: Some(AppLinkSuggestionType::Auth),
-                elicitation_target: Some(AppLinkElicitationTarget {
-                    thread_id,
-                    server_name: server_name.to_string(),
-                    request_id,
-                }),
-            }),
-        }
+        let url = validate_auth_url(parts.url)?;
+        Self::from_codex_apps_auth_url_parts(
+            thread_id,
+            server_name,
+            request_id,
+            parts.meta,
+            parts.message,
+            url.as_str(),
+            parts.elicitation_id,
+        )
     }
 
     fn from_codex_apps_auth_url_parts(
@@ -251,7 +220,7 @@ impl AppLinkViewParams {
     }
 }
 
-fn validate_auth_url(url: &str, require_chatgpt_host: bool) -> Option<Url> {
+fn validate_auth_url(url: &str) -> Option<Url> {
     let parsed = Url::parse(url).ok()?;
     if parsed.scheme() != "https" || parsed.host_str().is_none() {
         return None;
@@ -259,7 +228,7 @@ fn validate_auth_url(url: &str, require_chatgpt_host: bool) -> Option<Url> {
     if !parsed.username().is_empty() || parsed.password().is_some() {
         return None;
     }
-    if require_chatgpt_host && !is_allowed_chatgpt_auth_host(parsed.host_str()?) {
+    if !is_allowed_chatgpt_auth_host(parsed.host_str()?) {
         return None;
     }
     Some(parsed)
@@ -937,48 +906,12 @@ mod tests {
     }
 
     #[test]
-    fn non_codex_apps_app_server_auth_url_elicitation_uses_generic_app_link() {
+    fn non_codex_apps_app_server_auth_url_elicitation_is_ignored() {
         let target = generic_auth_target();
         let request = codex_app_server_protocol::McpServerElicitationRequest::Url {
             meta: None,
             message: "Sign in to GitHub to continue.".to_string(),
             url: "https://github.example/login/device".to_string(),
-            elicitation_id: "github-auth-123".to_string(),
-        };
-
-        let params = AppLinkViewParams::from_auth_url_app_server_request(
-            target.thread_id,
-            &target.server_name,
-            target.request_id.clone(),
-            &request,
-        )
-        .expect("expected generic MCP auth app link params");
-
-        assert_eq!(
-            params,
-            AppLinkViewParams {
-                app_id: "github-auth-123".to_string(),
-                title: "MCP sign-in required".to_string(),
-                description: Some("Server: github_mcp".to_string()),
-                instructions: "Sign in to this MCP server in your browser, then return here."
-                    .to_string(),
-                url: "https://github.example/login/device".to_string(),
-                is_installed: true,
-                is_enabled: true,
-                suggest_reason: Some("Sign in to GitHub to continue.".to_string()),
-                suggestion_type: Some(AppLinkSuggestionType::Auth),
-                elicitation_target: Some(target),
-            }
-        );
-    }
-
-    #[test]
-    fn app_server_auth_url_elicitation_rejects_non_https_urls() {
-        let target = generic_auth_target();
-        let request = codex_app_server_protocol::McpServerElicitationRequest::Url {
-            meta: None,
-            message: "Sign in to GitHub to continue.".to_string(),
-            url: "http://github.example/login/device".to_string(),
             elicitation_id: "github-auth-123".to_string(),
         };
 
@@ -993,13 +926,50 @@ mod tests {
     }
 
     #[test]
-    fn app_server_auth_url_elicitation_rejects_embedded_credentials() {
-        let target = generic_auth_target();
+    fn codex_apps_app_server_auth_url_elicitation_rejects_non_https_urls() {
+        let target = suggestion_target();
         let request = codex_app_server_protocol::McpServerElicitationRequest::Url {
-            meta: None,
-            message: "Sign in to GitHub to continue.".to_string(),
-            url: "https://user:pass@github.example/login/device".to_string(),
-            elicitation_id: "github-auth-123".to_string(),
+            meta: Some(serde_json::json!({
+                "_codex_apps": {
+                    "connector_auth_failure": {
+                        "is_auth_failure": true,
+                        "connector_id": "connector_calendar",
+                        "connector_name": "Google Calendar",
+                    },
+                },
+            })),
+            message: "Reconnect Google Calendar on ChatGPT.".to_string(),
+            url: "http://chatgpt.com/apps/google-calendar/connector_calendar".to_string(),
+            elicitation_id: "codex_apps_auth_call_123".to_string(),
+        };
+
+        let params = AppLinkViewParams::from_auth_url_app_server_request(
+            target.thread_id,
+            &target.server_name,
+            target.request_id.clone(),
+            &request,
+        );
+
+        assert!(params.is_none());
+    }
+
+    #[test]
+    fn codex_apps_app_server_auth_url_elicitation_rejects_embedded_credentials() {
+        let target = suggestion_target();
+        let request = codex_app_server_protocol::McpServerElicitationRequest::Url {
+            meta: Some(serde_json::json!({
+                "_codex_apps": {
+                    "connector_auth_failure": {
+                        "is_auth_failure": true,
+                        "connector_id": "connector_calendar",
+                        "connector_name": "Google Calendar",
+                    },
+                },
+            })),
+            message: "Reconnect Google Calendar on ChatGPT.".to_string(),
+            url: "https://user:pass@chatgpt.com/apps/google-calendar/connector_calendar"
+                .to_string(),
+            elicitation_id: "codex_apps_auth_call_123".to_string(),
         };
 
         let params = AppLinkViewParams::from_auth_url_app_server_request(

@@ -46,6 +46,7 @@ use codex_mcp::mcp_permission_prompt_is_auto_approved;
 use codex_otel::sanitize_metric_tag_value;
 use codex_protocol::mcp::CallToolResult;
 use codex_protocol::openai_models::InputModality;
+use codex_protocol::protocol::AskForApproval;
 use codex_protocol::protocol::EventMsg;
 use codex_protocol::protocol::McpInvocation;
 use codex_protocol::protocol::McpToolCallBeginEvent;
@@ -534,6 +535,17 @@ async fn maybe_request_codex_apps_auth_elicitation(
 
     if !turn_context.features.enabled(Feature::AuthElicitation) {
         return result;
+    }
+
+    match turn_context.approval_policy.value() {
+        AskForApproval::Never => return result,
+        AskForApproval::Granular(granular_config) if !granular_config.allows_mcp_elicitations() => {
+            return result;
+        }
+        AskForApproval::OnFailure
+        | AskForApproval::OnRequest
+        | AskForApproval::UnlessTrusted
+        | AskForApproval::Granular(_) => {}
     }
 
     let Some(auth_failure) = codex_apps_connector_auth_failure(&result, metadata) else {

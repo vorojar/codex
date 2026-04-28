@@ -2648,7 +2648,7 @@ async fn inactive_thread_permissions_approval_preserves_file_system_permissions(
 }
 
 #[tokio::test]
-async fn inactive_thread_url_elicitation_routes_to_app_link() {
+async fn inactive_thread_custom_server_url_elicitation_is_ignored() {
     let app = make_test_app().await;
     let thread_id = ThreadId::new();
     let request = ServerRequest::McpServerElicitationRequest {
@@ -2666,24 +2666,24 @@ async fn inactive_thread_url_elicitation_routes_to_app_link() {
         },
     };
 
-    let Some(ThreadInteractiveRequest::AppLink(params)) = app
+    let Some(ThreadInteractiveRequest::Approval(ApprovalRequest::McpElicitation {
+        thread_id: actual_thread_id,
+        thread_label,
+        server_name,
+        request_id,
+        message,
+    })) = app
         .interactive_request_for_thread_request(thread_id, &request)
         .await
     else {
-        panic!("expected app link request");
+        panic!("expected generic MCP elicitation approval request");
     };
 
-    assert_eq!(params.title, "MCP sign-in required");
-    assert_eq!(params.description, Some("Server: github_mcp".to_string()));
-    assert_eq!(params.url, "https://github.example/login/device");
-    assert_eq!(
-        params.elicitation_target,
-        Some(crate::bottom_pane::AppLinkElicitationTarget {
-            thread_id,
-            server_name: "github_mcp".to_string(),
-            request_id: codex_protocol::mcp::RequestId::Integer(9),
-        })
-    );
+    assert_eq!(actual_thread_id, thread_id);
+    assert!(thread_label.is_some());
+    assert_eq!(server_name, "github_mcp");
+    assert_eq!(request_id, codex_protocol::mcp::RequestId::Integer(9));
+    assert_eq!(message, "Sign in to GitHub to continue.");
 }
 
 #[tokio::test]
