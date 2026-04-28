@@ -95,6 +95,7 @@ impl ClaudeHooksEngine {
         enabled: bool,
         config_layer_stack: Option<&ConfigLayerStack>,
         plugin_hook_sources: Vec<PluginHookSource>,
+        plugin_hook_load_warnings: Vec<String>,
         shell: CommandShell,
     ) -> Self {
         if !enabled {
@@ -106,7 +107,11 @@ impl ClaudeHooksEngine {
         }
 
         let _ = schema_loader::generated_hook_schemas();
-        let discovered = discovery::discover_handlers(config_layer_stack, plugin_hook_sources);
+        let discovered = discovery::discover_handlers(
+            config_layer_stack,
+            plugin_hook_sources,
+            plugin_hook_load_warnings,
+        );
         Self {
             handlers: discovered.handlers,
             warnings: discovered.warnings,
