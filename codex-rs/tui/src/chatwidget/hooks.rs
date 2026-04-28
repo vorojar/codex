@@ -23,14 +23,16 @@ impl ChatWidget {
 
         match result {
             Ok(response) => {
-                let hooks = response
+                let (hooks, warnings, errors) = response
                     .data
                     .into_iter()
                     .find(|entry| entry.cwd.as_path() == cwd.as_path())
-                    .map(|entry| entry.hooks)
+                    .map(|entry| (entry.hooks, entry.warnings, entry.errors))
                     .unwrap_or_default();
                 self.bottom_pane.show_view(Box::new(HooksBrowserView::new(
                     hooks,
+                    warnings,
+                    errors,
                     self.app_event_tx.clone(),
                 )));
                 self.request_redraw();

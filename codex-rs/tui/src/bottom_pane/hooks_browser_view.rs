@@ -1,3 +1,4 @@
+use codex_app_server_protocol::HookErrorInfo;
 use codex_app_server_protocol::HookEventName;
 use codex_app_server_protocol::HookMetadata;
 use codex_app_server_protocol::HookSource;
@@ -40,6 +41,8 @@ enum HooksBrowserPage {
 
 pub(crate) struct HooksBrowserView {
     hooks: Vec<HookMetadata>,
+    warnings: Vec<String>,
+    errors: Vec<HookErrorInfo>,
     page: HooksBrowserPage,
     state: ScrollState,
     complete: bool,
@@ -47,10 +50,17 @@ pub(crate) struct HooksBrowserView {
 }
 
 impl HooksBrowserView {
-    pub(crate) fn new(mut hooks: Vec<HookMetadata>, app_event_tx: AppEventSender) -> Self {
+    pub(crate) fn new(
+        mut hooks: Vec<HookMetadata>,
+        warnings: Vec<String>,
+        errors: Vec<HookErrorInfo>,
+        app_event_tx: AppEventSender,
+    ) -> Self {
         hooks.sort_by_key(|hook| hook.display_order);
         let mut view = Self {
             hooks,
+            warnings,
+            errors,
             page: HooksBrowserPage::Events,
             state: ScrollState::new(),
             complete: false,
@@ -242,6 +252,40 @@ impl HooksBrowserView {
         lines
     }
 
+    fn event_issue_lines(&self) -> Vec<Line<'static>> {
+        let mut lines = Vec::new();
+        if self.warnings.is_empty() && self.errors.is_empty() {
+            return lines;
+        }
+
+        lines.push("Issues".bold().into());
+        lines.extend(
+            self.warnings
+                .iter()
+                .map(|warning| format!("⚠ {warning}").yellow().into()),
+        );
+        lines.extend(self.errors.iter().map(|error| {
+            format!("■ {}: {}", error.path.display(), error.message)
+                .red()
+                .into()
+        }));
+        lines
+    }
+
+    fn event_page_lines(&self) -> Vec<Line<'static>> {
+        let mut lines = Self::event_header_lines();
+        lines.push(Line::default());
+
+        let issue_lines = self.event_issue_lines();
+        if !issue_lines.is_empty() {
+            lines.extend(issue_lines);
+            lines.push(Line::default());
+        }
+
+        lines.extend(self.event_table_lines());
+        lines
+    }
+
     fn handler_row_lines(&self, event_name: HookEventName, width: usize) -> Vec<Line<'static>> {
         self.handlers_for_event(event_name)
             .enumerate()
@@ -409,9 +453,7 @@ impl Renderable for HooksBrowserView {
     fn desired_height(&self, width: u16) -> u16 {
         let content_width = width.saturating_sub(4) as usize;
         let height = match self.page {
-            HooksBrowserPage::Events => {
-                Self::event_header_lines().len() + 1 + self.event_table_lines().len()
-            }
+            HooksBrowserPage::Events => self.event_page_lines().len(),
             HooksBrowserPage::Handlers(event_name) => {
                 let row_count = self.handler_row_lines(event_name, content_width).len();
                 if row_count == 0 {
@@ -439,12 +481,7 @@ impl Renderable for HooksBrowserView {
         let content_area = render_menu_surface(content_area, buf);
         let width = content_area.width as usize;
         let lines = match self.page {
-            HooksBrowserPage::Events => {
-                let mut lines = Self::event_header_lines();
-                lines.push(Line::default());
-                lines.extend(self.event_table_lines());
-                lines
-            }
+            HooksBrowserPage::Events => self.event_page_lines(),
             HooksBrowserPage::Handlers(event_name) => {
                 let mut lines = Self::handler_header_lines(event_name);
                 let rows = self.handler_row_lines(event_name, width);
@@ -700,6 +737,8 @@ mod tests {
                     /*display_order*/ 2,
                 ),
             ],
+            Vec::new(),
+            Vec::new(),
             AppEventSender::new(tx_raw),
         )
     }
@@ -708,6 +747,25 @@ mod tests {
     fn renders_event_browser() {
         let view = view();
         assert_snapshot!("hooks_browser_events", render_lines(&view, /*width*/ 112));
+    }
+
+    #[test]
+    fn renders_event_browser_with_issues() {
+        let (tx_raw, _rx) = unbounded_channel::<AppEvent>();
+        let view = HooksBrowserView::new(
+            Vec::new(),
+            vec!["skipped invalid matcher for PreToolUse".to_string()],
+            vec![HookErrorInfo {
+                path: test_path_buf("/tmp/hooks.json"),
+                message: "failed to parse hooks config".to_string(),
+            }],
+            AppEventSender::new(tx_raw),
+        );
+
+        assert_snapshot!(
+            "hooks_browser_events_with_issues",
+            render_lines(&view, /*width*/ 112)
+        );
     }
 
     #[test]
@@ -754,6 +812,8 @@ mod tests {
                     /*display_order*/ 1,
                 ),
             ],
+            Vec::new(),
+            Vec::new(),
             AppEventSender::new(tx_raw),
         );
         view.handle_key_event(KeyEvent::from(KeyCode::Enter));
@@ -781,7 +841,8 @@ mod tests {
                 )
             })
             .collect();
-        let mut view = HooksBrowserView::new(hooks, AppEventSender::new(tx_raw));
+        let mut view =
+            HooksBrowserView::new(hooks, Vec::new(), Vec::new(), AppEventSender::new(tx_raw));
         view.handle_key_event(KeyEvent::from(KeyCode::Enter));
         for _ in 0..MAX_POPUP_ROWS {
             view.handle_key_event(KeyEvent::from(KeyCode::Down));
@@ -806,6 +867,8 @@ mod tests {
                 /*is_managed*/ false,
                 /*display_order*/ 0,
             )],
+            Vec::new(),
+            Vec::new(),
             AppEventSender::new(tx_raw),
         );
         view.handle_key_event(KeyEvent::from(KeyCode::Enter));
@@ -818,7 +881,12 @@ mod tests {
     #[test]
     fn renders_empty_handler_browser_message() {
         let (tx_raw, _rx) = unbounded_channel::<AppEvent>();
-        let mut view = HooksBrowserView::new(Vec::new(), AppEventSender::new(tx_raw));
+        let mut view = HooksBrowserView::new(
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            AppEventSender::new(tx_raw),
+        );
         view.handle_key_event(KeyEvent::from(KeyCode::Down));
         view.handle_key_event(KeyEvent::from(KeyCode::Enter));
         assert_snapshot!(
@@ -840,6 +908,8 @@ mod tests {
                 /*is_managed*/ false,
                 /*display_order*/ 0,
             )],
+            Vec::new(),
+            Vec::new(),
             AppEventSender::new(tx_raw),
         );
         view.handle_key_event(KeyEvent::from(KeyCode::Enter));
@@ -875,6 +945,8 @@ mod tests {
                 /*is_managed*/ true,
                 /*display_order*/ 0,
             )],
+            Vec::new(),
+            Vec::new(),
             AppEventSender::new(tx_raw),
         );
         view.handle_key_event(KeyEvent::from(KeyCode::Enter));
