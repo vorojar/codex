@@ -198,9 +198,7 @@ fn add_helper_runtime_permissions(
     }
 }
 
-pub(crate) fn normalize_file_system_policy_root_aliases(
-    file_system_policy: &mut FileSystemSandboxPolicy,
-) {
+fn normalize_file_system_policy_root_aliases(file_system_policy: &mut FileSystemSandboxPolicy) {
     for entry in &mut file_system_policy.entries {
         if let FileSystemPath::Path { path } = &mut entry.path {
             *path = normalize_top_level_alias(path.clone());

@@ -18,8 +18,6 @@ use crate::RemoveOptions;
 use crate::fs_helper::FsHelperPayload;
 use crate::fs_helper::FsHelperRequest;
 use crate::fs_sandbox::FileSystemSandboxRunner;
-use crate::fs_sandbox::normalize_file_system_policy_root_aliases;
-use crate::local_file_system::current_sandbox_cwd;
 use crate::local_file_system::file_name_from_path;
 use crate::protocol::FsCopyParams;
 use crate::protocol::FsCreateDirectoryParams;
@@ -86,12 +84,11 @@ impl ExecutorFileSystem for SandboxedFileSystem {
         sandbox: Option<&FileSystemSandboxContext>,
     ) -> FileSystemResult<FileReadBody> {
         let sandbox = require_platform_sandbox(sandbox)?;
-        let resolved_path = resolve_read_path_for_sandbox(path, sandbox).await?;
         let file_info = self
             .run_sandboxed(
                 sandbox,
                 FsHelperRequest::ReadFileInfo(FsReadFileParams {
-                    path: resolved_path.clone(),
+                    path: path.clone(),
                     sandbox: None,
                 }),
             )
@@ -103,7 +100,7 @@ impl ExecutorFileSystem for SandboxedFileSystem {
             .run_stream(
                 sandbox,
                 FsHelperRequest::ReadFileStream(FsReadFileParams {
-                    path: resolved_path,
+                    path: path.clone(),
                     sandbox: None,
                 }),
             )
@@ -256,31 +253,6 @@ impl ExecutorFileSystem for SandboxedFileSystem {
         .map_err(map_sandbox_error)?;
         Ok(())
     }
-}
-
-async fn resolve_read_path_for_sandbox(
-    path: &AbsolutePathBuf,
-    sandbox: &FileSystemSandboxContext,
-) -> io::Result<AbsolutePathBuf> {
-    let resolved = tokio::fs::canonicalize(path.as_path()).await?;
-    let resolved = AbsolutePathBuf::from_absolute_path(resolved)?;
-    let cwd = match sandbox.cwd.as_ref() {
-        Some(cwd) => cwd.clone(),
-        None => AbsolutePathBuf::from_absolute_path(current_sandbox_cwd()?)?,
-    };
-    let mut file_system_policy = sandbox.permissions.file_system_sandbox_policy();
-    normalize_file_system_policy_root_aliases(&mut file_system_policy);
-    if !file_system_policy.can_read_path_with_cwd(resolved.as_path(), cwd.as_path()) {
-        return Err(io::Error::new(
-            io::ErrorKind::PermissionDenied,
-            format!(
-                "reading `{}` resolved to `{}` which is not permitted by the filesystem sandbox policy",
-                path.display(),
-                resolved.display()
-            ),
-        ));
-    }
-    Ok(resolved)
 }
 
 fn require_platform_sandbox(

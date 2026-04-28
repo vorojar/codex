@@ -2621,6 +2621,7 @@ dependencies = [
  "codex-utils-pty",
  "ctor 0.6.3",
  "futures",
+ "libc",
  "pretty_assertions",
  "reqwest",
  "serde",

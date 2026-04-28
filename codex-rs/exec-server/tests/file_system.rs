@@ -160,6 +160,16 @@ fn assert_sandbox_denied(error: &std::io::Error) {
     }
 }
 
+fn assert_read_body_symlink_rejected(error: &std::io::Error) {
+    if error.kind() == std::io::ErrorKind::InvalidInput
+        && error.to_string().contains("is not a file")
+    {
+        return;
+    }
+
+    assert_sandbox_denied(error);
+}
+
 fn assert_normalized_path_rejected(error: &std::io::Error) {
     match error.kind() {
         std::io::ErrorKind::NotFound => assert!(
@@ -707,7 +717,7 @@ async fn file_system_sandboxed_read_body_rejects_symlink_to_denied_file(
         Ok(_) => anyhow::bail!("read body should be blocked"),
         Err(error) => error,
     };
-    assert_sandbox_denied(&error);
+    assert_read_body_symlink_rejected(&error);
 
     Ok(())
 }

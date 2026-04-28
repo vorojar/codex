@@ -1,7 +1,5 @@
 use async_trait::async_trait;
-use bytes::Bytes;
 use codex_utils_absolute_path::AbsolutePathBuf;
-use futures::StreamExt;
 use std::path::Path;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -301,7 +299,7 @@ impl ExecutorFileSystem for DirectFileSystem {
         Ok(FileReadBody {
             file_name: file_name_from_path(path.as_path()),
             file_size_bytes: metadata.len(),
-            stream: Box::pin(ReaderStream::new(file).map(|chunk| chunk.map(Bytes::from))),
+            stream: Box::pin(ReaderStream::new(file)),
         })
     }
 
