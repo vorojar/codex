@@ -6200,8 +6200,16 @@ impl CodexMessageProcessor {
         Ok(SkillsListResponse { data })
     }
 
-    /// Handle `hooks/list` by resolving hooks for each requested cwd.
     async fn hooks_list(&self, request_id: ConnectionRequestId, params: HooksListParams) {
+        let result = self.hooks_list_response(params).await;
+        self.outgoing.send_result(request_id, result).await;
+    }
+
+    /// Handle `hooks/list` by resolving hooks for each requested cwd.
+    async fn hooks_list_response(
+        &self,
+        params: HooksListParams,
+    ) -> Result<HooksListResponse, JSONRPCErrorError> {
         let HooksListParams { cwds } = params;
         let cwds = if cwds.is_empty() {
             vec![self.config.cwd.to_path_buf()]
@@ -6209,17 +6217,13 @@ impl CodexMessageProcessor {
             cwds
         };
 
-        let config = match self.load_latest_config(/*fallback_cwd*/ None).await {
-            Ok(config) => config,
-            Err(error) => {
-                self.outgoing.send_error(request_id, error).await;
-                return;
-            }
-        };
+        let config = self.load_latest_config(/*fallback_cwd*/ None).await?;
         let auth = self.auth_manager.auth().await;
         let workspace_codex_plugins_enabled = self
             .workspace_codex_plugins_enabled(&config, auth.as_ref())
             .await;
+        let plugins_enabled =
+            config.features.enabled(Feature::Plugins) && workspace_codex_plugins_enabled;
         let plugins_manager = self.thread_manager.plugins_manager();
         let mut data = Vec::new();
         for cwd in cwds {
@@ -6245,17 +6249,15 @@ impl CodexMessageProcessor {
             let plugin_hook_sources = plugins_manager
                 .effective_plugin_hook_sources_for_layer_stack(
                     &config_layer_stack,
-                    config.features.enabled(Feature::Plugins) && workspace_codex_plugins_enabled,
+                    plugins_enabled,
                     config.features.enabled(Feature::PluginHooks),
                 )
                 .await;
             let hooks = codex_core::hooks::list_hooks(codex_core::hooks::HooksConfig {
-                legacy_notify_argv: None,
                 feature_enabled: config.features.enabled(Feature::CodexHooks),
                 config_layer_stack: Some(config_layer_stack),
                 plugin_hook_sources,
-                shell_program: None,
-                shell_args: Vec::new(),
+                ..Default::default()
             });
             data.push(codex_app_server_protocol::HooksListEntry {
                 cwd,
@@ -6264,9 +6266,7 @@ impl CodexMessageProcessor {
                 errors: Vec::new(),
             });
         }
-        self.outgoing
-            .send_response(request_id, HooksListResponse { data })
-            .await;
+        Ok(HooksListResponse { data })
     }
 
     async fn marketplace_remove(

@@ -43,90 +43,56 @@ pub(crate) fn discover_handlers(
     config_layer_stack: Option<&ConfigLayerStack>,
     plugin_hook_sources: Vec<PluginHookSource>,
 ) -> DiscoveryResult {
-    let Some(config_layer_stack) = config_layer_stack else {
-        let mut handlers = Vec::new();
-        let mut hook_entries = Vec::new();
-        let mut warnings = Vec::new();
-        let mut display_order = 0_i64;
-        append_plugin_hook_sources(
-            &mut handlers,
-            &mut hook_entries,
-            &mut warnings,
-            &mut display_order,
-            plugin_hook_sources,
-        );
-        return DiscoveryResult {
-            handlers,
-            hook_entries,
-            warnings,
-        };
-    };
-
     let mut handlers = Vec::new();
     let mut hook_entries = Vec::new();
     let mut warnings = Vec::new();
     let mut display_order = 0_i64;
 
-    append_managed_requirement_handlers(
-        &mut handlers,
-        &mut hook_entries,
-        &mut warnings,
-        &mut display_order,
-        config_layer_stack,
-    );
+    if let Some(config_layer_stack) = config_layer_stack {
+        append_managed_requirement_handlers(
+            &mut handlers,
+            &mut hook_entries,
+            &mut warnings,
+            &mut display_order,
+            config_layer_stack,
+        );
 
-    for layer in config_layer_stack.get_layers(
-        ConfigLayerStackOrdering::LowestPrecedenceFirst,
-        /*include_disabled*/ false,
-    ) {
-        let hook_source = hook_source_for_config_layer_source(&layer.name);
-        let json_hooks = load_hooks_json(layer.config_folder().as_deref(), &mut warnings);
-        let toml_hooks = load_toml_hooks_from_layer(layer, &mut warnings);
+        for layer in config_layer_stack.get_layers(
+            ConfigLayerStackOrdering::LowestPrecedenceFirst,
+            /*include_disabled*/ false,
+        ) {
+            let hook_source = hook_source_for_config_layer_source(&layer.name);
+            let json_hooks = load_hooks_json(layer.config_folder().as_deref(), &mut warnings);
+            let toml_hooks = load_toml_hooks_from_layer(layer, &mut warnings);
 
-        if let (Some((json_source_path, json_events)), Some((toml_source_path, toml_events))) =
-            (&json_hooks, &toml_hooks)
-            && !json_events.is_empty()
-            && !toml_events.is_empty()
-        {
-            warnings.push(format!(
-                "loading hooks from both {} and {}; prefer a single representation for this layer",
-                json_source_path.display(),
-                toml_source_path.display()
-            ));
-        }
+            if let (Some((json_source_path, json_events)), Some((toml_source_path, toml_events))) =
+                (&json_hooks, &toml_hooks)
+                && !json_events.is_empty()
+                && !toml_events.is_empty()
+            {
+                warnings.push(format!(
+                    "loading hooks from both {} and {}; prefer a single representation for this layer",
+                    json_source_path.display(),
+                    toml_source_path.display()
+                ));
+            }
 
-        if let Some((source_path, hook_events)) = json_hooks {
-            append_hook_events(
-                &mut handlers,
-                &mut hook_entries,
-                &mut warnings,
-                &mut display_order,
-                HookHandlerSource {
-                    path: &source_path,
-                    is_managed: false,
-                    source: hook_source,
-                    env: HashMap::new(),
-                    plugin_id: None,
-                },
-                hook_events,
-            );
-        }
-
-        if let Some((source_path, hook_events)) = toml_hooks {
-            append_hook_events(
-                &mut handlers,
-                &mut hook_entries,
-                &mut warnings,
-                &mut display_order,
-                HookHandlerSource {
-                    path: &source_path,
-                    is_managed: false,
-                    source: hook_source,
-                    env: HashMap::new(),
-                    plugin_id: None,
-                },
-                hook_events,
-            );
+            for (source_path, hook_events) in [json_hooks, toml_hooks].into_iter().flatten() {
+                append_hook_events(
+                    &mut handlers,
+                    &mut hook_entries,
+                    &mut warnings,
+                    &mut display_order,
+                    HookHandlerSource {
+                        path: &source_path,
+                        is_managed: false,
+                        source: hook_source,
+                        env: HashMap::new(),
+                        plugin_id: None,
+                    },
+                    hook_events,
+                );
+            }
         }
     }
 
