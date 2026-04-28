@@ -332,6 +332,7 @@ pub struct PluginsManager {
     featured_plugin_ids_cache: RwLock<Option<CachedFeaturedPluginIds>>,
     configured_marketplace_upgrade_state: RwLock<ConfiguredMarketplaceUpgradeState>,
     non_curated_cache_refresh_state: RwLock<NonCuratedCacheRefreshState>,
+    // The bool records whether plugin hooks were enabled when the cached outcome was produced.
     cached_enabled_outcome: RwLock<Option<(bool, PluginLoadOutcome)>>,
     remote_sync_lock: Semaphore,
     restriction_product: Option<Product>,
