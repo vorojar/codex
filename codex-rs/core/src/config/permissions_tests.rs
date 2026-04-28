@@ -237,6 +237,35 @@ fn network_toml_overlays_unix_socket_permissions_by_path() {
 }
 
 #[test]
+fn profile_network_proxy_config_preserves_policy_without_enabling_proxy() {
+    let config = network_proxy_config_from_profile_network(Some(&NetworkToml {
+        enabled: Some(true),
+        proxy_url: Some("http://127.0.0.1:43128".to_string()),
+        enable_socks5: Some(false),
+        domains: Some(NetworkDomainPermissionsToml {
+            entries: BTreeMap::from([(
+                "openai.com".to_string(),
+                NetworkDomainPermissionToml::Allow,
+            )]),
+        }),
+        ..Default::default()
+    }));
+
+    assert!(!config.network.enabled);
+    assert_eq!(config.network.proxy_url, "http://127.0.0.1:43128");
+    assert!(!config.network.enable_socks5);
+    assert_eq!(
+        config.network.domains,
+        Some(codex_network_proxy::NetworkDomainPermissions {
+            entries: vec![codex_network_proxy::NetworkDomainPermissionEntry {
+                pattern: "openai.com".to_string(),
+                permission: codex_network_proxy::NetworkDomainPermission::Allow,
+            }],
+        })
+    );
+}
+
+#[test]
 fn read_write_glob_warnings_skip_supported_deny_read_globs_and_trailing_subpaths() {
     let filesystem = FilesystemPermissionsToml {
         glob_scan_max_depth: None,
