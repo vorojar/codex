@@ -13,12 +13,13 @@ use chrono::TimeZone;
 use chrono::Utc;
 use codex_protocol::ThreadId;
 use codex_protocol::config_types::ReasoningSummary;
+use codex_protocol::models::PermissionProfile;
 use codex_protocol::openai_models::ReasoningEffort;
 use codex_protocol::protocol::AskForApproval;
 use codex_protocol::protocol::CreditsSnapshot;
+use codex_protocol::protocol::NetworkSandboxPolicy;
 use codex_protocol::protocol::RateLimitSnapshot;
 use codex_protocol::protocol::RateLimitWindow;
-use codex_protocol::protocol::SandboxPolicy;
 use codex_protocol::protocol::TokenUsage;
 use codex_protocol::protocol::TokenUsageInfo;
 use insta::assert_snapshot;
@@ -27,11 +28,21 @@ use ratatui::prelude::*;
 use tempfile::TempDir;
 
 async fn test_config(temp_home: &TempDir) -> Config {
-    ConfigBuilder::default()
+    let mut config = ConfigBuilder::default()
         .codex_home(temp_home.path().to_path_buf())
         .build()
         .await
-        .expect("load config")
+        .expect("load config");
+    config
+        .permissions
+        .set_permission_profile(PermissionProfile::workspace_write_with(
+            &[],
+            NetworkSandboxPolicy::Enabled,
+            /*exclude_tmpdir_env_var*/ false,
+            /*exclude_slash_tmp*/ false,
+        ))
+        .expect("set permission profile");
+    config
 }
 
 fn test_status_account_display() -> Option<StatusAccountDisplay> {
@@ -99,13 +110,9 @@ async fn status_snapshot_includes_reasoning_details() {
     config.model_reasoning_summary = Some(ReasoningSummary::Detailed);
     config.cwd = test_path_buf("/workspace/tests").abs();
     config
-        .set_legacy_sandbox_policy(SandboxPolicy::WorkspaceWrite {
-            writable_roots: Vec::new(),
-            network_access: false,
-            exclude_tmpdir_env_var: false,
-            exclude_slash_tmp: false,
-        })
-        .expect("set sandbox policy");
+        .permissions
+        .set_permission_profile(PermissionProfile::workspace_write())
+        .expect("set permission profile");
 
     let account_display = test_status_account_display();
     let usage = TokenUsage {
@@ -181,13 +188,14 @@ async fn status_permissions_non_default_workspace_write_is_custom() {
         .expect("set approval policy");
     config.cwd = test_path_buf("/workspace/tests").abs();
     config
-        .set_legacy_sandbox_policy(SandboxPolicy::WorkspaceWrite {
-            writable_roots: Vec::new(),
-            network_access: true,
-            exclude_tmpdir_env_var: false,
-            exclude_slash_tmp: false,
-        })
-        .expect("set sandbox policy");
+        .permissions
+        .set_permission_profile(PermissionProfile::workspace_write_with(
+            &[],
+            NetworkSandboxPolicy::Enabled,
+            /*exclude_tmpdir_env_var*/ false,
+            /*exclude_slash_tmp*/ false,
+        ))
+        .expect("set permission profile");
 
     let account_display = test_status_account_display();
     let usage = TokenUsage::default();
