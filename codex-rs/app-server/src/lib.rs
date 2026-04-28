@@ -1,7 +1,5 @@
 #![deny(clippy::print_stdout, clippy::print_stderr)]
 
-use codex_analytics::AnalyticsEventsClient;
-use codex_analytics::AuthManagerRetention;
 use codex_arg0::Arg0DispatchPaths;
 use codex_config::ConfigLayerStackOrdering;
 use codex_config::LoaderOverrides;
@@ -21,6 +19,7 @@ use std::sync::Arc;
 use std::sync::RwLock;
 use std::sync::atomic::AtomicBool;
 
+use crate::analytics_events::analytics_events_client_from_config;
 use crate::config_manager::ConfigManager;
 use crate::message_processor::MessageProcessor;
 use crate::message_processor::MessageProcessorArgs;
@@ -69,6 +68,7 @@ use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::registry::Registry;
 use tracing_subscriber::util::SubscriberInitExt;
 
+mod analytics_events;
 mod app_server_tracing;
 mod bespoke_event_handling;
 mod codex_message_processor;
@@ -711,19 +711,18 @@ pub async fn run_main_with_transport_options(
     });
 
     let processor_handle = tokio::spawn({
-        let analytics_events_client = AnalyticsEventsClient::new(
-            Arc::clone(&auth_manager),
-            config.chatgpt_base_url.trim_end_matches('/').to_string(),
-            config.analytics_enabled,
-            AuthManagerRetention::Weak,
-        );
+        let outbound_control_tx = outbound_control_tx;
+        let auth_manager =
+            AuthManager::shared_from_config(&config, /*enable_codex_api_key_env*/ false).await;
+        let analytics_events_client =
+            analytics_events_client_from_config(Arc::clone(&auth_manager), &config);
         let outgoing_message_sender = Arc::new(OutgoingMessageSender::new(
             outgoing_tx,
-            analytics_events_client,
+            analytics_events_client.clone(),
         ));
-        let outbound_control_tx = outbound_control_tx;
         let processor = Arc::new(MessageProcessor::new(MessageProcessorArgs {
             outgoing: outgoing_message_sender,
+            analytics_events_client,
             arg0_paths,
             config: Arc::new(config),
             config_manager,
@@ -732,7 +731,7 @@ pub async fn run_main_with_transport_options(
             log_db,
             config_warnings,
             session_source,
-            auth_manager: Arc::clone(&auth_manager),
+            auth_manager,
             rpc_transport: analytics_rpc_transport(&transport),
             remote_control_handle: Some(remote_control_handle),
             plugin_startup_tasks: runtime_options.plugin_startup_tasks,
@@ -890,7 +889,7 @@ pub async fn run_main_with_transport_options(
                                             warn!("dropping response from unknown connection: {connection_id:?}");
                                             continue;
                                         }
-                                        processor.process_response(response).await;
+                                        processor.process_response(connection_id, response).await;
                                     }
                                     JSONRPCMessage::Notification(notification) => {
                                         if !connections.contains_key(&connection_id) {

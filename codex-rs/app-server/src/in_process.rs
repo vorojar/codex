@@ -50,6 +50,7 @@ use std::sync::atomic::AtomicBool;
 use std::sync::atomic::Ordering;
 use std::time::Duration;
 
+use crate::analytics_events::analytics_events_client_from_config;
 use crate::config_manager::ConfigManager;
 use crate::error_code::INTERNAL_ERROR_CODE;
 use crate::error_code::INVALID_REQUEST_ERROR_CODE;
@@ -66,9 +67,7 @@ use crate::transport::CHANNEL_CAPACITY;
 use crate::transport::ConnectionOrigin;
 use crate::transport::OutboundConnectionState;
 use crate::transport::route_outgoing_envelope;
-use codex_analytics::AnalyticsEventsClient;
 use codex_analytics::AppServerRpcTransport;
-use codex_analytics::AuthManagerRetention;
 use codex_app_server_protocol::ClientNotification;
 use codex_app_server_protocol::ClientRequest;
 use codex_app_server_protocol::ConfigWarningNotification;
@@ -370,18 +369,11 @@ fn start_uninitialized(args: InProcessStartArgs) -> InProcessClientHandle {
         let auth_manager =
             AuthManager::shared_from_config(args.config.as_ref(), args.enable_codex_api_key_env)
                 .await;
-        let analytics_events_client = AnalyticsEventsClient::new(
-            Arc::clone(&auth_manager),
-            args.config
-                .chatgpt_base_url
-                .trim_end_matches('/')
-                .to_string(),
-            args.config.analytics_enabled,
-            AuthManagerRetention::Weak,
-        );
+        let analytics_events_client =
+            analytics_events_client_from_config(Arc::clone(&auth_manager), args.config.as_ref());
         let outgoing_message_sender = Arc::new(OutgoingMessageSender::new(
             outgoing_tx,
-            analytics_events_client,
+            analytics_events_client.clone(),
         ));
 
         let (writer_tx, mut writer_rx) = mpsc::channel::<QueuedOutgoingMessage>(channel_capacity);
@@ -419,6 +411,7 @@ fn start_uninitialized(args: InProcessStartArgs) -> InProcessClientHandle {
         let mut processor_handle = tokio::spawn(async move {
             let processor = Arc::new(MessageProcessor::new(MessageProcessorArgs {
                 outgoing: Arc::clone(&processor_outgoing),
+                analytics_events_client,
                 arg0_paths: args.arg0_paths,
                 config: args.config,
                 config_manager,
@@ -577,7 +570,11 @@ fn start_uninitialized(args: InProcessStartArgs) -> InProcessClientHandle {
                         }
                         Some(InProcessClientMessage::ServerRequestResponse { request_id, result }) => {
                             outgoing_message_sender
-                                .notify_client_response(request_id, result)
+                                .notify_client_response(
+                                    IN_PROCESS_CONNECTION_ID,
+                                    request_id,
+                                    result,
+                                )
                                 .await;
                         }
                         Some(InProcessClientMessage::ServerRequestError { request_id, error }) => {

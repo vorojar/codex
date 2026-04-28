@@ -28,13 +28,14 @@ use codex_app_server_protocol::InitializeParams;
 use codex_app_server_protocol::JSONRPCErrorError;
 use codex_app_server_protocol::RequestId;
 use codex_app_server_protocol::ServerNotification;
+use codex_app_server_protocol::ServerRequest;
+use codex_app_server_protocol::ServerResponse;
 use codex_login::AuthManager;
 use codex_login::default_client::create_client;
 use codex_plugin::PluginTelemetryMetadata;
 use std::collections::HashSet;
 use std::sync::Arc;
 use std::sync::Mutex;
-use std::sync::Weak;
 use std::time::Duration;
 use tokio::sync::mpsc;
 
@@ -51,28 +52,13 @@ pub(crate) struct AnalyticsEventsQueue {
 
 #[derive(Clone)]
 pub struct AnalyticsEventsClient {
-    queue: AnalyticsEventsQueue,
-    analytics_enabled: Option<bool>,
+    queue: Option<AnalyticsEventsQueue>,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Debug, Clone, Copy)]
 pub enum AuthManagerRetention {
     Strong,
     Weak,
-}
-
-enum RetainedAuthManager {
-    Strong(Arc<AuthManager>),
-    Weak(Weak<AuthManager>),
-}
-
-impl RetainedAuthManager {
-    fn upgrade(&self) -> Option<Arc<AuthManager>> {
-        match self {
-            Self::Strong(auth_manager) => Some(Arc::clone(auth_manager)),
-            Self::Weak(auth_manager) => auth_manager.upgrade(),
-        }
-    }
 }
 
 impl AnalyticsEventsQueue {
@@ -81,21 +67,17 @@ impl AnalyticsEventsQueue {
         base_url: String,
         retention: AuthManagerRetention,
     ) -> Self {
-        let auth_manager = match retention {
-            AuthManagerRetention::Strong => RetainedAuthManager::Strong(auth_manager),
-            AuthManagerRetention::Weak => RetainedAuthManager::Weak(Arc::downgrade(&auth_manager)),
-        };
-        Self::spawn(auth_manager, base_url)
-    }
-
-    fn spawn(auth_manager: RetainedAuthManager, base_url: String) -> Self {
         let (sender, mut receiver) = mpsc::channel(ANALYTICS_EVENTS_QUEUE_SIZE);
+        let auth_manager = match retention {
+            AuthManagerRetention::Strong => AuthManagerHandle::Strong(auth_manager),
+            AuthManagerRetention::Weak => AuthManagerHandle::Weak(Arc::downgrade(&auth_manager)),
+        };
         tokio::spawn(async move {
             let mut reducer = AnalyticsReducer::default();
             while let Some(input) = receiver.recv().await {
                 let mut events = Vec::new();
                 reducer.ingest(input, &mut events).await;
-                let Some(auth_manager) = auth_manager.upgrade() else {
+                let Some(auth_manager) = auth_manager.get() else {
                     break;
                 };
                 send_track_events(&auth_manager, &base_url, events).await;
@@ -149,29 +131,40 @@ impl AnalyticsEventsQueue {
     }
 }
 
+enum AuthManagerHandle {
+    Strong(Arc<AuthManager>),
+    Weak(std::sync::Weak<AuthManager>),
+}
+
+impl AuthManagerHandle {
+    fn get(&self) -> Option<Arc<AuthManager>> {
+        match self {
+            Self::Strong(auth_manager) => Some(Arc::clone(auth_manager)),
+            Self::Weak(auth_manager) => auth_manager.upgrade(),
+        }
+    }
+}
+
 impl AnalyticsEventsClient {
     pub fn new(
         auth_manager: Arc<AuthManager>,
         base_url: String,
         analytics_enabled: Option<bool>,
-        retention: AuthManagerRetention,
+        auth_manager_retention: AuthManagerRetention,
     ) -> Self {
         Self {
-            queue: AnalyticsEventsQueue::new(auth_manager, base_url, retention),
-            analytics_enabled,
+            queue: (analytics_enabled != Some(false)).then(|| {
+                AnalyticsEventsQueue::new(
+                    Arc::clone(&auth_manager),
+                    base_url,
+                    auth_manager_retention,
+                )
+            }),
         }
     }
 
     pub fn disabled() -> Self {
-        let (sender, _receiver) = mpsc::channel(1);
-        Self {
-            queue: AnalyticsEventsQueue {
-                sender,
-                app_used_emitted_keys: Arc::new(Mutex::new(HashSet::new())),
-                plugin_used_emitted_keys: Arc::new(Mutex::new(HashSet::new())),
-            },
-            analytics_enabled: Some(false),
-        }
+        Self { queue: None }
     }
 
     pub fn track_skill_invocations(
@@ -235,7 +228,7 @@ impl AnalyticsEventsClient {
         if !tracks_client_request(&request) {
             return;
         }
-        self.record_fact(AnalyticsFact::Request {
+        self.record_fact(AnalyticsFact::ClientRequest {
             connection_id,
             request_id,
             request: Box::new(request),
@@ -243,7 +236,10 @@ impl AnalyticsEventsClient {
     }
 
     pub fn track_app_used(&self, tracking: TrackEventsContext, app: AppInvocation) {
-        if !self.queue.should_enqueue_app_used(&tracking, &app) {
+        let Some(queue) = self.queue.as_ref() else {
+            return;
+        };
+        if !queue.should_enqueue_app_used(&tracking, &app) {
             return;
         }
         self.record_fact(AnalyticsFact::Custom(CustomAnalyticsFact::AppUsed(
@@ -258,7 +254,10 @@ impl AnalyticsEventsClient {
     }
 
     pub fn track_plugin_used(&self, tracking: TrackEventsContext, plugin: PluginTelemetryMetadata) {
-        if !self.queue.should_enqueue_plugin_used(&tracking, &plugin) {
+        let Some(queue) = self.queue.as_ref() else {
+            return;
+        };
+        if !queue.should_enqueue_plugin_used(&tracking, &plugin) {
             return;
         }
         self.record_fact(AnalyticsFact::Custom(CustomAnalyticsFact::PluginUsed(
@@ -321,17 +320,16 @@ impl AnalyticsEventsClient {
     }
 
     pub(crate) fn record_fact(&self, input: AnalyticsFact) {
-        if self.analytics_enabled == Some(false) {
-            return;
+        if let Some(queue) = self.queue.as_ref() {
+            queue.try_send(input);
         }
-        self.queue.try_send(input);
     }
 
     pub fn track_response(&self, connection_id: u64, response: ClientResponse) {
         if !tracks_client_response(&response) {
             return;
         }
-        self.record_fact(AnalyticsFact::Response {
+        self.record_fact(AnalyticsFact::ClientResponse {
             connection_id,
             response: Box::new(response),
         });
@@ -370,6 +368,20 @@ impl AnalyticsEventsClient {
 
     pub fn track_notification(&self, notification: ServerNotification) {
         self.record_fact(AnalyticsFact::Notification(Box::new(notification)));
+    }
+
+    pub fn track_server_request(&self, connection_id: u64, request: ServerRequest) {
+        self.record_fact(AnalyticsFact::ServerRequest {
+            connection_id,
+            request: Box::new(request),
+        });
+    }
+
+    pub fn track_server_response(&self, connection_id: u64, response: ServerResponse) {
+        self.record_fact(AnalyticsFact::ServerResponse {
+            connection_id,
+            response: Box::new(response),
+        });
     }
 }
 
