@@ -109,6 +109,7 @@ pub async fn load_plugins_from_layer_stack(
     config_layer_stack: &ConfigLayerStack,
     store: &PluginStore,
     restriction_product: Option<Product>,
+    plugin_hooks_enabled: bool,
 ) -> PluginLoadOutcome<McpServerConfig> {
     let skill_config_rules = skill_config_rules_from_stack(config_layer_stack);
     let mut configured_plugins: Vec<_> = configured_plugins_from_stack(config_layer_stack)
@@ -125,6 +126,7 @@ pub async fn load_plugins_from_layer_stack(
             store,
             restriction_product,
             &skill_config_rules,
+            plugin_hooks_enabled,
         )
         .await;
         for name in loaded_plugin.mcp_servers.keys() {
@@ -459,6 +461,7 @@ async fn load_plugin(
     store: &PluginStore,
     restriction_product: Option<Product>,
     skill_config_rules: &SkillConfigRules,
+    plugin_hooks_enabled: bool,
 ) -> LoadedPlugin<McpServerConfig> {
     let plugin_id = PluginId::parse(&config_name);
     let active_plugin_root = plugin_id
@@ -483,6 +486,7 @@ async fn load_plugin(
         mcp_servers: HashMap::new(),
         apps: Vec::new(),
         hook_sources: Vec::new(),
+        hook_load_warnings: Vec::new(),
         error: None,
     };
 
@@ -551,7 +555,16 @@ async fn load_plugin(
     }
     loaded_plugin.mcp_servers = mcp_servers;
     loaded_plugin.apps = load_plugin_apps(plugin_root.as_path()).await;
-    loaded_plugin.hook_sources = load_plugin_hooks(&plugin_root, &loaded_plugin_id, manifest_paths);
+    if plugin_hooks_enabled {
+        let (hook_sources, hook_load_warnings) = load_plugin_hooks(
+            &plugin_root,
+            &loaded_plugin_id,
+            &store.plugin_data_root(&loaded_plugin_id),
+            manifest_paths,
+        );
+        loaded_plugin.hook_sources = hook_sources;
+        loaded_plugin.hook_load_warnings = hook_load_warnings;
+    }
     loaded_plugin
 }
 
@@ -687,15 +700,22 @@ fn default_app_config_paths(plugin_root: &Path) -> Vec<AbsolutePathBuf> {
 pub fn load_plugin_hooks(
     plugin_root: &AbsolutePathBuf,
     plugin_id: &PluginId,
+    plugin_data_root: &AbsolutePathBuf,
     manifest_paths: &PluginManifestPaths,
-) -> Vec<PluginHookSource> {
+) -> (Vec<PluginHookSource>, Vec<String>) {
     let mut sources = Vec::new();
+    let mut warnings = Vec::new();
     match &manifest_paths.hooks {
         Some(PluginManifestHooks::Paths(paths)) => {
             for path in paths {
-                if let Some(source) = load_plugin_hook_file(plugin_root, plugin_id, path) {
-                    sources.push(source);
-                }
+                append_plugin_hook_file(
+                    plugin_root,
+                    plugin_id,
+                    plugin_data_root,
+                    path,
+                    &mut sources,
+                    &mut warnings,
+                );
             }
         }
         Some(PluginManifestHooks::Inline(hooks_files)) => {
@@ -709,6 +729,7 @@ pub fn load_plugin_hooks(
                 sources.push(PluginHookSource {
                     plugin_id: plugin_id.clone(),
                     plugin_root: plugin_root.clone(),
+                    plugin_data_root: plugin_data_root.clone(),
                     source_path: manifest_path.clone(),
                     source_relative_path: format!("plugin.json#hooks[{index}]"),
                     hooks: hooks_file.hooks.clone(),
@@ -717,45 +738,53 @@ pub fn load_plugin_hooks(
         }
         None => {
             let default_path = plugin_root.join(DEFAULT_HOOKS_CONFIG_FILE);
-            if default_path.as_path().is_file()
-                && let Some(source) = load_plugin_hook_file(plugin_root, plugin_id, &default_path)
-            {
-                sources.push(source);
+            if default_path.as_path().is_file() {
+                append_plugin_hook_file(
+                    plugin_root,
+                    plugin_id,
+                    plugin_data_root,
+                    &default_path,
+                    &mut sources,
+                    &mut warnings,
+                );
             }
         }
     }
-    sources
+    (sources, warnings)
 }
 
-// Load one resolved plugin hook file and keep source metadata with its parsed
-// hook events so runtime discovery can report plugin-originated hook runs.
-fn load_plugin_hook_file(
+// Append one resolved plugin hook file, keeping source metadata for runtime
+// reporting and collecting load warnings for startup surfacing.
+fn append_plugin_hook_file(
     plugin_root: &AbsolutePathBuf,
     plugin_id: &PluginId,
+    plugin_data_root: &AbsolutePathBuf,
     path: &AbsolutePathBuf,
-) -> Option<PluginHookSource> {
+    sources: &mut Vec<PluginHookSource>,
+    warnings: &mut Vec<String>,
+) {
     let contents = match fs::read_to_string(path.as_path()) {
         Ok(contents) => contents,
         Err(err) => {
-            warn!(
-                path = %path.display(),
-                "failed to read plugin hooks config: {err}"
-            );
-            return None;
+            warnings.push(format!(
+                "failed to read plugin hooks config {}: {err}",
+                path.display()
+            ));
+            return;
         }
     };
     let parsed = match serde_json::from_str::<HooksFile>(&contents) {
         Ok(parsed) => parsed,
         Err(err) => {
-            warn!(
-                path = %path.display(),
-                "failed to parse plugin hooks config: {err}"
-            );
-            return None;
+            warnings.push(format!(
+                "failed to parse plugin hooks config {}: {err}",
+                path.display()
+            ));
+            return;
         }
     };
     if parsed.hooks.is_empty() {
-        return None;
+        return;
     }
 
     let source_relative_path = path
@@ -765,13 +794,14 @@ fn load_plugin_hook_file(
         .to_string_lossy()
         .replace('\\', "/");
 
-    Some(PluginHookSource {
+    sources.push(PluginHookSource {
         plugin_id: plugin_id.clone(),
         plugin_root: plugin_root.clone(),
+        plugin_data_root: plugin_data_root.clone(),
         source_path: path.clone(),
         source_relative_path,
         hooks: parsed.hooks,
-    })
+    });
 }
 
 async fn load_apps_from_paths(

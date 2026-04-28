@@ -33,6 +33,7 @@ pub struct PluginCapabilitySummary {
 pub struct PluginHookSource {
     pub plugin_id: PluginId,
     pub plugin_root: AbsolutePathBuf,
+    pub plugin_data_root: AbsolutePathBuf,
     pub source_path: AbsolutePathBuf,
     pub source_relative_path: String,
     pub hooks: HookEventsToml,

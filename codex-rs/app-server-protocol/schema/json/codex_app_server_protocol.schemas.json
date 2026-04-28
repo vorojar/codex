@@ -8625,21 +8625,6 @@
             "properties": {
               "kind": {
                 "enum": [
-                  "current_working_directory"
-                ],
-                "type": "string"
-              }
-            },
-            "required": [
-              "kind"
-            ],
-            "title": "CurrentWorkingDirectoryFileSystemSpecialPath",
-            "type": "object"
-          },
-          {
-            "properties": {
-              "kind": {
-                "enum": [
                   "project_roots"
                 ],
                 "type": "string"
@@ -9697,12 +9682,6 @@
           },
           "sourcePath": {
             "$ref": "#/definitions/v2/AbsolutePathBuf"
-          },
-          "sourceRelativePath": {
-            "type": [
-              "string",
-              "null"
-            ]
           },
           "statusMessage": {
             "type": [
@@ -12966,12 +12945,6 @@
                   "$ref": "#/definitions/v2/ContentItem"
                 },
                 "type": "array"
-              },
-              "end_turn": {
-                "type": [
-                  "boolean",
-                  "null"
-                ]
               },
               "id": {
                 "type": [

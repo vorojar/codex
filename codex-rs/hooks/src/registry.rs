@@ -28,6 +28,7 @@ pub struct HooksConfig {
     pub feature_enabled: bool,
     pub config_layer_stack: Option<ConfigLayerStack>,
     pub plugin_hook_sources: Vec<PluginHookSource>,
+    pub plugin_hook_load_warnings: Vec<String>,
     pub shell_program: Option<String>,
     pub shell_args: Vec<String>,
 }
@@ -63,6 +64,7 @@ impl Hooks {
             config.feature_enabled,
             config.config_layer_stack.as_ref(),
             config.plugin_hook_sources,
+            config.plugin_hook_load_warnings,
             CommandShell {
                 program: config.shell_program.unwrap_or_default(),
                 args: config.shell_args,
@@ -186,6 +188,7 @@ pub fn list_hooks(config: HooksConfig) -> HookListOutcome {
     let discovered = crate::engine::discovery::discover_handlers(
         config.config_layer_stack.as_ref(),
         config.plugin_hook_sources,
+        config.plugin_hook_load_warnings,
     );
     HookListOutcome {
         hooks: discovered.hook_entries,

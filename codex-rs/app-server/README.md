@@ -911,7 +911,7 @@ Run a standalone command (argv vector) in the server’s sandbox without creatin
         "type": "managed",
         "fileSystem": { "type": "restricted", "entries": [
             { "path": { "type": "special", "value": { "kind": "root" } }, "access": "read" },
-            { "path": { "type": "special", "value": { "kind": "current_working_directory" } }, "access": "write" }
+            { "path": { "type": "special", "value": { "kind": "project_roots", "subpath": null } }, "access": "write" }
         ] },
         "network": { "enabled": false }
     },
@@ -1257,7 +1257,7 @@ the client can offer session-scoped and/or persistent approval choices.
 
 ### Permission requests
 
-The built-in `request_permissions` tool sends an `item/permissions/requestApproval` JSON-RPC request to the client with the requested permission profile. This v2 payload mirrors the command-execution `additionalPermissions` shape: it can request network access and additional filesystem access. The `cwd` field identifies the directory used to resolve cwd-relative permissions such as `:cwd`, `:project_roots`, and relative deny globs.
+The built-in `request_permissions` tool sends an `item/permissions/requestApproval` JSON-RPC request to the client with the requested permission profile. This v2 payload mirrors the command-execution `additionalPermissions` shape: it can request network access and additional filesystem access. The `cwd` field identifies the directory used to resolve project-root permissions and relative deny globs.
 
 ```json
 {
@@ -1481,7 +1481,6 @@ Use `hooks/list` to fetch the discovered hooks for one or more `cwds`. Disabled 
         "sourcePath": "/Users/me/.codex/config.toml",
         "source": "user",
         "pluginId": null,
-        "sourceRelativePath": null,
         "displayOrder": 0,
         "enabled": true
       }],
