@@ -16,12 +16,13 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parent.parent
 BUILD_SCRIPT = REPO_ROOT / "codex-cli" / "scripts" / "build_npm_package.py"
 INSTALL_NATIVE_DEPS = REPO_ROOT / "codex-cli" / "scripts" / "install_native_deps.py"
+PACKAGE_METADATA = REPO_ROOT / "codex-cli" / "scripts" / "package_metadata.py"
 WORKFLOW_NAME = ".github/workflows/rust-release.yml"
 GITHUB_REPO = "openai/codex"
 
-_SPEC = importlib.util.spec_from_file_location("codex_build_npm_package", BUILD_SCRIPT)
+_SPEC = importlib.util.spec_from_file_location("codex_package_metadata", PACKAGE_METADATA)
 if _SPEC is None or _SPEC.loader is None:
-    raise RuntimeError(f"Unable to load module from {BUILD_SCRIPT}")
+    raise RuntimeError(f"Unable to load module from {PACKAGE_METADATA}")
 _BUILD_MODULE = importlib.util.module_from_spec(_SPEC)
 _SPEC.loader.exec_module(_BUILD_MODULE)
 PACKAGE_NATIVE_COMPONENTS = getattr(_BUILD_MODULE, "PACKAGE_NATIVE_COMPONENTS", {})
