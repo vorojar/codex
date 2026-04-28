@@ -18,11 +18,21 @@ impl App {
         cwd: AbsolutePathBuf,
         env_map: std::collections::HashMap<String, String>,
         logs_base_dir: AbsolutePathBuf,
-        sandbox_policy: codex_protocol::protocol::SandboxPolicy,
+        permission_profile: PermissionProfile,
         tx: AppEventSender,
     ) {
         tokio::task::spawn_blocking(move || {
             let logs_base_dir_path = logs_base_dir.as_path();
+            let Ok(sandbox_policy) = permission_profile.to_legacy_sandbox_policy(cwd.as_path())
+            else {
+                tx.send(AppEvent::OpenWorldWritableWarningConfirmation {
+                    preset: None,
+                    sample_paths: Vec::new(),
+                    extra_count: 0usize,
+                    failed_scan: true,
+                });
+                return;
+            };
             let result = codex_windows_sandbox::apply_world_writable_scan_and_denies(
                 logs_base_dir_path,
                 cwd.as_path(),

@@ -9,16 +9,17 @@ use chrono::Local;
 use codex_model_provider_info::WireApi;
 use codex_protocol::ThreadId;
 use codex_protocol::account::PlanType;
+use codex_protocol::models::PermissionProfile;
 use codex_protocol::openai_models::ReasoningEffort;
 use codex_protocol::protocol::AskForApproval;
-use codex_protocol::protocol::NetworkAccess;
-use codex_protocol::protocol::SandboxPolicy;
+use codex_protocol::protocol::NetworkSandboxPolicy;
 use codex_protocol::protocol::TokenUsage;
 use codex_protocol::protocol::TokenUsageInfo;
-use codex_utils_sandbox_summary::summarize_sandbox_policy;
+use codex_utils_sandbox_summary::summarize_permission_profile;
 use ratatui::prelude::*;
 use ratatui::style::Stylize;
 use std::collections::BTreeSet;
+use std::path::Path;
 use std::path::PathBuf;
 use url::Url;
 
@@ -254,10 +255,9 @@ impl StatusHistoryCell {
             ),
             (
                 "sandbox",
-                summarize_sandbox_policy(
-                    &config
-                        .permissions
-                        .legacy_sandbox_policy(config.cwd.as_path()),
+                summarize_permission_profile(
+                    &config.permissions.permission_profile(),
+                    config.cwd.as_path(),
                 ),
             ),
         ];
@@ -281,31 +281,14 @@ impl StatusHistoryCell {
             .find(|(k, _)| *k == "approval")
             .map(|(_, v)| v.clone())
             .unwrap_or_else(|| "<unknown>".to_string());
-        let sandbox_policy = config
-            .permissions
-            .legacy_sandbox_policy(config.cwd.as_path());
-        let sandbox = match &sandbox_policy {
-            SandboxPolicy::DangerFullAccess => "danger-full-access".to_string(),
-            SandboxPolicy::ReadOnly { .. } => "read-only".to_string(),
-            SandboxPolicy::WorkspaceWrite {
-                network_access: true,
-                ..
-            } => "workspace-write with network access".to_string(),
-            SandboxPolicy::WorkspaceWrite { .. } => "workspace-write".to_string(),
-            SandboxPolicy::ExternalSandbox { network_access } => {
-                if matches!(network_access, NetworkAccess::Enabled) {
-                    "external-sandbox (network access enabled)".to_string()
-                } else {
-                    "external-sandbox".to_string()
-                }
-            }
-        };
+        let permission_profile = config.permissions.permission_profile();
+        let sandbox = status_permission_summary(&permission_profile, config.cwd.as_path());
         let permissions = if config.permissions.approval_policy.value() == AskForApproval::OnRequest
-            && sandbox_policy == SandboxPolicy::new_workspace_write_policy()
+            && permission_profile == PermissionProfile::workspace_write()
         {
             "Default".to_string()
         } else if config.permissions.approval_policy.value() == AskForApproval::Never
-            && sandbox_policy == SandboxPolicy::DangerFullAccess
+            && permission_profile == PermissionProfile::Disabled
         {
             "Full Access".to_string()
         } else {
@@ -550,6 +533,51 @@ impl StatusHistoryCell {
             StatusRateLimitData::Unavailable => push_label(labels, seen, "Limits"),
             StatusRateLimitData::Missing => push_label(labels, seen, "Limits"),
         }
+    }
+}
+
+fn status_permission_summary(permission_profile: &PermissionProfile, cwd: &Path) -> String {
+    match permission_profile {
+        PermissionProfile::Disabled => "danger-full-access".to_string(),
+        PermissionProfile::External { network } => {
+            let mut summary = "external-sandbox".to_string();
+            if network.is_enabled() {
+                summary.push_str(" (network access enabled)");
+            }
+            summary
+        }
+        PermissionProfile::Managed { .. } => {
+            let file_system_policy = permission_profile.file_system_sandbox_policy();
+            let network_policy = permission_profile.network_sandbox_policy();
+            if permission_profile.to_legacy_sandbox_policy(cwd).is_err() {
+                let mut summary = "custom permissions".to_string();
+                append_network_suffix(&mut summary, network_policy);
+                return summary;
+            }
+
+            if file_system_policy.has_full_disk_write_access() {
+                let mut summary = "workspace-write".to_string();
+                append_network_suffix(&mut summary, network_policy);
+                return summary;
+            }
+
+            if file_system_policy
+                .get_writable_roots_with_cwd(cwd)
+                .is_empty()
+            {
+                return "read-only".to_string();
+            }
+
+            let mut summary = "workspace-write".to_string();
+            append_network_suffix(&mut summary, network_policy);
+            summary
+        }
+    }
+}
+
+fn append_network_suffix(summary: &mut String, network: NetworkSandboxPolicy) {
+    if network.is_enabled() {
+        summary.push_str(" with network access");
     }
 }
 
