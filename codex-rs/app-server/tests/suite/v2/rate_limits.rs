@@ -183,6 +183,7 @@ async fn get_account_rate_limits_returns_snapshot() -> Result<()> {
             credits: None,
             plan_type: Some(AccountPlanType::Pro),
             rate_limit_reached_type: Some(RateLimitReachedType::WorkspaceMemberUsageLimitReached),
+            current_usage_limit_nudge: None,
         },
         rate_limits_by_limit_id: Some(
             [
@@ -206,6 +207,7 @@ async fn get_account_rate_limits_returns_snapshot() -> Result<()> {
                         rate_limit_reached_type: Some(
                             RateLimitReachedType::WorkspaceMemberUsageLimitReached,
                         ),
+                        current_usage_limit_nudge: None,
                     },
                 ),
                 (
@@ -222,6 +224,7 @@ async fn get_account_rate_limits_returns_snapshot() -> Result<()> {
                         credits: None,
                         plan_type: Some(AccountPlanType::Pro),
                         rate_limit_reached_type: None,
+                        current_usage_limit_nudge: None,
                     },
                 ),
             ]

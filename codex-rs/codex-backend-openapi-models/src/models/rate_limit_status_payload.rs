@@ -44,6 +44,12 @@ pub struct RateLimitStatusPayload {
         skip_serializing_if = "Option::is_none"
     )]
     pub rate_limit_reached_type: Option<Option<RateLimitReachedType>>,
+    #[serde(
+        rename = "current_usage_limit_nudge",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub current_usage_limit_nudge: Option<Box<models::UsageLimitNudge>>,
 }
 
 impl RateLimitStatusPayload {
@@ -54,6 +60,7 @@ impl RateLimitStatusPayload {
             credits: None,
             additional_rate_limits: None,
             rate_limit_reached_type: None,
+            current_usage_limit_nudge: None,
         }
     }
 }

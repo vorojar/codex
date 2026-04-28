@@ -101,6 +101,8 @@ use codex_protocol::protocol::SubAgentSource as CoreSubAgentSource;
 use codex_protocol::protocol::ThreadGoalStatus as CoreThreadGoalStatus;
 use codex_protocol::protocol::TokenUsage as CoreTokenUsage;
 use codex_protocol::protocol::TokenUsageInfo as CoreTokenUsageInfo;
+use codex_protocol::protocol::UsageLimitNudge as CoreUsageLimitNudge;
+use codex_protocol::protocol::UsageLimitNudgeAction as CoreUsageLimitNudgeAction;
 use codex_protocol::request_permissions::PermissionGrantScope as CorePermissionGrantScope;
 use codex_protocol::request_permissions::RequestPermissionProfile as CoreRequestPermissionProfile;
 use codex_protocol::user_input::ByteRange as CoreByteRange;
@@ -7867,6 +7869,7 @@ pub struct RateLimitSnapshot {
     pub credits: Option<CreditsSnapshot>,
     pub plan_type: Option<PlanType>,
     pub rate_limit_reached_type: Option<RateLimitReachedType>,
+    pub current_usage_limit_nudge: Option<UsageLimitNudge>,
 }
 
 impl From<CoreRateLimitSnapshot> for RateLimitSnapshot {
@@ -7881,6 +7884,54 @@ impl From<CoreRateLimitSnapshot> for RateLimitSnapshot {
             rate_limit_reached_type: value
                 .rate_limit_reached_type
                 .map(RateLimitReachedType::from),
+            current_usage_limit_nudge: value
+                .current_usage_limit_nudge
+                .as_ref()
+                .and_then(CoreUsageLimitNudge::from_payload)
+                .map(UsageLimitNudge::from),
+        }
+    }
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "v2/")]
+pub struct UsageLimitNudge {
+    pub threshold: u8,
+    pub action: UsageLimitNudgeAction,
+}
+
+impl From<CoreUsageLimitNudge> for UsageLimitNudge {
+    fn from(value: CoreUsageLimitNudge) -> Self {
+        Self {
+            threshold: value.threshold.as_percent(),
+            action: value.action.into(),
+        }
+    }
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, JsonSchema, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export_to = "v2/", rename_all = "snake_case")]
+pub enum UsageLimitNudgeAction {
+    AddCredits,
+    Upgrade,
+}
+
+impl From<CoreUsageLimitNudgeAction> for UsageLimitNudgeAction {
+    fn from(value: CoreUsageLimitNudgeAction) -> Self {
+        match value {
+            CoreUsageLimitNudgeAction::AddCredits => Self::AddCredits,
+            CoreUsageLimitNudgeAction::Upgrade => Self::Upgrade,
+        }
+    }
+}
+
+impl From<UsageLimitNudgeAction> for CoreUsageLimitNudgeAction {
+    fn from(value: UsageLimitNudgeAction) -> Self {
+        match value {
+            UsageLimitNudgeAction::AddCredits => Self::AddCredits,
+            UsageLimitNudgeAction::Upgrade => Self::Upgrade,
         }
     }
 }
@@ -11307,6 +11358,77 @@ mod tests {
             err.to_string()
                 .contains("AbsolutePathBuf deserialized without a base path"),
             "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn rate_limit_snapshot_preserves_current_usage_limit_nudge() {
+        let active: RateLimitSnapshot = serde_json::from_value(json!({
+            "limitId": "codex",
+            "limitName": null,
+            "primary": null,
+            "secondary": null,
+            "credits": null,
+            "planType": null,
+            "rateLimitReachedType": null,
+            "currentUsageLimitNudge": {
+                "threshold": 75,
+                "action": "upgrade"
+            }
+        }))
+        .expect("active snapshot should deserialize");
+        assert_eq!(
+            active.current_usage_limit_nudge,
+            Some(UsageLimitNudge {
+                threshold: 75,
+                action: UsageLimitNudgeAction::Upgrade,
+            })
+        );
+        assert_eq!(
+            serde_json::to_value(&active)
+                .expect("active snapshot should serialize")
+                .get("currentUsageLimitNudge"),
+            Some(&json!({
+                "threshold": 75,
+                "action": "upgrade"
+            }))
+        );
+
+        let inactive: RateLimitSnapshot = serde_json::from_value(json!({
+            "limitId": "codex",
+            "limitName": null,
+            "primary": null,
+            "secondary": null,
+            "credits": null,
+            "planType": null,
+            "rateLimitReachedType": null,
+            "currentUsageLimitNudge": null
+        }))
+        .expect("inactive snapshot should deserialize");
+        assert_eq!(inactive.current_usage_limit_nudge, None);
+        assert_eq!(
+            serde_json::to_value(&inactive)
+                .expect("inactive snapshot should serialize")
+                .get("currentUsageLimitNudge"),
+            Some(&json!(null))
+        );
+
+        let missing: RateLimitSnapshot = serde_json::from_value(json!({
+            "limitId": "codex",
+            "limitName": null,
+            "primary": null,
+            "secondary": null,
+            "credits": null,
+            "planType": null,
+            "rateLimitReachedType": null
+        }))
+        .expect("missing snapshot should deserialize");
+        assert_eq!(missing.current_usage_limit_nudge, None);
+        assert_eq!(
+            serde_json::to_value(&missing)
+                .expect("missing snapshot should serialize")
+                .get("currentUsageLimitNudge"),
+            Some(&json!(null))
         );
     }
 }

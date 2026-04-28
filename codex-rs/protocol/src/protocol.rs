@@ -2122,6 +2122,9 @@ pub struct RateLimitSnapshot {
     pub credits: Option<CreditsSnapshot>,
     pub plan_type: Option<crate::account::PlanType>,
     pub rate_limit_reached_type: Option<RateLimitReachedType>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub current_usage_limit_nudge: Option<UsageLimitNudgePayload>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize, JsonSchema, TS)]
@@ -2133,6 +2136,58 @@ pub enum RateLimitReachedType {
     WorkspaceMemberCreditsDepleted,
     WorkspaceOwnerUsageLimitReached,
     WorkspaceMemberUsageLimitReached,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize, JsonSchema, TS)]
+pub struct UsageLimitNudgePayload {
+    pub threshold: u8,
+    pub action: UsageLimitNudgeAction,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UsageLimitNudge {
+    pub threshold: UsageLimitNudgeThreshold,
+    pub action: UsageLimitNudgeAction,
+}
+
+impl UsageLimitNudge {
+    pub fn from_payload(payload: &UsageLimitNudgePayload) -> Option<Self> {
+        Some(Self {
+            threshold: UsageLimitNudgeThreshold::from_percent(payload.threshold)?,
+            action: payload.action,
+        })
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum UsageLimitNudgeThreshold {
+    Percent75,
+    Percent90,
+}
+
+impl UsageLimitNudgeThreshold {
+    fn from_percent(percent: u8) -> Option<Self> {
+        match percent {
+            75 => Some(Self::Percent75),
+            90 => Some(Self::Percent90),
+            _ => None,
+        }
+    }
+
+    pub fn as_percent(self) -> u8 {
+        match self {
+            Self::Percent75 => 75,
+            Self::Percent90 => 90,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize, JsonSchema, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(rename_all = "snake_case")]
+pub enum UsageLimitNudgeAction {
+    AddCredits,
+    Upgrade,
 }
 
 #[derive(Debug, Clone, PartialEq, Deserialize, Serialize, JsonSchema, TS)]
@@ -3959,6 +4014,48 @@ mod tests {
         assert_eq!(HookSource::SessionFlags.is_managed(), false);
         assert_eq!(HookSource::Plugin.is_managed(), false);
         assert_eq!(HookSource::Unknown.is_managed(), false);
+    }
+
+    fn rate_limit_snapshot_with_nudge(
+        current_usage_limit_nudge: Option<UsageLimitNudgePayload>,
+    ) -> RateLimitSnapshot {
+        RateLimitSnapshot {
+            limit_id: Some("codex".to_string()),
+            limit_name: None,
+            primary: None,
+            secondary: None,
+            credits: None,
+            plan_type: None,
+            rate_limit_reached_type: None,
+            current_usage_limit_nudge,
+        }
+    }
+
+    #[test]
+    fn current_usage_limit_nudge_payload_validates_thresholds() {
+        assert_eq!(
+            rate_limit_snapshot_with_nudge(Some(UsageLimitNudgePayload {
+                threshold: 75,
+                action: UsageLimitNudgeAction::AddCredits,
+            }))
+            .current_usage_limit_nudge
+            .as_ref()
+            .and_then(UsageLimitNudge::from_payload),
+            Some(UsageLimitNudge {
+                threshold: UsageLimitNudgeThreshold::Percent75,
+                action: UsageLimitNudgeAction::AddCredits,
+            })
+        );
+        assert_eq!(
+            rate_limit_snapshot_with_nudge(Some(UsageLimitNudgePayload {
+                threshold: 80,
+                action: UsageLimitNudgeAction::AddCredits,
+            }))
+            .current_usage_limit_nudge
+            .as_ref()
+            .and_then(UsageLimitNudge::from_payload),
+            None
+        );
     }
 
     fn sorted_writable_roots(roots: Vec<WritableRoot>) -> Vec<(PathBuf, Vec<PathBuf>)> {

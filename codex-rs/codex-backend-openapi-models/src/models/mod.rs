@@ -44,3 +44,7 @@ pub use self::rate_limit_window_snapshot::RateLimitWindowSnapshot;
 
 pub(crate) mod credit_status_details;
 pub use self::credit_status_details::CreditStatusDetails;
+
+pub(crate) mod usage_limit_nudge;
+pub use self::usage_limit_nudge::UsageLimitNudge;
+pub use self::usage_limit_nudge::UsageLimitNudgeAction;

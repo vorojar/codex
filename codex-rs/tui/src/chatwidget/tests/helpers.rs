@@ -114,6 +114,7 @@ pub(super) fn snapshot(percent: f64) -> RateLimitSnapshot {
         credits: None,
         plan_type: None,
         rate_limit_reached_type: None,
+        current_usage_limit_nudge: None,
     }
 }
 

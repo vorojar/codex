@@ -12770,6 +12770,16 @@
               }
             ]
           },
+          "currentUsageLimitNudge": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/v2/UsageLimitNudge"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "limitId": {
             "type": [
               "string",
@@ -17803,6 +17813,30 @@
         ],
         "title": "TurnSteerResponse",
         "type": "object"
+      },
+      "UsageLimitNudge": {
+        "properties": {
+          "action": {
+            "$ref": "#/definitions/v2/UsageLimitNudgeAction"
+          },
+          "threshold": {
+            "format": "uint8",
+            "minimum": 0.0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "action",
+          "threshold"
+        ],
+        "type": "object"
+      },
+      "UsageLimitNudgeAction": {
+        "enum": [
+          "add_credits",
+          "upgrade"
+        ],
+        "type": "string"
       },
       "UserInput": {
         "oneOf": [

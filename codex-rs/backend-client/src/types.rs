@@ -7,6 +7,8 @@ pub use codex_backend_openapi_models::models::RateLimitStatusDetails;
 pub use codex_backend_openapi_models::models::RateLimitStatusPayload;
 pub use codex_backend_openapi_models::models::RateLimitWindowSnapshot;
 pub use codex_backend_openapi_models::models::TaskListItem;
+pub use codex_backend_openapi_models::models::UsageLimitNudge;
+pub use codex_backend_openapi_models::models::UsageLimitNudgeAction;
 
 use serde::Deserialize;
 use serde::de::Deserializer;
