@@ -332,7 +332,7 @@ pub struct PluginsManager {
     featured_plugin_ids_cache: RwLock<Option<CachedFeaturedPluginIds>>,
     configured_marketplace_upgrade_state: RwLock<ConfiguredMarketplaceUpgradeState>,
     non_curated_cache_refresh_state: RwLock<NonCuratedCacheRefreshState>,
-    cached_enabled_outcome: RwLock<Option<PluginLoadOutcome>>,
+    cached_enabled_outcome: RwLock<Option<(bool, PluginLoadOutcome)>>,
     remote_sync_lock: Semaphore,
     restriction_product: Option<Product>,
     analytics_events_client: RwLock<Option<AnalyticsEventsClient>>,
@@ -401,7 +401,8 @@ impl PluginsManager {
             return PluginLoadOutcome::default();
         }
 
-        if !force_reload && let Some(outcome) = self.cached_enabled_outcome() {
+        let plugin_hooks_enabled = config.features.enabled(Feature::PluginHooks);
+        if !force_reload && let Some(outcome) = self.cached_enabled_outcome(plugin_hooks_enabled) {
             return outcome;
         }
 
@@ -409,7 +410,7 @@ impl PluginsManager {
             &config.config_layer_stack,
             &self.store,
             self.restriction_product,
-            config.features.enabled(Feature::PluginHooks),
+            plugin_hooks_enabled,
         )
         .await;
         log_plugin_load_errors(&outcome);
@@ -417,7 +418,7 @@ impl PluginsManager {
             Ok(cache) => cache,
             Err(err) => err.into_inner(),
         };
-        *cache = Some(outcome.clone());
+        *cache = Some((plugin_hooks_enabled, outcome.clone()));
         outcome
     }
 
@@ -453,29 +454,47 @@ impl PluginsManager {
         .effective_skill_roots()
     }
 
-    pub async fn effective_plugin_hook_sources_for_layer_stack(
+    /// Resolve effective plugin hook sources and load warnings for a config layer stack
+    /// without touching the plugins cache.
+    ///
+    /// Returns empty vectors unless both plugin feature gates are enabled.
+    pub async fn effective_plugin_hooks_for_layer_stack(
         &self,
         config_layer_stack: &ConfigLayerStack,
         plugins_feature_enabled: bool,
         plugin_hooks_feature_enabled: bool,
-    ) -> Vec<codex_plugin::PluginHookSource> {
+    ) -> (Vec<codex_plugin::PluginHookSource>, Vec<String>) {
         if !plugins_feature_enabled || !plugin_hooks_feature_enabled {
-            return Vec::new();
+            return (Vec::new(), Vec::new());
         }
-        load_plugins_from_layer_stack(
+        let outcome = load_plugins_from_layer_stack(
             config_layer_stack,
             &self.store,
             self.restriction_product,
             /*plugin_hooks_enabled*/ true,
         )
-        .await
-        .effective_plugin_hook_sources()
+        .await;
+        (
+            outcome.effective_plugin_hook_sources(),
+            outcome.effective_plugin_hook_warnings(),
+        )
     }
 
-    fn cached_enabled_outcome(&self) -> Option<PluginLoadOutcome> {
+    fn cached_enabled_outcome(&self, plugin_hooks_enabled: bool) -> Option<PluginLoadOutcome> {
         match self.cached_enabled_outcome.read() {
-            Ok(cache) => cache.clone(),
-            Err(err) => err.into_inner().clone(),
+            Ok(cache) => cache
+                .as_ref()
+                .filter(|(cached_plugin_hooks_enabled, _)| {
+                    *cached_plugin_hooks_enabled == plugin_hooks_enabled
+                })
+                .map(|(_, outcome)| outcome.clone()),
+            Err(err) => err
+                .into_inner()
+                .as_ref()
+                .filter(|(cached_plugin_hooks_enabled, _)| {
+                    *cached_plugin_hooks_enabled == plugin_hooks_enabled
+                })
+                .map(|(_, outcome)| outcome.clone()),
         }
     }
 

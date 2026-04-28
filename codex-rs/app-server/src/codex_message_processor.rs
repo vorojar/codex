@@ -6250,20 +6250,18 @@ impl CodexMessageProcessor {
                     continue;
                 }
             };
-            // Plugin hook sources are discovered from the same effective plugin
-            // view used by runtime loading, but only when both plugin feature
-            // gates are enabled for this workspace.
-            let plugin_hook_sources = plugins_manager
-                .effective_plugin_hook_sources_for_layer_stack(
+            let (plugin_hook_sources, plugin_hook_load_warnings) = plugins_manager
+                .effective_plugin_hooks_for_layer_stack(
                     &config_layer_stack,
                     plugins_enabled,
                     config.features.enabled(Feature::PluginHooks),
                 )
                 .await;
-            let hooks = codex_core::hooks::list_hooks(codex_core::hooks::HooksConfig {
+            let hooks = codex_hooks::list_hooks(codex_hooks::HooksConfig {
                 feature_enabled: config.features.enabled(Feature::CodexHooks),
                 config_layer_stack: Some(config_layer_stack),
                 plugin_hook_sources,
+                plugin_hook_load_warnings,
                 ..Default::default()
             });
             data.push(codex_app_server_protocol::HooksListEntry {
@@ -8660,7 +8658,7 @@ fn skills_to_info(
         .collect()
 }
 
-fn hooks_to_info(hooks: &[codex_core::hooks::HookListEntry]) -> Vec<HookMetadata> {
+fn hooks_to_info(hooks: &[codex_hooks::HookListEntry]) -> Vec<HookMetadata> {
     hooks
         .iter()
         .map(|hook| HookMetadata {
