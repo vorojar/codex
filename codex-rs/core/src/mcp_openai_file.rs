@@ -103,6 +103,19 @@ async fn build_uploaded_local_argument_value(
     file_path: &str,
 ) -> Result<JsonValue, String> {
     let resolved_path = turn_context.resolve_path(Some(file_path.to_string()));
+    if !turn_context
+        .file_system_sandbox_policy()
+        .can_read_path_with_cwd(resolved_path.as_path(), turn_context.cwd.as_path())
+    {
+        return Err(match index {
+            Some(index) => format!(
+                "reading `{file_path}` for `{field_name}[{index}]` is blocked by the filesystem sandbox policy"
+            ),
+            None => format!(
+                "reading `{file_path}` for `{field_name}` is blocked by the filesystem sandbox policy"
+            ),
+        });
+    }
     let Some(auth) = auth else {
         return Err(
             "ChatGPT auth is required to upload local files for Codex Apps tools".to_string(),
@@ -140,6 +153,13 @@ async fn build_uploaded_local_argument_value(
 mod tests {
     use super::*;
     use crate::session::tests::make_session_and_context;
+    use codex_protocol::models::PermissionProfile;
+    use codex_protocol::permissions::FileSystemAccessMode;
+    use codex_protocol::permissions::FileSystemPath;
+    use codex_protocol::permissions::FileSystemSandboxEntry;
+    use codex_protocol::permissions::FileSystemSandboxPolicy;
+    use codex_protocol::permissions::FileSystemSpecialPath;
+    use codex_protocol::permissions::NetworkSandboxPolicy;
     use codex_utils_absolute_path::AbsolutePathBuf;
     use pretty_assertions::assert_eq;
     use std::sync::Arc;
@@ -242,6 +262,53 @@ mod tests {
                 "uri": "sediment://file_123",
                 "file_size_bytes": 5,
             })
+        );
+    }
+
+    #[tokio::test]
+    async fn build_uploaded_local_argument_value_respects_filesystem_read_policy() {
+        let (_, mut turn_context) = make_session_and_context().await;
+        let auth = CodexAuth::create_dummy_chatgpt_auth_for_testing();
+        let dir = tempdir().expect("temp dir");
+        let local_path = dir.path().join("blocked.csv");
+        tokio::fs::write(&local_path, b"secret")
+            .await
+            .expect("write local file");
+        turn_context.cwd = AbsolutePathBuf::try_from(dir.path()).expect("absolute path");
+
+        let file_system_sandbox_policy = FileSystemSandboxPolicy::restricted(vec![
+            FileSystemSandboxEntry {
+                path: FileSystemPath::Special {
+                    value: FileSystemSpecialPath::Root,
+                },
+                access: FileSystemAccessMode::Read,
+            },
+            FileSystemSandboxEntry {
+                path: FileSystemPath::Path {
+                    path: AbsolutePathBuf::try_from(local_path.as_path())
+                        .expect("absolute blocked file path"),
+                },
+                access: FileSystemAccessMode::None,
+            },
+        ]);
+        turn_context.permission_profile = PermissionProfile::from_runtime_permissions(
+            &file_system_sandbox_policy,
+            NetworkSandboxPolicy::Enabled,
+        );
+
+        let error = build_uploaded_local_argument_value(
+            &turn_context,
+            Some(&auth),
+            "file",
+            /*index*/ None,
+            "blocked.csv",
+        )
+        .await
+        .expect_err("deny-read policy should block local file upload");
+
+        assert_eq!(
+            error,
+            "reading `blocked.csv` for `file` is blocked by the filesystem sandbox policy"
         );
     }
 
