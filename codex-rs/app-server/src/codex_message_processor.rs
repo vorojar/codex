@@ -9861,7 +9861,7 @@ mod tests {
     #[test]
     fn managed_hook_config_write_targets_are_rejected() {
         let key = "path:/tmp/managed-hooks:pre_tool_use:0:0";
-        let hooks = vec![hook_metadata_for_test(key, true)];
+        let hooks = vec![hook_metadata_for_test(key, /*is_managed*/ true)];
 
         let err = validate_hook_config_write_target(&hooks, key)
             .expect_err("managed hooks should not be user-configurable");
