@@ -8,6 +8,7 @@ use crate::HttpClient;
 use crate::client::LazyRemoteExecServerClient;
 use crate::client::http_client::ReqwestHttpClient;
 use crate::environment_provider::DefaultEnvironmentProvider;
+use crate::environment_provider::EnvironmentConfiguration;
 use crate::environment_provider::EnvironmentConfigurations;
 use crate::environment_provider::EnvironmentProvider;
 use crate::environment_provider::normalize_exec_server_url;
@@ -115,7 +116,8 @@ impl EnvironmentManager {
         )]);
         for (id, configuration) in environment_configurations.into_environments() {
             let environment = Environment::remote_inner(
-                configuration.exec_server_url,
+                id.clone(),
+                configuration,
                 Some(local_runtime_paths.clone()),
             );
             environments.insert(id, Arc::new(environment));
@@ -159,6 +161,7 @@ impl EnvironmentManager {
 /// paths used by filesystem helpers.
 #[derive(Clone)]
 pub struct Environment {
+    is_remote: bool,
     exec_server_url: Option<String>,
     exec_backend: Arc<dyn ExecBackend>,
     filesystem: Arc<dyn ExecutorFileSystem>,
@@ -170,6 +173,7 @@ impl Environment {
     /// Builds a test-only local environment without configured sandbox helper paths.
     pub fn default_for_tests() -> Self {
         Self {
+            is_remote: false,
             exec_server_url: None,
             exec_backend: Arc::new(LocalProcess::default()),
             filesystem: Arc::new(LocalFileSystem::unsandboxed()),
@@ -215,7 +219,12 @@ impl Environment {
         }
 
         Ok(match exec_server_url {
-            Some(exec_server_url) => Self::remote_inner(exec_server_url, local_runtime_paths),
+            Some(exec_server_url) => Self::remote_inner(
+                REMOTE_ENVIRONMENT_ID.to_string(),
+                EnvironmentConfiguration::static_url(exec_server_url)
+                    .expect("normalized remote environment URL should be valid"),
+                local_runtime_paths,
+            ),
             None => match local_runtime_paths {
                 Some(local_runtime_paths) => Self::local(local_runtime_paths),
                 None => Self::default_for_tests(),
@@ -225,6 +234,7 @@ impl Environment {
 
     fn local(local_runtime_paths: ExecServerRuntimePaths) -> Self {
         Self {
+            is_remote: false,
             exec_server_url: None,
             exec_backend: Arc::new(LocalProcess::default()),
             filesystem: Arc::new(LocalFileSystem::with_runtime_paths(
@@ -236,16 +246,19 @@ impl Environment {
     }
 
     fn remote_inner(
-        exec_server_url: String,
+        environment_id: String,
+        configuration: EnvironmentConfiguration,
         local_runtime_paths: Option<ExecServerRuntimePaths>,
     ) -> Self {
-        let client = LazyRemoteExecServerClient::new(exec_server_url.clone());
+        let exec_server_url = configuration.static_exec_server_url().map(str::to_string);
+        let client = LazyRemoteExecServerClient::new(environment_id, configuration.resolver());
         let exec_backend: Arc<dyn ExecBackend> = Arc::new(RemoteProcess::new(client.clone()));
         let filesystem: Arc<dyn ExecutorFileSystem> =
             Arc::new(RemoteFileSystem::new(client.clone()));
 
         Self {
-            exec_server_url: Some(exec_server_url),
+            is_remote: true,
+            exec_server_url,
             exec_backend,
             filesystem,
             http_client: Arc::new(client),
@@ -254,10 +267,13 @@ impl Environment {
     }
 
     pub fn is_remote(&self) -> bool {
-        self.exec_server_url.is_some()
+        self.is_remote
     }
 
-    /// Returns the remote exec-server URL when this environment is remote.
+    /// Returns the statically configured remote exec-server URL when known.
+    ///
+    /// Dynamically resolved remote environments return `None` here and resolve
+    /// their URL on first remote client use.
     pub fn exec_server_url(&self) -> Option<&str> {
         self.exec_server_url.as_deref()
     }
@@ -283,6 +299,8 @@ impl Environment {
 mod tests {
     use std::collections::HashMap;
     use std::sync::Arc;
+    use std::sync::atomic::AtomicUsize;
+    use std::sync::atomic::Ordering;
 
     use super::Environment;
     use super::EnvironmentManager;
@@ -293,6 +311,7 @@ mod tests {
     use crate::EnvironmentConfigurations;
     use crate::ExecServerRuntimePaths;
     use crate::ProcessId;
+    use futures::FutureExt;
     use pretty_assertions::assert_eq;
 
     fn test_runtime_paths() -> ExecServerRuntimePaths {
@@ -398,9 +417,8 @@ mod tests {
                 Some(REMOTE_ENVIRONMENT_ID.to_string()),
                 HashMap::from([(
                     REMOTE_ENVIRONMENT_ID.to_string(),
-                    EnvironmentConfiguration {
-                        exec_server_url: "ws://127.0.0.1:8765".to_string(),
-                    },
+                    EnvironmentConfiguration::static_url("ws://127.0.0.1:8765".to_string())
+                        .expect("static environment configuration"),
                 )]),
             )
             .expect("environment configurations"),
@@ -423,6 +441,42 @@ mod tests {
                 .expect("local environment")
                 .is_remote()
         );
+    }
+
+    #[tokio::test]
+    async fn environment_manager_does_not_resolve_dynamic_environment_when_building_cache() {
+        let resolve_count = Arc::new(AtomicUsize::new(0));
+        let configuration = EnvironmentConfiguration::from_resolver_fn({
+            let resolve_count = Arc::clone(&resolve_count);
+            move || {
+                let resolve_count = Arc::clone(&resolve_count);
+                async move {
+                    resolve_count.fetch_add(1, Ordering::SeqCst);
+                    Ok(crate::ResolvedEnvironment {
+                        exec_server_url: "ws://127.0.0.1:8765".to_string(),
+                    })
+                }
+                .boxed()
+            }
+        });
+
+        let manager = EnvironmentManager::from_configurations(
+            EnvironmentConfigurations::new(
+                Some(REMOTE_ENVIRONMENT_ID.to_string()),
+                HashMap::from([(REMOTE_ENVIRONMENT_ID.to_string(), configuration)]),
+            )
+            .expect("environment configurations"),
+            test_runtime_paths(),
+        );
+
+        assert_eq!(resolve_count.load(Ordering::SeqCst), 0);
+        assert!(
+            manager
+                .get_environment(REMOTE_ENVIRONMENT_ID)
+                .expect("remote environment")
+                .is_remote()
+        );
+        assert_eq!(resolve_count.load(Ordering::SeqCst), 0);
     }
 
     #[tokio::test]

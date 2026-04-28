@@ -25,6 +25,8 @@ use crate::client_api::ExecServerClientConnectOptions;
 use crate::client_api::HttpClient;
 use crate::client_api::RemoteExecServerConnectArgs;
 use crate::connection::JsonRpcConnection;
+use crate::environment_provider::EnvironmentResolver;
+use crate::environment_provider::normalize_remote_exec_server_url;
 use crate::process::ExecProcessEvent;
 use crate::process::ExecProcessEventLog;
 use crate::process::ExecProcessEventReceiver;
@@ -180,14 +182,16 @@ pub struct ExecServerClient {
 
 #[derive(Clone)]
 pub(crate) struct LazyRemoteExecServerClient {
-    websocket_url: String,
+    environment_id: String,
+    resolver: Arc<dyn EnvironmentResolver>,
     client: Arc<OnceCell<ExecServerClient>>,
 }
 
 impl LazyRemoteExecServerClient {
-    pub(crate) fn new(websocket_url: String) -> Self {
+    pub(crate) fn new(environment_id: String, resolver: Arc<dyn EnvironmentResolver>) -> Self {
         Self {
-            websocket_url,
+            environment_id,
+            resolver,
             client: Arc::new(OnceCell::new()),
         }
     }
@@ -195,8 +199,13 @@ impl LazyRemoteExecServerClient {
     pub(crate) async fn get(&self) -> Result<ExecServerClient, ExecServerError> {
         self.client
             .get_or_try_init(|| async {
+                let resolved = self.resolver.resolve().await?;
+                let websocket_url = normalize_remote_exec_server_url(
+                    self.environment_id.as_str(),
+                    resolved.exec_server_url,
+                )?;
                 ExecServerClient::connect_websocket(RemoteExecServerConnectArgs {
-                    websocket_url: self.websocket_url.clone(),
+                    websocket_url,
                     client_name: "codex-environment".to_string(),
                     connect_timeout: Duration::from_secs(5),
                     initialize_timeout: Duration::from_secs(5),

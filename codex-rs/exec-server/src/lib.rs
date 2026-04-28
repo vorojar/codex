@@ -43,6 +43,8 @@ pub use environment_provider::DefaultEnvironmentProvider;
 pub use environment_provider::EnvironmentConfiguration;
 pub use environment_provider::EnvironmentConfigurations;
 pub use environment_provider::EnvironmentProvider;
+pub use environment_provider::EnvironmentResolver;
+pub use environment_provider::ResolvedEnvironment;
 pub use fs_helper::CODEX_FS_HELPER_ARG1;
 pub use fs_helper_main::main as run_fs_helper_main;
 pub use local_file_system::LOCAL_FS;
