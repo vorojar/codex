@@ -264,7 +264,7 @@ fn parse_pre_completed(
                             });
                         }
                     }
-                } else {
+                } else if trimmed_stdout.starts_with('{') || trimmed_stdout.starts_with('[') {
                     status = HookRunStatus::Failed;
                     entries.push(HookOutputEntry {
                         kind: HookOutputEntryKind::Error,
@@ -369,7 +369,7 @@ fn parse_completed(
                             text: invalid_reason,
                         });
                     }
-                } else {
+                } else if trimmed_stdout.starts_with('{') || trimmed_stdout.starts_with('[') {
                     status = HookRunStatus::Failed;
                     entries.push(HookOutputEntry {
                         kind: HookOutputEntryKind::Error,
@@ -416,6 +416,7 @@ mod tests {
     use pretty_assertions::assert_eq;
     use serde_json::json;
 
+    use super::parse_post_completed;
     use super::parse_pre_completed;
     use super::post_command_input_json;
     use super::pre_command_input_json;
@@ -509,6 +510,32 @@ mod tests {
                 text: "PreCompact hook returned unsupported continue:false".to_string(),
             }]
         );
+    }
+
+    #[test]
+    fn pre_compact_ignores_plain_stdout() {
+        let parsed = parse_pre_completed(
+            &handler(HookEventName::PreCompact),
+            run_result(Some(0), "checking compact policy\n", ""),
+            Some("turn-1".to_string()),
+        );
+
+        assert_eq!(parsed.completed.run.status, HookRunStatus::Completed);
+        assert_eq!(parsed.completed.run.entries, Vec::new());
+        assert_eq!(parsed.data.should_block, false);
+        assert_eq!(parsed.data.block_reason, None);
+    }
+
+    #[test]
+    fn post_compact_ignores_plain_stdout() {
+        let parsed = parse_post_completed(
+            &handler(HookEventName::PostCompact),
+            run_result(Some(0), "logged compact summary\n", ""),
+            Some("turn-1".to_string()),
+        );
+
+        assert_eq!(parsed.completed.run.status, HookRunStatus::Completed);
+        assert_eq!(parsed.completed.run.entries, Vec::new());
     }
 
     fn pre_request() -> super::PreCompactRequest {
