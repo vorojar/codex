@@ -866,35 +866,38 @@ fn capability_index_filters_inactive_and_zero_capability_plugins() {
         description: None,
         ..PluginCapabilitySummary::default()
     };
-    let outcome = PluginLoadOutcome::from_plugins(vec![
-        LoadedPlugin {
-            skill_roots: vec![codex_home.path().join("skills-plugin/skills").abs()],
-            has_enabled_skills: true,
-            ..plugin("skills@test", "skills-plugin", "skills-plugin")
-        },
-        LoadedPlugin {
-            mcp_servers: HashMap::from([("alpha".to_string(), http_server("https://alpha"))]),
-            apps: vec![connector("connector_example")],
-            ..plugin("alpha@test", "alpha-plugin", "alpha-plugin")
-        },
-        LoadedPlugin {
-            mcp_servers: HashMap::from([("beta".to_string(), http_server("https://beta"))]),
-            apps: vec![connector("connector_example"), connector("connector_gmail")],
-            ..plugin("beta@test", "beta-plugin", "beta-plugin")
-        },
-        plugin("empty@test", "empty-plugin", "empty-plugin"),
-        LoadedPlugin {
-            enabled: false,
-            skill_roots: vec![codex_home.path().join("disabled-plugin/skills").abs()],
-            apps: vec![connector("connector_hidden")],
-            ..plugin("disabled@test", "disabled-plugin", "disabled-plugin")
-        },
-        LoadedPlugin {
-            apps: vec![connector("connector_broken")],
-            error: Some("failed to load".to_string()),
-            ..plugin("broken@test", "broken-plugin", "broken-plugin")
-        },
-    ]);
+    let outcome = PluginLoadOutcome::from_plugins(
+        vec![
+            LoadedPlugin {
+                skill_roots: vec![codex_home.path().join("skills-plugin/skills").abs()],
+                has_enabled_skills: true,
+                ..plugin("skills@test", "skills-plugin", "skills-plugin")
+            },
+            LoadedPlugin {
+                mcp_servers: HashMap::from([("alpha".to_string(), http_server("https://alpha"))]),
+                apps: vec![connector("connector_example")],
+                ..plugin("alpha@test", "alpha-plugin", "alpha-plugin")
+            },
+            LoadedPlugin {
+                mcp_servers: HashMap::from([("beta".to_string(), http_server("https://beta"))]),
+                apps: vec![connector("connector_example"), connector("connector_gmail")],
+                ..plugin("beta@test", "beta-plugin", "beta-plugin")
+            },
+            plugin("empty@test", "empty-plugin", "empty-plugin"),
+            LoadedPlugin {
+                enabled: false,
+                skill_roots: vec![codex_home.path().join("disabled-plugin/skills").abs()],
+                apps: vec![connector("connector_hidden")],
+                ..plugin("disabled@test", "disabled-plugin", "disabled-plugin")
+            },
+            LoadedPlugin {
+                apps: vec![connector("connector_broken")],
+                error: Some("failed to load".to_string()),
+                ..plugin("broken@test", "broken-plugin", "broken-plugin")
+            },
+        ],
+        /*plugin_hooks_enabled*/ false,
+    );
 
     assert_eq!(
         outcome.capability_summaries(),

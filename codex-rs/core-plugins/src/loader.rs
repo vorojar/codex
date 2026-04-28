@@ -144,7 +144,7 @@ pub async fn load_plugins_from_layer_stack(
         plugins.push(loaded_plugin);
     }
 
-    PluginLoadOutcome::from_plugins(plugins)
+    PluginLoadOutcome::from_plugins(plugins, plugin_hooks_enabled)
 }
 
 pub fn refresh_curated_plugin_cache(
