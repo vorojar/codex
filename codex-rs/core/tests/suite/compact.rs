@@ -111,6 +111,10 @@ fn read_hook_inputs(path: &Path) -> Vec<Value> {
         .collect()
 }
 
+fn python_hook_command(script_path: &Path) -> String {
+    format!("python3 \"{}\"", script_path.display())
+}
+
 fn write_blocking_pre_compact_hook(home: &Path) {
     let script_path = home.join("pre_compact_block.py");
     let log_path = home.join("pre_compact_block_log.jsonl");
@@ -123,8 +127,7 @@ payload = json.load(sys.stdin)
 with Path(r"{log_path}").open("a", encoding="utf-8") as handle:
     handle.write(json.dumps(payload) + "\n")
 
-print("blocked by policy", file=sys.stderr)
-sys.exit(2)
+print(json.dumps({{"decision": "block", "reason": "blocked by policy"}}))
 "#,
         log_path = log_path.display(),
     );
@@ -134,7 +137,7 @@ sys.exit(2)
                 "matcher": "manual",
                 "hooks": [{
                     "type": "command",
-                    "command": format!("python3 {}", script_path.display()),
+                    "command": python_hook_command(&script_path),
                     "statusMessage": "checking compact policy",
                 }]
             }]
@@ -178,14 +181,14 @@ with Path(r"{manual_post_log_path}").open("a", encoding="utf-8") as handle:
                 "matcher": "auto",
                 "hooks": [{
                     "type": "command",
-                    "command": format!("python3 {}", auto_script_path.display()),
+                    "command": python_hook_command(&auto_script_path),
                 }]
             }],
             "PostCompact": [{
                 "matcher": "manual",
                 "hooks": [{
                     "type": "command",
-                    "command": format!("python3 {}", manual_post_script_path.display()),
+                    "command": python_hook_command(&manual_post_script_path),
                 }]
             }]
         }
