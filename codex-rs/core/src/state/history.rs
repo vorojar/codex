@@ -3,9 +3,9 @@ use crate::event_mapping::is_contextual_dev_message_content;
 use crate::event_mapping::is_contextual_user_message_content;
 use crate::session::turn_context::TurnContext;
 use codex_journal::Journal;
-use codex_journal::JournalHistoryItem;
 use codex_journal::JournalItem;
 use codex_journal::JournalKey;
+use codex_journal::JournalTranscriptItem;
 use codex_journal::history as thread_history;
 use codex_journal::history::estimate_item_token_count;
 use codex_journal::history::estimate_response_item_model_visible_bytes;
@@ -52,8 +52,8 @@ pub(crate) fn raw_items(journal: &Journal) -> Vec<ResponseItem> {
         .entries()
         .iter()
         .filter_map(|entry| match &entry.item {
-            JournalItem::History(item) => Some(item.item.clone()),
-            JournalItem::Context(_) | JournalItem::Checkpoint(_) => None,
+            JournalItem::Transcript(item) => Some(item.item.clone()),
+            JournalItem::Metadata(_) | JournalItem::Checkpoint(_) => None,
         })
         .collect()
 }
@@ -232,7 +232,7 @@ pub(crate) fn get_total_token_usage_breakdown(
 }
 
 fn push_history_item(journal: &mut Journal, item: ResponseItem) {
-    let history_item = JournalHistoryItem::new(item);
+    let history_item = JournalTranscriptItem::new(item);
     let key = JournalKey::new(vec!["history".to_string(), history_item.id.clone()]);
     journal.add(key, history_item);
 }

@@ -1,18 +1,18 @@
 use crate::JournalEntry;
 use crate::JournalError;
+use crate::JournalItem;
 use crate::JournalKey;
 use crate::KeyFilter;
+use crate::MetadataEntryBuilder;
 use crate::PromptView;
 use crate::Result;
 use codex_protocol::journal::JournalCheckpointItem;
 use codex_protocol::journal::JournalContextAudience;
 use codex_protocol::journal::JournalContextForkBehavior;
-use codex_protocol::journal::JournalContextItem;
-use codex_protocol::journal::JournalContextKey;
 use codex_protocol::journal::JournalHistoryCursor;
-use codex_protocol::journal::JournalHistoryItem;
-use codex_protocol::journal::JournalItem;
+use codex_protocol::journal::JournalMetadataItem;
 use codex_protocol::journal::JournalReplacePrefixCheckpoint;
+use codex_protocol::journal::JournalTranscriptItem;
 use codex_protocol::journal::JournalTruncateHistoryCheckpoint;
 use codex_protocol::models::ResponseItem;
 use indexmap::IndexMap;
@@ -63,6 +63,40 @@ impl Journal {
         &self.entries
     }
 
+    /// Starts building one prompt-metadata entry.
+    pub fn metadata_entry_builder(
+        key: impl Into<JournalKey>,
+        message: impl Into<crate::PromptMessage>,
+    ) -> MetadataEntryBuilder {
+        MetadataEntryBuilder::new(key, message)
+    }
+
+    /// Builds one prompt-metadata entry if the message is non-empty after trimming text content.
+    pub fn metadata_entry(
+        key: impl Into<JournalKey>,
+        prompt_order: i64,
+        message: impl Into<crate::PromptMessage>,
+    ) -> Option<JournalEntry> {
+        Self::metadata_entry_builder(key, message)
+            .prompt_order(prompt_order)
+            .build()
+    }
+
+    pub fn context_entry_builder(
+        key: impl Into<JournalKey>,
+        message: impl Into<crate::PromptMessage>,
+    ) -> MetadataEntryBuilder {
+        Self::metadata_entry_builder(key, message)
+    }
+
+    pub fn context_entry(
+        key: impl Into<JournalKey>,
+        prompt_order: i64,
+        message: impl Into<crate::PromptMessage>,
+    ) -> Option<JournalEntry> {
+        Self::metadata_entry(key, prompt_order, message)
+    }
+
     /// Returns a journal containing only journal entries whose keys match the filter.
     pub fn filter(&self, filter: &KeyFilter) -> Self {
         let entries = self
@@ -89,8 +123,8 @@ impl Journal {
         self.to_prompt_matching_filter(view, None)
     }
 
-    /// Renders the current effective journal view into model prompt items after selecting
-    /// only journal entries whose keys match the filter.
+    /// Renders the current effective journal view into model prompt items after selecting only
+    /// journal entries whose keys match the filter.
     pub fn to_prompt_with_filter(
         &self,
         view: &PromptView,
@@ -115,14 +149,8 @@ impl Journal {
     /// This is the first building block for a rolling in-memory window: callers can
     /// persist the full journal elsewhere, then keep only the flattened journal hot.
     pub fn flatten(&self) -> Result<Self> {
-        let resolved = self.resolve(None)?;
-        Ok(Self::from_entries(
-            resolved
-                .contexts
-                .into_iter()
-                .chain(resolved.history)
-                .collect(),
-        ))
+        let resolved = self.resolve()?;
+        Ok(Self::from_entries(resolved.into_entries()))
     }
 
     /// Keeps only the current effective journal view plus the history suffix that starts
@@ -131,13 +159,16 @@ impl Journal {
     /// This is a lightweight rolling-window helper: callers can persist the full
     /// journal on disk, then keep only a recent hot suffix in memory.
     pub fn with_history_window(&self, start: &JournalHistoryCursor) -> Result<Self> {
-        let resolved = self.resolve(None)?;
-        let start_index = resolve_cursor(resolved.history.as_slice(), start)?;
+        let resolved = self.resolve()?;
+        let start_index = resolve_cursor(resolved.transcript().entries(), start)?;
+        let ResolvedJournal {
+            metadata,
+            transcript,
+        } = resolved;
         Ok(Self::from_entries(
-            resolved
-                .contexts
+            metadata
                 .into_iter()
-                .chain(resolved.history.into_iter().skip(start_index))
+                .chain(transcript.into_iter().skip(start_index))
                 .collect(),
         ))
     }
@@ -175,44 +206,60 @@ impl Journal {
         Ok(Self::from_entries(entries))
     }
 
+    /// Resolves the current effective journal into prompt metadata and transcript views.
+    pub fn resolve(&self) -> Result<ResolvedJournal> {
+        self.resolve_filter(None)
+    }
+
+    /// Resolves the current effective journal after selecting only entries whose keys match the
+    /// filter.
+    pub fn resolve_with_filter(&self, filter: &KeyFilter) -> Result<ResolvedJournal> {
+        self.resolve_filter(Some(filter))
+    }
+
     fn to_prompt_matching_filter(
         &self,
         view: &PromptView,
         filter: Option<&KeyFilter>,
     ) -> Result<Vec<ResponseItem>> {
-        let resolved = self.resolve(filter)?;
+        let resolved = self.resolve_filter(filter)?;
         let mut prompt: Vec<ResponseItem> = resolved
-            .contexts
+            .metadata
             .into_iter()
-            .filter(|entry| context_visible_in_view(context_item(entry), view))
+            .filter(|entry| metadata_visible_in_view(metadata_item(entry), view))
             .map(|entry| match entry.item {
-                JournalItem::Context(item) => ResponseItem::from(item),
-                _ => unreachable!("resolved context entries must be context items"),
+                JournalItem::Metadata(item) => ResponseItem::from(item),
+                _ => unreachable!("resolved metadata entries must be metadata items"),
             })
             .collect();
-        prompt.extend(resolved.history.into_iter().map(|entry| match entry.item {
-            JournalItem::History(item) => ResponseItem::from(item),
-            _ => unreachable!("resolved history entries must be history items"),
-        }));
+        prompt.extend(
+            resolved
+                .transcript
+                .into_iter()
+                .map(|entry| match entry.item {
+                    JournalItem::Transcript(item) => ResponseItem::from(item),
+                    _ => unreachable!("resolved transcript entries must be transcript items"),
+                }),
+        );
         Ok(prompt)
     }
 
     fn fork_matching_filter(&self, view: &PromptView, filter: Option<&KeyFilter>) -> Result<Self> {
-        let resolved = self.resolve(filter)?;
+        let resolved = self.resolve_filter(filter)?;
         Ok(Self::from_entries(
             resolved
-                .contexts
+                .metadata
                 .into_iter()
-                .filter(|entry| context_item(entry).on_fork == JournalContextForkBehavior::Keep)
-                .filter(|entry| context_visible_in_view(context_item(entry), view))
-                .chain(resolved.history)
+                .filter(|entry| metadata_item(entry).on_fork == JournalContextForkBehavior::Keep)
+                .filter(|entry| metadata_visible_in_view(metadata_item(entry), view))
+                .chain(resolved.transcript)
                 .collect(),
         ))
     }
 
-    fn resolve(&self, filter: Option<&KeyFilter>) -> Result<ResolvedJournal> {
-        let mut history = Vec::<JournalEntry>::new();
-        let mut latest_context_by_key = IndexMap::<JournalContextKey, (usize, JournalEntry)>::new();
+    fn resolve_filter(&self, filter: Option<&KeyFilter>) -> Result<ResolvedJournal> {
+        let mut transcript = Vec::<JournalEntry>::new();
+        let mut latest_metadata_by_key = IndexMap::<JournalKey, (usize, JournalEntry)>::new();
 
         for (index, entry) in self.entries.iter().enumerate() {
             if let Some(filter) = filter
@@ -221,39 +268,192 @@ impl Journal {
                 continue;
             }
             match &entry.item {
-                JournalItem::History(_) => history.push(entry.clone()),
-                JournalItem::Context(context_item) => {
-                    latest_context_by_key.insert(context_item.key.clone(), (index, entry.clone()));
+                JournalItem::Transcript(_) => transcript.push(entry.clone()),
+                JournalItem::Metadata(_) => {
+                    latest_metadata_by_key.insert(entry.key.clone(), (index, entry.clone()));
                 }
                 JournalItem::Checkpoint(checkpoint) => {
-                    apply_checkpoint(&mut history, &entry.key, checkpoint)?;
+                    apply_checkpoint(&mut transcript, &entry.key, checkpoint)?;
                 }
             }
         }
 
-        let mut contexts = latest_context_by_key.into_values().collect::<Vec<_>>();
-        contexts.sort_by(|(left_index, left_entry), (right_index, right_entry)| {
-            context_item(left_entry)
+        let mut metadata = latest_metadata_by_key.into_values().collect::<Vec<_>>();
+        metadata.sort_by(|(left_index, left_entry), (right_index, right_entry)| {
+            metadata_item(left_entry)
                 .prompt_order
-                .cmp(&context_item(right_entry).prompt_order)
+                .cmp(&metadata_item(right_entry).prompt_order)
                 .then_with(|| left_index.cmp(right_index))
         });
 
-        Ok(ResolvedJournal {
-            contexts: contexts.into_iter().map(|(_, entry)| entry).collect(),
-            history,
-        })
+        Ok(ResolvedJournal::new(
+            metadata.into_iter().map(|(_, entry)| entry).collect(),
+            transcript,
+        ))
     }
 }
 
-#[derive(Debug)]
-struct ResolvedJournal {
-    contexts: Vec<JournalEntry>,
-    history: Vec<JournalEntry>,
+/// Effective journal view after deduplicating prompt context and applying history checkpoints.
+///
+/// `contexts` and `history` are derived from the same append-only source of truth, but they have
+/// different semantics:
+///
+/// - [`ResolvedMetadata`] contains keyed prompt-metadata entries. Later entries with the same key
+///   replace earlier ones and the result is ordered by `prompt_order`.
+/// - [`ResolvedTranscript`] contains ordered transcript entries after checkpoint application.
+///   Transcript preserves order and can be truncated or rewritten by checkpoints.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ResolvedJournal {
+    metadata: ResolvedMetadata,
+    transcript: ResolvedTranscript,
+}
+
+impl ResolvedJournal {
+    fn new(metadata: Vec<JournalEntry>, transcript: Vec<JournalEntry>) -> Self {
+        Self {
+            metadata: ResolvedMetadata::new(metadata),
+            transcript: ResolvedTranscript::new(transcript),
+        }
+    }
+
+    /// Returns the effective prompt-metadata view.
+    pub fn metadata(&self) -> &ResolvedMetadata {
+        &self.metadata
+    }
+
+    /// Returns the effective transcript view.
+    pub fn transcript(&self) -> &ResolvedTranscript {
+        &self.transcript
+    }
+
+    /// Returns the effective prompt-metadata view.
+    pub fn contexts(&self) -> &ResolvedMetadata {
+        self.metadata()
+    }
+
+    /// Returns the effective transcript view.
+    pub fn history(&self) -> &ResolvedTranscript {
+        self.transcript()
+    }
+
+    /// Consumes the resolved view and returns only the prompt-metadata entries.
+    pub fn into_metadata(self) -> ResolvedMetadata {
+        self.metadata
+    }
+
+    /// Consumes the resolved view and returns only the transcript entries.
+    pub fn into_transcript(self) -> ResolvedTranscript {
+        self.transcript
+    }
+
+    pub fn into_contexts(self) -> ResolvedMetadata {
+        self.into_metadata()
+    }
+
+    pub fn into_history(self) -> ResolvedTranscript {
+        self.into_transcript()
+    }
+
+    /// Consumes the resolved view and concatenates metadata followed by transcript entries.
+    pub fn into_entries(self) -> Vec<JournalEntry> {
+        self.metadata
+            .into_entries()
+            .into_iter()
+            .chain(self.transcript.into_entries())
+            .collect()
+    }
+}
+
+/// Effective prompt-metadata entries derived from a journal.
+///
+/// These entries are deduplicated by key and sorted for prompt rendering. They are suitable for
+/// rendering or for building flattened and forked journal states.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ResolvedMetadata {
+    entries: Vec<JournalEntry>,
+}
+
+impl ResolvedMetadata {
+    fn new(entries: Vec<JournalEntry>) -> Self {
+        Self { entries }
+    }
+
+    /// Returns the resolved prompt-metadata entries.
+    pub fn entries(&self) -> &[JournalEntry] {
+        &self.entries
+    }
+
+    /// Returns whether there are no resolved prompt-metadata entries.
+    pub fn is_empty(&self) -> bool {
+        self.entries.is_empty()
+    }
+
+    /// Returns the number of resolved prompt-metadata entries.
+    pub fn len(&self) -> usize {
+        self.entries.len()
+    }
+
+    /// Consumes the view and returns its entries.
+    pub fn into_entries(self) -> Vec<JournalEntry> {
+        self.entries
+    }
+}
+
+impl IntoIterator for ResolvedMetadata {
+    type Item = JournalEntry;
+    type IntoIter = std::vec::IntoIter<JournalEntry>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.entries.into_iter()
+    }
+}
+
+/// Effective transcript entries derived from a journal.
+///
+/// These entries preserve prompt-visible order after checkpoint application. Unlike prompt
+/// metadata, transcript is not deduplicated by key.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ResolvedTranscript {
+    entries: Vec<JournalEntry>,
+}
+
+impl ResolvedTranscript {
+    fn new(entries: Vec<JournalEntry>) -> Self {
+        Self { entries }
+    }
+
+    /// Returns the resolved transcript entries.
+    pub fn entries(&self) -> &[JournalEntry] {
+        &self.entries
+    }
+
+    /// Returns whether there are no resolved transcript entries.
+    pub fn is_empty(&self) -> bool {
+        self.entries.is_empty()
+    }
+
+    /// Returns the number of resolved transcript entries.
+    pub fn len(&self) -> usize {
+        self.entries.len()
+    }
+
+    /// Consumes the view and returns its entries.
+    pub fn into_entries(self) -> Vec<JournalEntry> {
+        self.entries
+    }
+}
+
+impl IntoIterator for ResolvedTranscript {
+    type Item = JournalEntry;
+    type IntoIter = std::vec::IntoIter<JournalEntry>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.entries.into_iter()
+    }
 }
 
 fn apply_checkpoint(
-    history: &mut Vec<JournalEntry>,
+    transcript: &mut Vec<JournalEntry>,
     checkpoint_key: &JournalKey,
     checkpoint: &JournalCheckpointItem,
 ) -> Result<()> {
@@ -262,40 +462,40 @@ fn apply_checkpoint(
             through,
             replacement,
         }) => {
-            let keep_from = resolve_cursor(history.as_slice(), through)?;
-            let mut next_history =
-                Vec::with_capacity(replacement.len() + history.len().saturating_sub(keep_from));
-            next_history.extend(
+            let keep_from = resolve_cursor(transcript.as_slice(), through)?;
+            let mut next_transcript =
+                Vec::with_capacity(replacement.len() + transcript.len().saturating_sub(keep_from));
+            next_transcript.extend(
                 replacement
                     .iter()
                     .cloned()
                     .enumerate()
                     .map(|(index, item)| {
                         JournalEntry::new(
-                            replacement_history_key(checkpoint_key, index, &item),
+                            replacement_transcript_key(checkpoint_key, index, &item),
                             item,
                         )
                     }),
             );
-            next_history.extend(history[keep_from..].iter().cloned());
-            *history = next_history;
+            next_transcript.extend(transcript[keep_from..].iter().cloned());
+            *transcript = next_transcript;
             Ok(())
         }
         JournalCheckpointItem::TruncateHistory(JournalTruncateHistoryCheckpoint { through }) => {
-            let keep_len = resolve_cursor(history.as_slice(), through)?;
-            history.truncate(keep_len);
+            let keep_len = resolve_cursor(transcript.as_slice(), through)?;
+            transcript.truncate(keep_len);
             Ok(())
         }
     }
 }
 
-fn resolve_cursor(history: &[JournalEntry], cursor: &JournalHistoryCursor) -> Result<usize> {
+fn resolve_cursor(transcript: &[JournalEntry], cursor: &JournalHistoryCursor) -> Result<usize> {
     match cursor {
         JournalHistoryCursor::Start => Ok(0),
-        JournalHistoryCursor::End => Ok(history.len()),
-        JournalHistoryCursor::AfterItem(history_item_id) => history
+        JournalHistoryCursor::End => Ok(transcript.len()),
+        JournalHistoryCursor::AfterItem(history_item_id) => transcript
             .iter()
-            .position(|entry| history_item(entry).id == *history_item_id)
+            .position(|entry| transcript_item(entry).id == *history_item_id)
             .map(|index| index + 1)
             .ok_or_else(|| JournalError::UnknownHistoryItemId {
                 history_item_id: history_item_id.clone(),
@@ -303,32 +503,32 @@ fn resolve_cursor(history: &[JournalEntry], cursor: &JournalHistoryCursor) -> Re
     }
 }
 
-fn replacement_history_key(
+fn replacement_transcript_key(
     checkpoint_key: &JournalKey,
     index: usize,
-    history_item: &JournalHistoryItem,
+    transcript_item: &JournalTranscriptItem,
 ) -> JournalKey {
     checkpoint_key
         .child("replacement")
         .child(index.to_string())
-        .child(history_item.id.clone())
+        .child(transcript_item.id.clone())
 }
 
-fn context_item(entry: &JournalEntry) -> &JournalContextItem {
+fn metadata_item(entry: &JournalEntry) -> &JournalMetadataItem {
     match &entry.item {
-        JournalItem::Context(item) => item,
-        _ => unreachable!("resolved context entries must be context items"),
+        JournalItem::Metadata(item) => item,
+        _ => unreachable!("resolved metadata entries must be metadata items"),
     }
 }
 
-fn history_item(entry: &JournalEntry) -> &JournalHistoryItem {
+fn transcript_item(entry: &JournalEntry) -> &JournalTranscriptItem {
     match &entry.item {
-        JournalItem::History(item) => item,
-        _ => unreachable!("resolved history entries must be history items"),
+        JournalItem::Transcript(item) => item,
+        _ => unreachable!("resolved transcript entries must be transcript items"),
     }
 }
 
-fn context_visible_in_view(item: &JournalContextItem, view: &PromptView) -> bool {
+fn metadata_visible_in_view(item: &JournalMetadataItem, view: &PromptView) -> bool {
     match &item.audience {
         JournalContextAudience::All => true,
         JournalContextAudience::RootOnly => view.is_root,

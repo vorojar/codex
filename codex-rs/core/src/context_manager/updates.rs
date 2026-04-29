@@ -13,23 +13,36 @@ use crate::shell::Shell;
 use codex_execpolicy::Policy;
 use codex_features::Feature;
 use codex_journal::Journal;
-use codex_journal::JournalContextItem;
-use codex_journal::JournalContextKey;
 use codex_journal::JournalEntry;
-use codex_journal::JournalItem;
+use codex_journal::KeyFilter;
+use codex_journal::MetadataEntryBuilder;
 use codex_journal::PromptMessage;
-use codex_journal::PromptMessageRole;
+use codex_journal::PromptRenderer;
 use codex_protocol::config_types::Personality;
-use codex_protocol::models::ContentItem;
-use codex_protocol::models::ResponseItem;
 use codex_protocol::openai_models::ModelInfo;
 use codex_protocol::protocol::TurnContextItem;
 
 const PROMPT_BUNDLE_KEY_PREFIX: &str = "prompt";
-const DEVELOPER_BUNDLE: &str = "developer";
-const USAGE_HINT_BUNDLE: &str = "usage_hint";
-const CONTEXTUAL_USER_BUNDLE: &str = "contextual_user";
-const GUARDIAN_BUNDLE: &str = "guardian";
+pub(crate) const DEVELOPER_BUNDLE: &str = "developer";
+pub(crate) const USAGE_HINT_BUNDLE: &str = "usage_hint";
+pub(crate) const CONTEXTUAL_USER_BUNDLE: &str = "contextual_user";
+pub(crate) const GUARDIAN_BUNDLE: &str = "guardian";
+
+pub(crate) fn context_prompt_renderer() -> PromptRenderer {
+    PromptRenderer::new()
+        .group(KeyFilter::prefix([
+            PROMPT_BUNDLE_KEY_PREFIX,
+            DEVELOPER_BUNDLE,
+        ]))
+        .group(KeyFilter::prefix([
+            PROMPT_BUNDLE_KEY_PREFIX,
+            USAGE_HINT_BUNDLE,
+        ]))
+        .group(KeyFilter::prefix([
+            PROMPT_BUNDLE_KEY_PREFIX,
+            CONTEXTUAL_USER_BUNDLE,
+        ]))
+}
 
 fn build_environment_update_item(
     previous: Option<&TurnContextItem>,
@@ -186,133 +199,19 @@ pub(crate) fn build_model_instructions_update_item(
     Some(ModelSwitchInstructions::new(model_instructions).render())
 }
 
-pub(crate) fn developer_context_entry(
-    name: &str,
-    prompt_order: i64,
-    text: String,
-) -> Option<JournalEntry> {
-    context_entry(
-        DEVELOPER_BUNDLE,
-        name,
-        prompt_order,
-        PromptMessage::developer_text(text),
-    )
-}
-
-pub(crate) fn usage_hint_context_entry(
-    name: &str,
-    prompt_order: i64,
-    text: String,
-) -> Option<JournalEntry> {
-    context_entry(
-        USAGE_HINT_BUNDLE,
-        name,
-        prompt_order,
-        PromptMessage::developer_text(text),
-    )
-}
-
-pub(crate) fn contextual_user_context_entry(
-    name: &str,
-    prompt_order: i64,
-    text: String,
-) -> Option<JournalEntry> {
-    context_entry(
-        CONTEXTUAL_USER_BUNDLE,
-        name,
-        prompt_order,
-        PromptMessage::user_text(text),
-    )
-}
-
-pub(crate) fn guardian_context_entry(
-    name: &str,
-    prompt_order: i64,
-    text: String,
-) -> Option<JournalEntry> {
-    context_entry(
-        GUARDIAN_BUNDLE,
-        name,
-        prompt_order,
-        PromptMessage::developer_text(text),
-    )
-}
-
-fn context_entry(
+pub(crate) fn context_entry(
     bundle: &str,
     name: &str,
     prompt_order: i64,
     message: PromptMessage,
 ) -> Option<JournalEntry> {
-    if message.content.is_empty()
-        || message.content.iter().all(|item| match item {
-            ContentItem::InputText { text } | ContentItem::OutputText { text } => {
-                text.trim().is_empty()
-            }
-            ContentItem::InputImage { .. } => false,
-        })
-    {
-        return None;
-    }
-
-    Some(JournalEntry::new(
-        [PROMPT_BUNDLE_KEY_PREFIX, bundle, name],
-        JournalContextItem::new(JournalContextKey::new(bundle, name, None), message)
-            .with_prompt_order(prompt_order),
-    ))
+    context_entry_builder(bundle, name, message)
+        .prompt_order(prompt_order)
+        .build()
 }
 
-pub(crate) fn render_context_entries(entries: Vec<JournalEntry>) -> Vec<ResponseItem> {
-    let flattened = match Journal::from_entries(entries).flatten() {
-        Ok(flattened) => flattened,
-        Err(error) => unreachable!("context-only journal entries should flatten: {error}"),
-    };
-
-    let mut rendered = Vec::new();
-    let mut current_bundle: Option<Vec<String>> = None;
-    let mut current_role: Option<PromptMessageRole> = None;
-    let mut current_content = Vec::new();
-
-    for entry in flattened.entries() {
-        let JournalItem::Context(item) = &entry.item else {
-            continue;
-        };
-        let bundle = entry
-            .key
-            .parts()
-            .iter()
-            .take(2)
-            .cloned()
-            .collect::<Vec<_>>();
-
-        if current_bundle.as_ref() != Some(&bundle) || current_role != Some(item.message.role) {
-            flush_prompt_message(&mut rendered, &mut current_role, &mut current_content);
-            current_bundle = Some(bundle);
-            current_role = Some(item.message.role);
-        }
-
-        current_content.extend(item.message.content.clone());
-    }
-
-    flush_prompt_message(&mut rendered, &mut current_role, &mut current_content);
-    rendered
-}
-
-fn flush_prompt_message(
-    rendered: &mut Vec<ResponseItem>,
-    role: &mut Option<PromptMessageRole>,
-    content: &mut Vec<codex_protocol::models::ContentItem>,
-) {
-    let Some(role) = role.take() else {
-        return;
-    };
-    if content.is_empty() {
-        return;
-    }
-    rendered.push(ResponseItem::from(PromptMessage::new(
-        role,
-        std::mem::take(content),
-    )));
+fn context_entry_builder(bundle: &str, name: &str, message: PromptMessage) -> MetadataEntryBuilder {
+    Journal::metadata_entry_builder([PROMPT_BUNDLE_KEY_PREFIX, bundle, name], message)
 }
 
 pub(crate) fn build_settings_update_entries(
@@ -333,34 +232,70 @@ pub(crate) fn build_settings_update_entries(
         build_model_instructions_update_item(previous_turn_settings, next).and_then(|text| {
             // Keep model-switch instructions first so model-specific guidance is read before
             // any other context diffs on this turn.
-            developer_context_entry("model_switch", 10, text)
+            context_entry(
+                DEVELOPER_BUNDLE,
+                "model_switch",
+                10,
+                PromptMessage::developer_text(text),
+            )
         })
     {
         entries.push(item);
     }
-    if let Some(item) = build_permissions_update_item(previous, next, exec_policy)
-        .and_then(|text| developer_context_entry("permissions", 20, text))
+    if let Some(item) =
+        build_permissions_update_item(previous, next, exec_policy).and_then(|text| {
+            context_entry(
+                DEVELOPER_BUNDLE,
+                "permissions",
+                20,
+                PromptMessage::developer_text(text),
+            )
+        })
     {
         entries.push(item);
     }
-    if let Some(item) = build_collaboration_mode_update_item(previous, next)
-        .and_then(|text| developer_context_entry("collaboration_mode", 30, text))
-    {
+    if let Some(item) = build_collaboration_mode_update_item(previous, next).and_then(|text| {
+        context_entry(
+            DEVELOPER_BUNDLE,
+            "collaboration_mode",
+            30,
+            PromptMessage::developer_text(text),
+        )
+    }) {
         entries.push(item);
     }
-    if let Some(item) = build_realtime_update_item(previous, previous_turn_settings, next)
-        .and_then(|text| developer_context_entry("realtime", 40, text))
+    if let Some(item) =
+        build_realtime_update_item(previous, previous_turn_settings, next).and_then(|text| {
+            context_entry(
+                DEVELOPER_BUNDLE,
+                "realtime",
+                40,
+                PromptMessage::developer_text(text),
+            )
+        })
     {
         entries.push(item);
     }
     if let Some(item) = build_personality_update_item(previous, next, personality_feature_enabled)
-        .and_then(|text| developer_context_entry("personality", 50, text))
+        .and_then(|text| {
+            context_entry(
+                DEVELOPER_BUNDLE,
+                "personality",
+                50,
+                PromptMessage::developer_text(text),
+            )
+        })
     {
         entries.push(item);
     }
-    if let Some(item) = build_environment_update_item(previous, next, shell)
-        .and_then(|text| contextual_user_context_entry("environment", 60, text))
-    {
+    if let Some(item) = build_environment_update_item(previous, next, shell).and_then(|text| {
+        context_entry(
+            CONTEXTUAL_USER_BUNDLE,
+            "environment",
+            60,
+            PromptMessage::user_text(text),
+        )
+    }) {
         entries.push(item);
     }
 

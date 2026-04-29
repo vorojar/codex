@@ -229,9 +229,8 @@ fn join_error(err: tokio::task::JoinError) -> ThreadStoreError {
 #[cfg(test)]
 mod tests {
     use codex_journal::Journal;
-    use codex_journal::JournalContextItem;
-    use codex_journal::JournalContextKey;
-    use codex_journal::JournalHistoryItem;
+    use codex_journal::JournalMetadataItem;
+    use codex_journal::JournalTranscriptItem;
     use codex_journal::PromptMessage;
     use codex_protocol::models::ContentItem;
     use codex_protocol::models::ResponseItem;
@@ -243,17 +242,14 @@ mod tests {
     fn developer_entry(text: &str) -> codex_journal::JournalEntry {
         codex_journal::JournalEntry::new(
             ["prompt", text],
-            JournalContextItem::new(
-                JournalContextKey::new("context", text, None),
-                PromptMessage::developer_text(text),
-            ),
+            JournalMetadataItem::new(PromptMessage::developer_text(text)),
         )
     }
 
     fn user_entry(text: &str) -> codex_journal::JournalEntry {
         codex_journal::JournalEntry::new(
             ["history", text],
-            JournalHistoryItem {
+            JournalTranscriptItem {
                 id: format!("history-{text}"),
                 turn_id: None,
                 item: ResponseItem::Message {

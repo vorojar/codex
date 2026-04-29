@@ -59,6 +59,7 @@ use codex_features::Feature;
 use codex_features::unstable_features_warning_event;
 use codex_hooks::Hooks;
 use codex_hooks::HooksConfig;
+use codex_journal::PromptMessage;
 use codex_login::AuthManager;
 use codex_login::CodexAuth;
 use codex_login::auth_env_telemetry::collect_auth_env_telemetry;
@@ -1437,7 +1438,12 @@ impl Session {
             exec_policy.as_ref(),
             self.features.enabled(Feature::Personality),
         );
-        crate::context_manager::updates::render_context_entries(entries)
+        let resolved = match codex_journal::Journal::from_entries(entries).resolve() {
+            Ok(resolved) => resolved,
+            Err(error) => unreachable!("settings update entries should resolve: {error}"),
+        };
+        crate::context_manager::updates::context_prompt_renderer()
+            .render_metadata(resolved.metadata())
     }
 
     /// Persist the event to rollout and send it to clients.
@@ -2503,9 +2509,16 @@ impl Session {
         &self,
         turn_context: &TurnContext,
     ) -> Vec<ResponseItem> {
-        crate::context_manager::updates::render_context_entries(
+        let resolved = match codex_journal::Journal::from_entries(
             self.build_initial_context_entries(turn_context).await,
         )
+        .resolve()
+        {
+            Ok(resolved) => resolved,
+            Err(error) => unreachable!("initial context entries should resolve: {error}"),
+        };
+        crate::context_manager::updates::context_prompt_renderer()
+            .render_metadata(resolved.metadata())
     }
 
     #[expect(
@@ -2539,10 +2552,11 @@ impl Session {
                 previous_turn_settings.as_ref(),
                 turn_context,
             )
-            && let Some(entry) = crate::context_manager::updates::developer_context_entry(
+            && let Some(entry) = crate::context_manager::updates::context_entry(
+                crate::context_manager::updates::DEVELOPER_BUNDLE,
                 "model_switch",
                 10,
-                model_switch_message,
+                PromptMessage::developer_text(model_switch_message),
             )
         {
             entries.push(entry);
@@ -2562,10 +2576,11 @@ impl Session {
                     .enabled(Feature::RequestPermissionsTool),
             )
             .render();
-            if let Some(entry) = crate::context_manager::updates::developer_context_entry(
+            if let Some(entry) = crate::context_manager::updates::context_entry(
+                crate::context_manager::updates::DEVELOPER_BUNDLE,
                 "permissions",
                 20,
-                permissions_instructions,
+                PromptMessage::developer_text(permissions_instructions),
             ) {
                 entries.push(entry);
             }
@@ -2577,10 +2592,11 @@ impl Session {
         if !separate_guardian_developer_message
             && let Some(developer_instructions) = turn_context.developer_instructions.as_deref()
             && !developer_instructions.is_empty()
-            && let Some(entry) = crate::context_manager::updates::developer_context_entry(
+            && let Some(entry) = crate::context_manager::updates::context_entry(
+                crate::context_manager::updates::DEVELOPER_BUNDLE,
                 "developer_instructions",
                 30,
-                developer_instructions.to_string(),
+                PromptMessage::developer_text(developer_instructions.to_string()),
             )
         {
             entries.push(entry);
@@ -2590,10 +2606,11 @@ impl Session {
             && turn_context.config.memories.use_memories
             && let Some(memory_prompt) =
                 build_memory_tool_developer_instructions(&turn_context.config.codex_home).await
-            && let Some(entry) = crate::context_manager::updates::developer_context_entry(
+            && let Some(entry) = crate::context_manager::updates::context_entry(
+                crate::context_manager::updates::DEVELOPER_BUNDLE,
                 "memory_tool",
                 40,
-                memory_prompt,
+                PromptMessage::developer_text(memory_prompt),
             )
         {
             entries.push(entry);
@@ -2601,10 +2618,11 @@ impl Session {
         // Add developer instructions from collaboration_mode if they exist and are non-empty
         if let Some(collab_instructions) =
             CollaborationModeInstructions::from_collaboration_mode(&collaboration_mode)
-            && let Some(entry) = crate::context_manager::updates::developer_context_entry(
+            && let Some(entry) = crate::context_manager::updates::context_entry(
+                crate::context_manager::updates::DEVELOPER_BUNDLE,
                 "collaboration_mode",
                 50,
-                collab_instructions.render(),
+                PromptMessage::developer_text(collab_instructions.render()),
             )
         {
             entries.push(entry);
@@ -2613,10 +2631,11 @@ impl Session {
             reference_context_item.as_ref(),
             previous_turn_settings.as_ref(),
             turn_context,
-        ) && let Some(entry) = crate::context_manager::updates::developer_context_entry(
+        ) && let Some(entry) = crate::context_manager::updates::context_entry(
+            crate::context_manager::updates::DEVELOPER_BUNDLE,
             "realtime",
             60,
-            realtime_update,
+            PromptMessage::developer_text(realtime_update),
         ) {
             entries.push(entry);
         }
@@ -2632,10 +2651,13 @@ impl Session {
                         &model_info,
                         personality,
                     )
-                && let Some(entry) = crate::context_manager::updates::developer_context_entry(
+                && let Some(entry) = crate::context_manager::updates::context_entry(
+                    crate::context_manager::updates::DEVELOPER_BUNDLE,
                     "personality",
                     70,
-                    PersonalitySpecInstructions::new(personality_message).render(),
+                    PromptMessage::developer_text(
+                        PersonalitySpecInstructions::new(personality_message).render(),
+                    ),
                 )
             {
                 entries.push(entry);
@@ -2651,10 +2673,11 @@ impl Session {
                 .await;
             if let Some(apps_instructions) =
                 AppsInstructions::from_connectors(&accessible_and_enabled_connectors)
-                && let Some(entry) = crate::context_manager::updates::developer_context_entry(
+                && let Some(entry) = crate::context_manager::updates::context_entry(
+                    crate::context_manager::updates::DEVELOPER_BUNDLE,
                     "apps",
                     80,
-                    apps_instructions.render(),
+                    PromptMessage::developer_text(apps_instructions.render()),
                 )
             {
                 entries.push(entry);
@@ -2680,10 +2703,11 @@ impl Session {
                     })
                     .await;
                 }
-                if let Some(entry) = crate::context_manager::updates::developer_context_entry(
+                if let Some(entry) = crate::context_manager::updates::context_entry(
+                    crate::context_manager::updates::DEVELOPER_BUNDLE,
                     "skills",
                     90,
-                    skills_instructions.render(),
+                    PromptMessage::developer_text(skills_instructions.render()),
                 ) {
                     entries.push(entry);
                 }
@@ -2696,10 +2720,11 @@ impl Session {
             .await;
         if let Some(plugin_instructions) =
             AvailablePluginsInstructions::from_plugins(loaded_plugins.capability_summaries())
-            && let Some(entry) = crate::context_manager::updates::developer_context_entry(
+            && let Some(entry) = crate::context_manager::updates::context_entry(
+                crate::context_manager::updates::DEVELOPER_BUNDLE,
                 "plugins",
                 100,
-                plugin_instructions.render(),
+                PromptMessage::developer_text(plugin_instructions.render()),
             )
         {
             entries.push(entry);
@@ -2708,23 +2733,27 @@ impl Session {
             && let Some(commit_message_instruction) = commit_message_trailer_instruction(
                 turn_context.config.commit_attribution.as_deref(),
             )
-            && let Some(entry) = crate::context_manager::updates::developer_context_entry(
+            && let Some(entry) = crate::context_manager::updates::context_entry(
+                crate::context_manager::updates::DEVELOPER_BUNDLE,
                 "commit_message_trailer",
                 110,
-                commit_message_instruction,
+                PromptMessage::developer_text(commit_message_instruction),
             )
         {
             entries.push(entry);
         }
         if let Some(user_instructions) = turn_context.user_instructions.as_deref()
-            && let Some(entry) = crate::context_manager::updates::contextual_user_context_entry(
+            && let Some(entry) = crate::context_manager::updates::context_entry(
+                crate::context_manager::updates::CONTEXTUAL_USER_BUNDLE,
                 "user_instructions",
                 130,
-                UserInstructions {
-                    text: user_instructions.to_string(),
-                    directory: turn_context.cwd.to_string_lossy().into_owned(),
-                }
-                .render(),
+                PromptMessage::user_text(
+                    UserInstructions {
+                        text: user_instructions.to_string(),
+                        directory: turn_context.cwd.to_string_lossy().into_owned(),
+                    }
+                    .render(),
+                ),
             )
         {
             entries.push(entry);
@@ -2735,12 +2764,18 @@ impl Session {
                 .agent_control
                 .format_environment_context_subagents(self.conversation_id)
                 .await;
-            if let Some(entry) = crate::context_manager::updates::contextual_user_context_entry(
+            if let Some(entry) = crate::context_manager::updates::context_entry(
+                crate::context_manager::updates::CONTEXTUAL_USER_BUNDLE,
                 "environment",
                 140,
-                crate::context::EnvironmentContext::from_turn_context(turn_context, shell.as_ref())
+                PromptMessage::user_text(
+                    crate::context::EnvironmentContext::from_turn_context(
+                        turn_context,
+                        shell.as_ref(),
+                    )
                     .with_subagents(subagents)
                     .render(),
+                ),
             ) {
                 entries.push(entry);
             }
@@ -2750,10 +2785,11 @@ impl Session {
             multi_agents::usage_hint_text(turn_context, &session_source);
 
         if let Some(usage_hint_text) = multi_agent_v2_usage_hint_text
-            && let Some(entry) = crate::context_manager::updates::usage_hint_context_entry(
+            && let Some(entry) = crate::context_manager::updates::context_entry(
+                crate::context_manager::updates::USAGE_HINT_BUNDLE,
                 "multi_agent_v2",
                 120,
-                usage_hint_text.to_string(),
+                PromptMessage::developer_text(usage_hint_text.to_string()),
             )
         {
             entries.push(entry);
@@ -2763,10 +2799,11 @@ impl Session {
         if separate_guardian_developer_message
             && let Some(developer_instructions) = turn_context.developer_instructions.as_deref()
             && !developer_instructions.is_empty()
-            && let Some(entry) = crate::context_manager::updates::guardian_context_entry(
+            && let Some(entry) = crate::context_manager::updates::context_entry(
+                crate::context_manager::updates::GUARDIAN_BUNDLE,
                 "developer_instructions",
                 150,
-                developer_instructions.to_string(),
+                PromptMessage::developer_text(developer_instructions.to_string()),
             )
         {
             entries.push(entry);

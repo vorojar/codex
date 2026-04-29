@@ -79,30 +79,6 @@ impl KeyFilter {
     }
 }
 
-/// Stable identity for a prompt-context entry.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema, TS)]
-pub struct JournalContextKey {
-    pub namespace: String,
-    pub name: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[ts(optional)]
-    pub instance: Option<String>,
-}
-
-impl JournalContextKey {
-    pub fn new(
-        namespace: impl Into<String>,
-        name: impl Into<String>,
-        instance: Option<String>,
-    ) -> Self {
-        Self {
-            namespace: namespace.into(),
-            name: name.into(),
-            instance,
-        }
-    }
-}
-
 /// Minimal message block that can be projected into a model-visible prompt item.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
 pub struct PromptMessage {
@@ -170,9 +146,9 @@ impl PromptMessageRole {
     }
 }
 
-/// Durable history item. Unlike prompt context, history keeps original ordering.
+/// Durable transcript item. Unlike prompt metadata, transcript keeps original ordering.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
-pub struct JournalHistoryItem {
+pub struct JournalTranscriptItem {
     pub id: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
@@ -180,7 +156,7 @@ pub struct JournalHistoryItem {
     pub item: ResponseItem,
 }
 
-impl JournalHistoryItem {
+impl JournalTranscriptItem {
     pub fn new(item: ResponseItem) -> Self {
         Self {
             id: Uuid::new_v4().to_string(),
@@ -195,28 +171,27 @@ impl JournalHistoryItem {
     }
 }
 
-impl From<ResponseItem> for JournalHistoryItem {
+impl From<ResponseItem> for JournalTranscriptItem {
     fn from(value: ResponseItem) -> Self {
         Self::new(value)
     }
 }
 
-impl From<JournalHistoryItem> for ResponseItem {
-    fn from(value: JournalHistoryItem) -> Self {
+impl From<JournalTranscriptItem> for ResponseItem {
+    fn from(value: JournalTranscriptItem) -> Self {
         value.item
     }
 }
 
-impl From<JournalContextItem> for ResponseItem {
-    fn from(value: JournalContextItem) -> Self {
+impl From<JournalMetadataItem> for ResponseItem {
+    fn from(value: JournalMetadataItem) -> Self {
         value.message.into()
     }
 }
 
-/// Prompt-context entry with stable identity and filtering metadata.
+/// Prompt-metadata entry payload and filtering metadata.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
-pub struct JournalContextItem {
-    pub key: JournalContextKey,
+pub struct JournalMetadataItem {
     pub message: PromptMessage,
     #[serde(default)]
     pub prompt_order: i64,
@@ -231,10 +206,9 @@ pub struct JournalContextItem {
     pub source: Option<String>,
 }
 
-impl JournalContextItem {
-    pub fn new(key: JournalContextKey, message: PromptMessage) -> Self {
+impl JournalMetadataItem {
+    pub fn new(message: PromptMessage) -> Self {
         Self {
-            key,
             message,
             prompt_order: 0,
             audience: JournalContextAudience::default(),
@@ -306,7 +280,7 @@ pub enum JournalHistoryCursor {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
 pub struct JournalReplacePrefixCheckpoint {
     pub through: JournalHistoryCursor,
-    pub replacement: Vec<JournalHistoryItem>,
+    pub replacement: Vec<JournalTranscriptItem>,
 }
 
 /// Keep only the current history prefix through the resolved cursor.
@@ -327,26 +301,30 @@ pub enum JournalCheckpointItem {
 #[serde(tag = "type", content = "payload", rename_all = "snake_case")]
 #[ts(tag = "type", content = "payload", rename_all = "snake_case")]
 pub enum JournalItem {
-    History(JournalHistoryItem),
-    Context(JournalContextItem),
+    #[serde(rename = "history")]
+    #[ts(rename = "history")]
+    Transcript(JournalTranscriptItem),
+    #[serde(rename = "context")]
+    #[ts(rename = "context")]
+    Metadata(JournalMetadataItem),
     Checkpoint(JournalCheckpointItem),
 }
 
 impl From<ResponseItem> for JournalItem {
     fn from(value: ResponseItem) -> Self {
-        Self::History(value.into())
+        Self::Transcript(value.into())
     }
 }
 
-impl From<JournalHistoryItem> for JournalItem {
-    fn from(value: JournalHistoryItem) -> Self {
-        Self::History(value)
+impl From<JournalTranscriptItem> for JournalItem {
+    fn from(value: JournalTranscriptItem) -> Self {
+        Self::Transcript(value)
     }
 }
 
-impl From<JournalContextItem> for JournalItem {
-    fn from(value: JournalContextItem) -> Self {
-        Self::Context(value)
+impl From<JournalMetadataItem> for JournalItem {
+    fn from(value: JournalMetadataItem) -> Self {
+        Self::Metadata(value)
     }
 }
 
@@ -381,3 +359,6 @@ where
         Self::new(value.0, value.1)
     }
 }
+
+pub type JournalHistoryItem = JournalTranscriptItem;
+pub type JournalContextItem = JournalMetadataItem;
