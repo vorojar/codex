@@ -4376,6 +4376,26 @@
           "properties": {
             "method": {
               "enum": [
+                "remoteControl/status/changed"
+              ],
+              "title": "RemoteControl/status/changedNotificationMethod",
+              "type": "string"
+            },
+            "params": {
+              "$ref": "#/definitions/v2/RemoteControlStatusChangedNotification"
+            }
+          },
+          "required": [
+            "method",
+            "params"
+          ],
+          "title": "RemoteControl/status/changedNotification",
+          "type": "object"
+        },
+        {
+          "properties": {
+            "method": {
+              "enum": [
                 "externalAgentConfig/import/completed"
               ],
               "title": "ExternalAgentConfig/import/completedNotificationMethod",
@@ -6790,6 +6810,17 @@
         ],
         "type": "string"
       },
+      "CommandMigration": {
+        "properties": {
+          "name": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "type": "object"
+      },
       "Config": {
         "additionalProperties": true,
         "properties": {
@@ -8351,6 +8382,9 @@
           "SKILLS",
           "PLUGINS",
           "MCP_SERVER_CONFIG",
+          "SUBAGENTS",
+          "HOOKS",
+          "COMMANDS",
           "SESSIONS"
         ],
         "type": "string"
@@ -9633,6 +9667,17 @@
         ],
         "type": "object"
       },
+      "HookMigration": {
+        "properties": {
+          "name": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "type": "object"
+      },
       "HookOutputEntry": {
         "properties": {
           "kind": {
@@ -10608,6 +10653,17 @@
         "title": "McpResourceReadResponse",
         "type": "object"
       },
+      "McpServerMigration": {
+        "properties": {
+          "name": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "type": "object"
+      },
       "McpServerOauthLoginCompletedNotification": {
         "$schema": "http://json-schema.org/draft-07/schema#",
         "properties": {
@@ -10932,6 +10988,27 @@
       },
       "MigrationDetails": {
         "properties": {
+          "commands": {
+            "default": [],
+            "items": {
+              "$ref": "#/definitions/v2/CommandMigration"
+            },
+            "type": "array"
+          },
+          "hooks": {
+            "default": [],
+            "items": {
+              "$ref": "#/definitions/v2/HookMigration"
+            },
+            "type": "array"
+          },
+          "mcpServers": {
+            "default": [],
+            "items": {
+              "$ref": "#/definitions/v2/McpServerMigration"
+            },
+            "type": "array"
+          },
           "plugins": {
             "default": [],
             "items": {
@@ -10943,6 +11020,13 @@
             "default": [],
             "items": {
               "$ref": "#/definitions/v2/SessionMigration"
+            },
+            "type": "array"
+          },
+          "subagents": {
+            "default": [],
+            "items": {
+              "$ref": "#/definitions/v2/SubagentMigration"
             },
             "type": "array"
           }
@@ -12658,6 +12742,35 @@
         ],
         "type": "string"
       },
+      "RemoteControlConnectionStatus": {
+        "enum": [
+          "disabled",
+          "connecting",
+          "connected",
+          "errored"
+        ],
+        "type": "string"
+      },
+      "RemoteControlStatusChangedNotification": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "description": "Current remote-control connection status and environment id exposed to clients.",
+        "properties": {
+          "environmentId": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "status": {
+            "$ref": "#/definitions/v2/RemoteControlConnectionStatus"
+          }
+        },
+        "required": [
+          "status"
+        ],
+        "title": "RemoteControlStatusChangedNotification",
+        "type": "object"
+      },
       "RequestId": {
         "anyOf": [
           {
@@ -14245,6 +14358,17 @@
             "type": "object"
           }
         ]
+      },
+      "SubagentMigration": {
+        "properties": {
+          "name": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "type": "object"
       },
       "TerminalInteractionNotification": {
         "$schema": "http://json-schema.org/draft-07/schema#",
