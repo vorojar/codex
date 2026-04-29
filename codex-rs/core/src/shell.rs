@@ -1,5 +1,9 @@
 use crate::shell_detect::detect_shell_type;
 use crate::shell_snapshot::ShellSnapshot;
+#[cfg(windows)]
+use codex_shell_command::powershell::try_find_powershell_executable_blocking;
+#[cfg(windows)]
+use codex_shell_command::powershell::try_find_pwsh_executable_blocking;
 use serde::Deserialize;
 use serde::Serialize;
 use std::path::PathBuf;
@@ -250,6 +254,10 @@ const POWERSHELL_FALLBACK_PATHS: &[&str] =
 const POWERSHELL_FALLBACK_PATHS: &[&str] = &[];
 
 fn get_powershell_shell(path: Option<&PathBuf>) -> Option<Shell> {
+    #[cfg(windows)]
+    let shell_path = get_windows_powershell_shell_path(path);
+
+    #[cfg(not(windows))]
     let shell_path = get_shell_path(ShellType::PowerShell, path, "pwsh", PWSH_FALLBACK_PATHS)
         .or_else(|| {
             get_shell_path(
@@ -265,6 +273,41 @@ fn get_powershell_shell(path: Option<&PathBuf>) -> Option<Shell> {
         shell_path,
         shell_snapshot: empty_shell_snapshot_receiver(),
     })
+}
+
+#[cfg(windows)]
+fn get_windows_powershell_shell_path(path: Option<&PathBuf>) -> Option<PathBuf> {
+    if let Some(path) = path.and_then(file_exists)
+        && !is_windows_batch_script(&path)
+    {
+        return Some(path);
+    }
+
+    let default_shell_path = get_user_shell_path();
+    if let Some(default_shell_path) = default_shell_path
+        && detect_shell_type(&default_shell_path) == Some(ShellType::PowerShell)
+        && file_exists(&default_shell_path).is_some()
+        && !is_windows_batch_script(&default_shell_path)
+    {
+        return Some(default_shell_path);
+    }
+
+    try_find_pwsh_executable_blocking()
+        .map(|path| path.into_path_buf())
+        .or_else(|| try_find_powershell_executable_blocking().map(|path| path.into_path_buf()))
+        .or_else(|| {
+            POWERSHELL_FALLBACK_PATHS
+                .iter()
+                .find_map(|path| file_exists(&PathBuf::from(path)))
+        })
+}
+
+#[cfg(windows)]
+fn is_windows_batch_script(path: &std::path::Path) -> bool {
+    matches!(
+        path.extension().and_then(|extension| extension.to_str()),
+        Some(extension) if extension.eq_ignore_ascii_case("cmd") || extension.eq_ignore_ascii_case("bat")
+    )
 }
 
 fn get_cmd_shell(path: Option<&PathBuf>) -> Option<Shell> {

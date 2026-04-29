@@ -190,3 +190,14 @@ fn finds_powershell() {
 
     assert!(shell_path.ends_with("pwsh.exe") || shell_path.ends_with("powershell.exe"));
 }
+
+#[test]
+fn windows_batch_shell_wrappers_are_rejected() {
+    if !cfg!(windows) {
+        return;
+    }
+
+    assert!(is_windows_batch_script(std::path::Path::new("pwsh.cmd")));
+    assert!(is_windows_batch_script(std::path::Path::new("pwsh.bat")));
+    assert!(!is_windows_batch_script(std::path::Path::new("pwsh.exe")));
+}
