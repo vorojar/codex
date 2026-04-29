@@ -5389,6 +5389,26 @@
         "title": "AccountUpdatedNotification",
         "type": "object"
       },
+      "ActivePermissionProfile": {
+        "properties": {
+          "extends": {
+            "default": null,
+            "description": "Parent profile identifier once permissions profiles support inheritance. This is currently always `null`.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "id": {
+            "description": "Identifier from `default_permissions`, such as a built-in `:workspace` profile or a user-defined `[permissions.<id>]` profile.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "type": "object"
+      },
       "AddCreditsNudgeCreditType": {
         "enum": [
           "credits",
@@ -14718,7 +14738,7 @@
                 "$ref": "#/definitions/v2/SandboxPolicy"
               }
             ],
-            "description": "Legacy sandbox policy retained for compatibility. New clients should use `permissionProfile` when present as the canonical active permissions view."
+            "description": "Legacy sandbox policy retained for compatibility. New clients should use `activePermissionProfile` when they need stable permissions profile identity."
           },
           "serviceTier": {
             "anyOf": [
@@ -16229,7 +16249,7 @@
                 "$ref": "#/definitions/v2/SandboxPolicy"
               }
             ],
-            "description": "Legacy sandbox policy retained for compatibility. New clients should use `permissionProfile` when present as the canonical active permissions view."
+            "description": "Legacy sandbox policy retained for compatibility. New clients should use `activePermissionProfile` when they need stable permissions profile identity."
           },
           "serviceTier": {
             "anyOf": [
@@ -16533,7 +16553,7 @@
                 "$ref": "#/definitions/v2/SandboxPolicy"
               }
             ],
-            "description": "Legacy sandbox policy retained for compatibility. New clients should use `permissionProfile` when present as the canonical active permissions view."
+            "description": "Legacy sandbox policy retained for compatibility. New clients should use `activePermissionProfile` when they need stable permissions profile identity."
           },
           "serviceTier": {
             "anyOf": [

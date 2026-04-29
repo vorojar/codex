@@ -9,6 +9,7 @@ use chrono::Local;
 use codex_model_provider_info::WireApi;
 use codex_protocol::ThreadId;
 use codex_protocol::account::PlanType;
+use codex_protocol::models::ActivePermissionProfile;
 use codex_protocol::models::PermissionProfile;
 use codex_protocol::openai_models::ReasoningEffort;
 use codex_protocol::protocol::AskForApproval;
@@ -281,18 +282,15 @@ impl StatusHistoryCell {
             .map(|(_, v)| v.clone())
             .unwrap_or_else(|| "<unknown>".to_string());
         let permission_profile = config.permissions.permission_profile();
+        let active_permission_profile = config.permissions.active_permission_profile();
         let sandbox = status_permission_summary(&permission_profile, config.cwd.as_path());
-        let permissions = if config.permissions.approval_policy.value() == AskForApproval::OnRequest
-            && permission_profile == PermissionProfile::workspace_write()
-        {
-            "Default".to_string()
-        } else if config.permissions.approval_policy.value() == AskForApproval::Never
-            && permission_profile == PermissionProfile::Disabled
-        {
-            "Full Access".to_string()
-        } else {
-            format!("Custom ({sandbox}, {approval})")
-        };
+        let permissions = status_permissions_label(
+            active_permission_profile.as_ref(),
+            &permission_profile,
+            config.permissions.approval_policy.value(),
+            &sandbox,
+            &approval,
+        );
         let model_provider = format_model_provider(config);
         let account = compose_account_display(account_display);
         let session_id = session_id.as_ref().map(std::string::ToString::to_string);
@@ -547,6 +545,44 @@ fn status_permission_summary(permission_profile: &PermissionProfile, cwd: &Path)
         return "custom permissions with network access".to_string();
     }
     summary
+}
+
+fn status_permissions_label(
+    active_permission_profile: Option<&ActivePermissionProfile>,
+    permission_profile: &PermissionProfile,
+    approval_policy: AskForApproval,
+    sandbox: &str,
+    approval: &str,
+) -> String {
+    if active_permission_profile.is_some_and(|active| active.id == ":workspace")
+        && approval_policy == AskForApproval::OnRequest
+        && sandbox == "workspace-write"
+    {
+        return "Default".to_string();
+    }
+    if active_permission_profile.is_some_and(|active| active.id == ":danger-no-sandbox")
+        && approval_policy == AskForApproval::Never
+        && permission_profile == &PermissionProfile::Disabled
+    {
+        return "Full Access".to_string();
+    }
+    if let Some(active) = active_permission_profile
+        && active.id != ":workspace"
+        && active.id != ":danger-no-sandbox"
+    {
+        return format!("Profile {} ({sandbox}, {approval})", active.id);
+    }
+    if approval_policy == AskForApproval::OnRequest
+        && permission_profile == &PermissionProfile::workspace_write()
+    {
+        return "Default".to_string();
+    }
+    if approval_policy == AskForApproval::Never
+        && permission_profile == &PermissionProfile::Disabled
+    {
+        return "Full Access".to_string();
+    }
+    format!("Custom ({sandbox}, {approval})")
 }
 
 impl HistoryCell for StatusHistoryCell {

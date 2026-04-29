@@ -38,6 +38,7 @@ use codex_protocol::mcp::ResourceTemplate as McpResourceTemplate;
 use codex_protocol::mcp::Tool as McpTool;
 use codex_protocol::memory_citation::MemoryCitation as CoreMemoryCitation;
 use codex_protocol::memory_citation::MemoryCitationEntry as CoreMemoryCitationEntry;
+use codex_protocol::models::ActivePermissionProfile as CoreActivePermissionProfile;
 use codex_protocol::models::AdditionalPermissionProfile as CoreAdditionalPermissionProfile;
 use codex_protocol::models::FileSystemPermissions as CoreFileSystemPermissions;
 use codex_protocol::models::ManagedFileSystemPermissions as CoreManagedFileSystemPermissions;
@@ -1699,6 +1700,37 @@ impl From<PermissionProfile> for CorePermissionProfile {
             PermissionProfile::External { network } => Self::External {
                 network: network.into(),
             },
+        }
+    }
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "v2/")]
+pub struct ActivePermissionProfile {
+    /// Identifier from `default_permissions`, such as a built-in `:workspace`
+    /// profile or a user-defined `[permissions.<id>]` profile.
+    pub id: String,
+    /// Parent profile identifier once permissions profiles support
+    /// inheritance. This is currently always `null`.
+    #[serde(default)]
+    pub extends: Option<String>,
+}
+
+impl From<CoreActivePermissionProfile> for ActivePermissionProfile {
+    fn from(value: CoreActivePermissionProfile) -> Self {
+        Self {
+            id: value.id,
+            extends: value.extends,
+        }
+    }
+}
+
+impl From<ActivePermissionProfile> for CoreActivePermissionProfile {
+    fn from(value: ActivePermissionProfile) -> Self {
+        Self {
+            id: value.id,
+            extends: value.extends,
         }
     }
 }
@@ -3541,13 +3573,14 @@ pub struct ThreadStartResponse {
     /// Reviewer currently used for approval requests on this thread.
     pub approvals_reviewer: ApprovalsReviewer,
     /// Legacy sandbox policy retained for compatibility. New clients should use
-    /// `permissionProfile` when present as the canonical active permissions
-    /// view.
+    /// `activePermissionProfile` when they need stable permissions profile
+    /// identity.
     pub sandbox: SandboxPolicy,
-    /// Canonical active permissions view for this thread.
-    #[experimental("thread/start.permissionProfile")]
+    /// Named profile that produced the active permissions, when the active
+    /// permissions came from `default_permissions`.
+    #[experimental("thread/start.activePermissionProfile")]
     #[serde(default)]
-    pub permission_profile: Option<PermissionProfile>,
+    pub active_permission_profile: Option<ActivePermissionProfile>,
     pub reasoning_effort: Option<ReasoningEffort>,
 }
 
@@ -3647,13 +3680,14 @@ pub struct ThreadResumeResponse {
     /// Reviewer currently used for approval requests on this thread.
     pub approvals_reviewer: ApprovalsReviewer,
     /// Legacy sandbox policy retained for compatibility. New clients should use
-    /// `permissionProfile` when present as the canonical active permissions
-    /// view.
+    /// `activePermissionProfile` when they need stable permissions profile
+    /// identity.
     pub sandbox: SandboxPolicy,
-    /// Canonical active permissions view for this thread.
-    #[experimental("thread/resume.permissionProfile")]
+    /// Named profile that produced the active permissions, when the active
+    /// permissions came from `default_permissions`.
+    #[experimental("thread/resume.activePermissionProfile")]
     #[serde(default)]
-    pub permission_profile: Option<PermissionProfile>,
+    pub active_permission_profile: Option<ActivePermissionProfile>,
     pub reasoning_effort: Option<ReasoningEffort>,
 }
 
@@ -3744,13 +3778,14 @@ pub struct ThreadForkResponse {
     /// Reviewer currently used for approval requests on this thread.
     pub approvals_reviewer: ApprovalsReviewer,
     /// Legacy sandbox policy retained for compatibility. New clients should use
-    /// `permissionProfile` when present as the canonical active permissions
-    /// view.
+    /// `activePermissionProfile` when they need stable permissions profile
+    /// identity.
     pub sandbox: SandboxPolicy,
-    /// Canonical active permissions view for this thread.
-    #[experimental("thread/fork.permissionProfile")]
+    /// Named profile that produced the active permissions, when the active
+    /// permissions came from `default_permissions`.
+    #[experimental("thread/fork.activePermissionProfile")]
     #[serde(default)]
-    pub permission_profile: Option<PermissionProfile>,
+    pub active_permission_profile: Option<ActivePermissionProfile>,
     pub reasoning_effort: Option<ReasoningEffort>,
 }
 
@@ -10734,9 +10769,9 @@ mod tests {
         assert_eq!(start.instruction_sources, Vec::<AbsolutePathBuf>::new());
         assert_eq!(resume.instruction_sources, Vec::<AbsolutePathBuf>::new());
         assert_eq!(fork.instruction_sources, Vec::<AbsolutePathBuf>::new());
-        assert_eq!(start.permission_profile, None);
-        assert_eq!(resume.permission_profile, None);
-        assert_eq!(fork.permission_profile, None);
+        assert_eq!(start.active_permission_profile, None);
+        assert_eq!(resume.active_permission_profile, None);
+        assert_eq!(fork.active_permission_profile, None);
     }
 
     #[test]
