@@ -151,13 +151,13 @@ async fn apply_patch_input_rewrites_env_qualified_paths() {
 }
 
 #[tokio::test]
-async fn apply_patch_input_rewrites_padded_env_qualified_path_headers() {
+async fn apply_patch_input_rewrites_padded_env_qualified_hunk_headers() {
     let (_session, mut turn) = make_session_and_context().await;
     let temp = TempDir::new().expect("tmp");
     let secondary_cwd = temp.path().abs();
     add_secondary_environment(&mut turn, "secondary", secondary_cwd.clone());
     let patch = format!(
-        "  *** Add File: oai_env://secondary{}  \n+hello\n*** End Patch",
+        "*** Begin Patch\n  *** Add File: oai_env://secondary{}\n+hello\n*** End Patch",
         secondary_cwd.join("hello.txt").display()
     );
 
@@ -168,10 +168,31 @@ async fn apply_patch_input_rewrites_padded_env_qualified_path_headers() {
     assert_eq!(
         resolved.patch_input,
         format!(
-            "*** Add File: {}\n+hello\n*** End Patch",
+            "*** Begin Patch\n*** Add File: {}\n+hello\n*** End Patch",
             secondary_cwd.join("hello.txt").display()
         )
     );
+}
+
+#[tokio::test]
+async fn apply_patch_input_does_not_rewrite_marker_text_inside_patch_content() {
+    let (_session, mut turn) = make_session_and_context().await;
+    let temp = TempDir::new().expect("tmp");
+    let secondary_cwd = temp.path().abs();
+    add_secondary_environment(&mut turn, "secondary", secondary_cwd.clone());
+    let patch = format!(
+        "*** Begin Patch\n*** Update File: hello.txt\n@@\n *** Add File: oai_env://secondary{}\n*** End Patch",
+        secondary_cwd.join("hello.txt").display()
+    );
+
+    let resolved = resolve_apply_patch_input(&turn, /*explicit_environment_id*/ None, &patch)
+        .expect("resolve patch target");
+
+    assert_eq!(
+        resolved.turn_environment.environment_id,
+        codex_exec_server::LOCAL_ENVIRONMENT_ID
+    );
+    assert_eq!(resolved.patch_input, patch);
 }
 
 #[tokio::test]

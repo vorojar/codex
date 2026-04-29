@@ -186,6 +186,34 @@ apps = true
 }
 
 #[tokio::test]
+async fn mcp_resource_read_without_thread_rejects_non_local_environment_id() -> Result<()> {
+    let codex_home = TempDir::new()?;
+    let mut mcp = McpProcess::new(codex_home.path()).await?;
+    timeout(DEFAULT_READ_TIMEOUT, mcp.initialize()).await??;
+
+    let read_request_id = mcp
+        .send_mcp_resource_read_request(McpResourceReadParams {
+            thread_id: None,
+            environment_id: Some("remote".to_string()),
+            server: "codex_apps".to_string(),
+            uri: TEST_RESOURCE_URI.to_string(),
+        })
+        .await?;
+    let error = timeout(
+        DEFAULT_READ_TIMEOUT,
+        mcp.read_stream_until_error_message(RequestId::Integer(read_request_id)),
+    )
+    .await??;
+    assert!(
+        error.error.message.contains("only `local` is supported"),
+        "unexpected error: {}",
+        error.error.message
+    );
+
+    Ok(())
+}
+
+#[tokio::test]
 async fn mcp_resource_read_returns_error_for_unknown_thread() -> Result<()> {
     let codex_home = TempDir::new()?;
     let loader_overrides = LoaderOverrides::without_managed_config_for_tests();

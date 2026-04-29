@@ -6572,7 +6572,7 @@
             ]
           },
           "environmentId": {
-            "description": "Optional environment for command start. Omitted preserves the legacy server-local command execution behavior. Continuation calls identify the process by `processId` and do not accept a separate environment.",
+            "description": "Optional environment for command start. Currently supports only `local` because this threadless API still runs through the app-server's local command executor. Continuation calls identify the process by `processId` and do not accept a separate environment.",
             "type": [
               "string",
               "null"
@@ -9958,7 +9958,7 @@
             "description": "Controls how much MCP inventory data to fetch for each server. Defaults to `Full` when omitted."
           },
           "environmentId": {
-            "description": "Optional environment used to start executor-backed MCP servers for this threadless status read. Omitted preserves the legacy default/local runtime environment.",
+            "description": "Optional environment used to start executor-backed MCP servers for this threadless status read. Currently supports only `local` because threadless MCP configuration is still loaded from local config/cwd.",
             "type": [
               "string",
               "null"
@@ -10497,7 +10497,7 @@
         "$schema": "http://json-schema.org/draft-07/schema#",
         "properties": {
           "environmentId": {
-            "description": "Optional environment used to read the resource. For thread-scoped requests this must resolve to the thread's selected primary environment until per-environment MCP managers are available.",
+            "description": "Optional environment used to read the resource. Threadless reads currently support only `local`; thread-scoped requests must resolve to the thread's selected primary environment until per-environment MCP managers are available.",
             "type": [
               "string",
               "null"
@@ -13938,7 +13938,7 @@
             "$ref": "#/definitions/v2/AbsolutePathBuf"
           },
           "qualifiedPath": {
-            "description": "Environment-qualified path suitable for multi-environment references. This is `null` for legacy single-environment listings.",
+            "description": "Environment-qualified path suitable for multi-environment references. Omitted for legacy single-environment listings.",
             "type": [
               "string",
               "null"
@@ -14167,7 +14167,7 @@
             "type": "array"
           },
           "environmentId": {
-            "description": "Optional environment to scan. Omitted preserves the legacy default/local skills list behavior.",
+            "description": "Optional environment to scan. Threadless `skills/list` currently supports only `local` because config/plugin skill layers are still loaded from local config files.",
             "type": [
               "string",
               "null"
@@ -15429,6 +15429,12 @@
           },
           {
             "properties": {
+              "environmentId": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
               "id": {
                 "type": "string"
               },

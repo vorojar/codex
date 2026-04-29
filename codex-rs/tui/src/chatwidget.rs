@@ -4350,6 +4350,7 @@ impl ChatWidget {
         self.add_to_history(history_cell::new_view_image_tool_call(
             event.path,
             &self.config.cwd,
+            event.environment_id.as_deref(),
         ));
         self.request_redraw();
     }
@@ -6896,8 +6897,16 @@ impl ChatWidget {
                         .unwrap_or(codex_protocol::models::WebSearchAction::Other),
                 });
             }
-            ThreadItem::ImageView { id, path } => {
-                self.on_view_image_tool_call(ViewImageToolCallEvent { call_id: id, path });
+            ThreadItem::ImageView {
+                id,
+                environment_id,
+                path,
+            } => {
+                self.on_view_image_tool_call(ViewImageToolCallEvent {
+                    call_id: id,
+                    environment_id,
+                    path,
+                });
             }
             ThreadItem::ImageGeneration {
                 id,

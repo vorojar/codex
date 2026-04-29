@@ -2742,6 +2742,7 @@ async fn inactive_thread_started_notification_initializes_replay_session() -> Re
         turn_id: None,
         trace_id: None,
         cwd: test_path_buf("/tmp/agent"),
+        environments: None,
         current_date: None,
         timezone: None,
         approval_policy: primary_session.approval_policy,

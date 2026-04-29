@@ -6,8 +6,8 @@ import type { McpServerStatusDetail } from "./McpServerStatusDetail";
 export type ListMcpServerStatusParams = {
 /**
  * Optional environment used to start executor-backed MCP servers for this
- * threadless status read. Omitted preserves the legacy default/local
- * runtime environment.
+ * threadless status read. Currently supports only `local` because
+ * threadless MCP configuration is still loaded from local config/cwd.
  */
 environmentId?: string | null,
 /**

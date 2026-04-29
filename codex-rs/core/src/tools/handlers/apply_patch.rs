@@ -279,10 +279,11 @@ fn resolve_apply_patch_input<'a>(
 
     let mut selected_environment_id = explicit_environment_id.map(ToOwned::to_owned);
     let mut normalized_patch_input = String::with_capacity(patch_input.len());
+    let mut state = ApplyPatchHeaderScanState::Searching;
     for line in patch_input.split_inclusive('\n') {
         let (line_body, line_ending) = split_line_ending(line);
         let normalized_line_body =
-            normalize_apply_patch_path_line(line_body, &mut selected_environment_id)?;
+            normalize_apply_patch_path_line(line_body, &mut selected_environment_id, &mut state)?;
         normalized_patch_input.push_str(&normalized_line_body);
         normalized_patch_input.push_str(line_ending);
     }
@@ -305,23 +306,80 @@ fn split_line_ending(line: &str) -> (&str, &str) {
     }
 }
 
+#[derive(Clone, Copy)]
+enum ApplyPatchHeaderScanState {
+    Searching,
+    HunkHeader,
+    AddFileBody,
+    UpdateFileBody,
+}
+
 fn normalize_apply_patch_path_line(
     line_body: &str,
     selected_environment_id: &mut Option<String>,
+    state: &mut ApplyPatchHeaderScanState,
 ) -> Result<String, FunctionCallError> {
-    let trimmed_line_body = line_body.trim();
-    for marker in [
-        "*** Add File: ",
-        "*** Delete File: ",
-        "*** Update File: ",
-        "*** Move to: ",
-    ] {
-        if let Some(raw_path) = trimmed_line_body.strip_prefix(marker) {
-            return normalize_apply_patch_path(raw_path, selected_environment_id)
-                .map(|normalized_path| format!("{marker}{normalized_path}"));
+    let trimmed = line_body.trim();
+    if trimmed == "*** Begin Patch" {
+        *state = ApplyPatchHeaderScanState::HunkHeader;
+        return Ok(line_body.to_string());
+    }
+    if trimmed == "*** End Patch" {
+        *state = ApplyPatchHeaderScanState::Searching;
+        return Ok(line_body.to_string());
+    }
+
+    match *state {
+        ApplyPatchHeaderScanState::Searching => {
+            normalize_apply_patch_header_at_column_zero(line_body, selected_environment_id, state)
+        }
+        ApplyPatchHeaderScanState::HunkHeader => {
+            normalize_apply_patch_hunk_header(trimmed, selected_environment_id, state)
+                .map(|normalized| normalized.unwrap_or_else(|| line_body.to_string()))
+        }
+        ApplyPatchHeaderScanState::AddFileBody => {
+            if line_body.starts_with('+') {
+                return Ok(line_body.to_string());
+            }
+            normalize_apply_patch_hunk_header(trimmed, selected_environment_id, state)
+                .map(|normalized| normalized.unwrap_or_else(|| line_body.to_string()))
+        }
+        ApplyPatchHeaderScanState::UpdateFileBody => {
+            normalize_apply_patch_header_at_column_zero(line_body, selected_environment_id, state)
         }
     }
-    Ok(line_body.to_string())
+}
+
+fn normalize_apply_patch_header_at_column_zero(
+    line_body: &str,
+    selected_environment_id: &mut Option<String>,
+    state: &mut ApplyPatchHeaderScanState,
+) -> Result<String, FunctionCallError> {
+    normalize_apply_patch_hunk_header(line_body, selected_environment_id, state)
+        .map(|normalized| normalized.unwrap_or_else(|| line_body.to_string()))
+}
+
+fn normalize_apply_patch_hunk_header(
+    line_body: &str,
+    selected_environment_id: &mut Option<String>,
+    state: &mut ApplyPatchHeaderScanState,
+) -> Result<Option<String>, FunctionCallError> {
+    for (marker, next_state) in [
+        ("*** Add File: ", ApplyPatchHeaderScanState::AddFileBody),
+        ("*** Delete File: ", ApplyPatchHeaderScanState::HunkHeader),
+        (
+            "*** Update File: ",
+            ApplyPatchHeaderScanState::UpdateFileBody,
+        ),
+        ("*** Move to: ", ApplyPatchHeaderScanState::UpdateFileBody),
+    ] {
+        if let Some(raw_path) = line_body.strip_prefix(marker) {
+            *state = next_state;
+            return normalize_apply_patch_path(raw_path, selected_environment_id)
+                .map(|normalized_path| Some(format!("{marker}{normalized_path}")));
+        }
+    }
+    Ok(None)
 }
 
 fn normalize_apply_patch_path(
@@ -333,7 +391,7 @@ fn normalize_apply_patch_path(
     };
 
     match selected_environment_id {
-        Some(selected) if selected != qualified_path.environment_id => {
+        Some(selected) if selected.as_str() != qualified_path.environment_id => {
             Err(FunctionCallError::RespondToModel(format!(
                 "environment_id `{selected}` does not match path environment `{}`",
                 qualified_path.environment_id
@@ -341,7 +399,7 @@ fn normalize_apply_patch_path(
         }
         Some(_) => Ok(qualified_path.path.display().to_string()),
         None => {
-            *selected_environment_id = Some(qualified_path.environment_id.to_string());
+            *selected_environment_id = Some(qualified_path.environment_id);
             Ok(qualified_path.path.display().to_string())
         }
     }
@@ -350,6 +408,7 @@ fn normalize_apply_patch_path(
 async fn effective_patch_permissions(
     session: &Session,
     turn: &TurnContext,
+    environment_id: &str,
     action: &ApplyPatchAction,
 ) -> (
     Vec<AbsolutePathBuf>,
@@ -358,10 +417,18 @@ async fn effective_patch_permissions(
 ) {
     let cwd = &action.cwd;
     let file_paths = file_paths_for_action(action);
-    let granted_permissions = merge_permission_profiles(
-        session.granted_session_permissions().await.as_ref(),
-        session.granted_turn_permissions().await.as_ref(),
-    );
+    let granted_permissions = if !turn.has_multiple_selected_environments()
+        || turn
+            .primary_environment()
+            .is_some_and(|environment| environment.environment_id == environment_id)
+    {
+        merge_permission_profiles(
+            session.granted_session_permissions().await.as_ref(),
+            session.granted_turn_permissions().await.as_ref(),
+        )
+    } else {
+        None
+    };
     let base_file_system_sandbox_policy = turn.file_system_sandbox_policy();
     let file_system_sandbox_policy = effective_file_system_sandbox_policy(
         &base_file_system_sandbox_policy,
@@ -369,6 +436,8 @@ async fn effective_patch_permissions(
     );
     let effective_additional_permissions = apply_granted_turn_permissions(
         session,
+        turn,
+        environment_id,
         cwd.as_path(),
         crate::sandboxing::SandboxPermissions::UseDefault,
         write_permissions_for_paths(&file_paths, &file_system_sandbox_policy, cwd),
@@ -480,7 +549,13 @@ impl ToolHandler for ApplyPatchHandler {
         {
             codex_apply_patch::MaybeApplyPatchVerified::Body(changes) => {
                 let (file_paths, effective_additional_permissions, file_system_sandbox_policy) =
-                    effective_patch_permissions(session.as_ref(), turn.as_ref(), &changes).await;
+                    effective_patch_permissions(
+                        session.as_ref(),
+                        turn.as_ref(),
+                        &turn_environment.environment_id,
+                        &changes,
+                    )
+                    .await;
                 match apply_patch::apply_patch(turn.as_ref(), &file_system_sandbox_policy, changes)
                     .await
                 {
@@ -590,7 +665,13 @@ pub(crate) async fn intercept_apply_patch(
                 )
                 .await;
             let (approval_keys, effective_additional_permissions, file_system_sandbox_policy) =
-                effective_patch_permissions(session.as_ref(), turn.as_ref(), &changes).await;
+                effective_patch_permissions(
+                    session.as_ref(),
+                    turn.as_ref(),
+                    environment_id,
+                    &changes,
+                )
+                .await;
             match apply_patch::apply_patch(turn.as_ref(), &file_system_sandbox_policy, changes)
                 .await
             {

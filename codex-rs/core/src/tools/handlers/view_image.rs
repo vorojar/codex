@@ -163,6 +163,7 @@ impl ToolHandler for ViewImageHandler {
                 turn.as_ref(),
                 EventMsg::ViewImageToolCall(ViewImageToolCallEvent {
                     call_id,
+                    environment_id: Some(turn_environment.environment_id.clone()),
                     path: event_path,
                 }),
             )

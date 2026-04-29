@@ -299,13 +299,6 @@ impl TurnContext {
             .map_or_else(|| self.cwd.clone(), |path| self.cwd.join(path))
     }
 
-    pub(crate) fn file_system_sandbox_context(
-        &self,
-        additional_permissions: Option<AdditionalPermissionProfile>,
-    ) -> FileSystemSandboxContext {
-        self.file_system_sandbox_context_for_cwd(&self.cwd, additional_permissions)
-    }
-
     pub(crate) fn file_system_sandbox_context_for_cwd(
         &self,
         cwd: &AbsolutePathBuf,
@@ -360,10 +353,17 @@ impl TurnContext {
     }
 
     pub(crate) fn to_turn_context_item(&self) -> TurnContextItem {
+        let environments = self.has_multiple_selected_environments().then(|| {
+            self.environments
+                .iter()
+                .map(TurnEnvironment::selection)
+                .collect()
+        });
         TurnContextItem {
             turn_id: Some(self.sub_id.clone()),
             trace_id: self.trace_id.clone(),
             cwd: self.cwd.to_path_buf(),
+            environments,
             current_date: self.current_date.clone(),
             timezone: self.timezone.clone(),
             approval_policy: self.approval_policy.value(),

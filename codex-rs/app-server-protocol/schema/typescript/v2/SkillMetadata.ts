@@ -13,6 +13,6 @@ export type SkillMetadata = { name: string, description: string,
 shortDescription?: string, interface?: SkillInterface, dependencies?: SkillDependencies, path: AbsolutePathBuf,
 /**
  * Environment-qualified path suitable for multi-environment references.
- * This is `null` for legacy single-environment listings.
+ * Omitted for legacy single-environment listings.
  */
-qualifiedPath: string | null, scope: SkillScope, enabled: boolean, };
+qualifiedPath?: string, scope: SkillScope, enabled: boolean, };

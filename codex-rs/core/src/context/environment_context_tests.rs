@@ -1,6 +1,11 @@
 use crate::shell::ShellType;
 
 use super::*;
+use codex_protocol::protocol::AskForApproval;
+use codex_protocol::protocol::ReasoningSummaryConfig;
+use codex_protocol::protocol::SandboxPolicy;
+use codex_protocol::protocol::TurnEnvironmentSelection;
+use codex_utils_absolute_path::AbsolutePathBuf;
 use core_test_support::test_path_buf;
 use pretty_assertions::assert_eq;
 use std::path::PathBuf;
@@ -12,6 +17,39 @@ fn fake_shell_name() -> String {
         shell_snapshot: crate::shell::empty_shell_snapshot_receiver(),
     };
     shell.name().to_string()
+}
+
+fn environment(environment_id: &str, cwd: &str) -> TurnEnvironmentSelection {
+    TurnEnvironmentSelection {
+        environment_id: environment_id.to_string(),
+        cwd: AbsolutePathBuf::try_from(PathBuf::from(cwd)).expect("absolute cwd"),
+    }
+}
+
+fn turn_context_item(environments: Option<Vec<TurnEnvironmentSelection>>) -> TurnContextItem {
+    TurnContextItem {
+        turn_id: None,
+        trace_id: None,
+        cwd: test_path_buf("/repo"),
+        environments,
+        current_date: Some("2026-02-26".to_string()),
+        timezone: Some("America/Los_Angeles".to_string()),
+        approval_policy: AskForApproval::Never,
+        sandbox_policy: SandboxPolicy::DangerFullAccess,
+        permission_profile: None,
+        network: None,
+        file_system_sandbox_policy: None,
+        model: "gpt-5".to_string(),
+        personality: None,
+        collaboration_mode: None,
+        realtime_active: None,
+        effort: None,
+        summary: ReasoningSummaryConfig::Auto,
+        user_instructions: None,
+        developer_instructions: None,
+        final_output_json_schema: None,
+        truncation_policy: None,
+    }
 }
 
 #[test]
@@ -70,6 +108,63 @@ fn serialize_environment_context_with_network() {
     );
 
     assert_eq!(context.render(), expected);
+}
+
+#[test]
+fn serialize_environment_context_with_multiple_environments() {
+    let context = EnvironmentContext::new(
+        Some(test_path_buf("/repo")),
+        fake_shell_name(),
+        Some("2026-02-26".to_string()),
+        Some("America/Los_Angeles".to_string()),
+        /*network*/ None,
+        /*subagents*/ None,
+    )
+    .with_environments(Some(vec![
+        environment("local", "/repo"),
+        environment("remote", "/workspace"),
+    ]));
+
+    let expected = r#"<environment_context>
+  <cwd>/repo</cwd>
+  <environments>
+    <environment id="local" cwd="/repo" primary="true" />
+    <environment id="remote" cwd="/workspace" />
+  </environments>
+  <shell>bash</shell>
+  <current_date>2026-02-26</current_date>
+  <timezone>America/Los_Angeles</timezone>
+</environment_context>"#;
+
+    assert_eq!(context.render(), expected);
+}
+
+#[test]
+fn diff_environment_context_renders_empty_environment_list_when_cleared() {
+    let before = turn_context_item(Some(vec![
+        environment("local", "/repo"),
+        environment("remote", "/workspace"),
+    ]));
+    let after = EnvironmentContext::new(
+        Some(test_path_buf("/repo")),
+        fake_shell_name(),
+        before.current_date.clone(),
+        before.timezone.clone(),
+        /*network*/ None,
+        /*subagents*/ None,
+    );
+
+    let diff = EnvironmentContext::diff_from_turn_context_item(&before, &after);
+
+    let expected = r#"<environment_context>
+  <environments>
+  </environments>
+  <shell>bash</shell>
+  <current_date>2026-02-26</current_date>
+  <timezone>America/Los_Angeles</timezone>
+</environment_context>"#;
+
+    assert_eq!(diff.render(), expected);
 }
 
 #[test]

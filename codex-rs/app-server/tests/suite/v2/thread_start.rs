@@ -249,7 +249,7 @@ async fn thread_start_response_includes_loaded_instruction_sources() -> Result<(
 
 #[cfg(windows)]
 fn normalize_path_for_comparison(path: impl AsRef<Path>) -> PathBuf {
-    let path = path.as_ref();
+    let path = std::fs::canonicalize(path.as_ref()).unwrap_or_else(|_| path.as_ref().to_path_buf());
     let path = path.display().to_string();
     PathBuf::from(path.strip_prefix(r"\\?\").unwrap_or(&path))
 }

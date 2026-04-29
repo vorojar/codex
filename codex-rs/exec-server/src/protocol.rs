@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::ffi::OsString;
 use std::path::PathBuf;
 
 use crate::FileSystemSandboxContext;
@@ -222,6 +223,8 @@ pub struct FsReadDirectoryParams {
 #[serde(rename_all = "camelCase")]
 pub struct FsReadDirectoryEntry {
     pub file_name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub file_name_base64: Option<ByteChunk>,
     pub is_directory: bool,
     pub is_file: bool,
     #[serde(default)]
@@ -230,6 +233,54 @@ pub struct FsReadDirectoryEntry {
     pub created_at_ms: i64,
     #[serde(default)]
     pub modified_at_ms: i64,
+}
+
+#[cfg(unix)]
+pub fn encode_os_string(value: OsString) -> ByteChunk {
+    use std::os::unix::ffi::OsStringExt;
+
+    value.into_vec().into()
+}
+
+#[cfg(unix)]
+pub fn decode_os_string(value: ByteChunk) -> OsString {
+    use std::os::unix::ffi::OsStringExt;
+
+    OsString::from_vec(value.into_inner())
+}
+
+#[cfg(windows)]
+pub fn encode_os_string(value: OsString) -> ByteChunk {
+    use std::os::windows::ffi::OsStrExt;
+
+    value
+        .as_os_str()
+        .encode_wide()
+        .flat_map(u16::to_le_bytes)
+        .collect::<Vec<_>>()
+        .into()
+}
+
+#[cfg(windows)]
+pub fn decode_os_string(value: ByteChunk) -> OsString {
+    use std::os::windows::ffi::OsStringExt;
+
+    let bytes = value.into_inner();
+    let wide = bytes
+        .chunks_exact(2)
+        .map(|chunk| u16::from_le_bytes([chunk[0], chunk[1]]))
+        .collect::<Vec<_>>();
+    OsString::from_wide(&wide)
+}
+
+#[cfg(not(any(unix, windows)))]
+pub fn encode_os_string(value: OsString) -> ByteChunk {
+    value.to_string_lossy().as_bytes().to_vec().into()
+}
+
+#[cfg(not(any(unix, windows)))]
+pub fn decode_os_string(value: ByteChunk) -> OsString {
+    OsString::from(String::from_utf8_lossy(&value.into_inner()).into_owned())
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -404,8 +455,54 @@ mod base64_bytes {
 
 #[cfg(test)]
 mod tests {
+    use super::FsReadDirectoryEntry;
     use super::HttpRequestParams;
     use pretty_assertions::assert_eq;
+
+    #[test]
+    fn read_directory_entry_accepts_legacy_payload_without_added_fields() {
+        let entry: FsReadDirectoryEntry = serde_json::from_value(serde_json::json!({
+            "fileName": "legacy.txt",
+            "isDirectory": false,
+            "isFile": true,
+        }))
+        .expect("legacy directory entry should deserialize");
+
+        assert_eq!(
+            entry,
+            FsReadDirectoryEntry {
+                file_name: "legacy.txt".to_string(),
+                file_name_base64: None,
+                is_directory: false,
+                is_file: true,
+                is_symlink: false,
+                created_at_ms: 0,
+                modified_at_ms: 0,
+            }
+        );
+    }
+
+    #[test]
+    fn read_directory_entry_round_trips_encoded_file_name_bytes() {
+        let entry: FsReadDirectoryEntry = serde_json::from_value(serde_json::json!({
+            "fileName": "lossy-name",
+            "fileNameBase64": "bm9uLXV0Zjgt/y50eHQ=",
+            "isDirectory": false,
+            "isFile": true,
+            "isSymlink": false,
+            "createdAtMs": 1,
+            "modifiedAtMs": 2,
+        }))
+        .expect("encoded directory entry should deserialize");
+
+        assert_eq!(
+            entry
+                .file_name_base64
+                .expect("encoded name bytes")
+                .into_inner(),
+            b"non-utf8-\xFF.txt".to_vec()
+        );
+    }
 
     #[test]
     fn http_request_timeout_treats_omitted_and_null_as_no_timeout() {

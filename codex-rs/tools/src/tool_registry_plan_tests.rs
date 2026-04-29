@@ -18,6 +18,7 @@ use crate::ToolRegistryPlanDeferredTool;
 use crate::ToolRegistryPlanMcpTool;
 use crate::ToolsConfigParams;
 use crate::WaitAgentTimeoutOptions;
+use crate::create_apply_patch_freeform_tool;
 use crate::mcp_call_tool_result_output_schema;
 use codex_app_server_protocol::AppInfo;
 use codex_features::Feature;

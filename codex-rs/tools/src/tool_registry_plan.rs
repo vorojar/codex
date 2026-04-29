@@ -74,13 +74,6 @@ use codex_protocol::openai_models::ApplyPatchToolType;
 use codex_protocol::openai_models::ConfigShellToolType;
 use std::collections::BTreeMap;
 
-#[cfg(test)]
-use crate::create_apply_patch_freeform_tool;
-#[cfg(test)]
-use crate::create_apply_patch_json_tool;
-#[cfg(test)]
-use crate::create_list_dir_tool;
-
 pub fn build_tool_registry_plan(
     config: &ToolsConfig,
     params: ToolRegistryPlanParams<'_>,

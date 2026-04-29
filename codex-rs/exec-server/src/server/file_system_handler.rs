@@ -26,6 +26,7 @@ use crate::protocol::FsRemoveParams;
 use crate::protocol::FsRemoveResponse;
 use crate::protocol::FsWriteFileParams;
 use crate::protocol::FsWriteFileResponse;
+use crate::protocol::encode_os_string;
 use crate::rpc::internal_error;
 use crate::rpc::invalid_request;
 use crate::rpc::not_found;
@@ -116,13 +117,17 @@ impl FileSystemHandler {
             .await
             .map_err(map_fs_error)?
             .into_iter()
-            .map(|entry| FsReadDirectoryEntry {
-                file_name: entry.file_name.to_string_lossy().into_owned(),
-                is_directory: entry.metadata.is_directory,
-                is_file: entry.metadata.is_file,
-                is_symlink: entry.metadata.is_symlink,
-                created_at_ms: entry.metadata.created_at_ms,
-                modified_at_ms: entry.metadata.modified_at_ms,
+            .map(|entry| {
+                let file_name = entry.file_name;
+                FsReadDirectoryEntry {
+                    file_name: file_name.to_string_lossy().into_owned(),
+                    file_name_base64: Some(encode_os_string(file_name)),
+                    is_directory: entry.metadata.is_directory,
+                    is_file: entry.metadata.is_file,
+                    is_symlink: entry.metadata.is_symlink,
+                    created_at_ms: entry.metadata.created_at_ms,
+                    modified_at_ms: entry.metadata.modified_at_ms,
+                }
             })
             .collect();
         Ok(FsReadDirectoryResponse { entries })

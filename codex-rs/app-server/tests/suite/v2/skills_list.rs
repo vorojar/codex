@@ -285,6 +285,35 @@ async fn skills_list_rejects_relative_extra_user_roots() -> Result<()> {
 }
 
 #[tokio::test]
+async fn skills_list_rejects_non_local_environment_id() -> Result<()> {
+    let codex_home = TempDir::new()?;
+
+    let mut mcp = McpProcess::new(codex_home.path()).await?;
+    timeout(DEFAULT_TIMEOUT, mcp.initialize()).await??;
+
+    let request_id = mcp
+        .send_skills_list_request(SkillsListParams {
+            environment_id: Some("remote".to_string()),
+            cwds: Vec::new(),
+            force_reload: true,
+            per_cwd_extra_user_roots: None,
+        })
+        .await?;
+
+    let err = timeout(
+        DEFAULT_TIMEOUT,
+        mcp.read_stream_until_error_message(RequestId::Integer(request_id)),
+    )
+    .await??;
+    assert!(
+        err.error.message.contains("only `local` is supported"),
+        "unexpected error: {}",
+        err.error.message
+    );
+    Ok(())
+}
+
+#[tokio::test]
 async fn skills_list_accepts_relative_cwds() -> Result<()> {
     let codex_home = TempDir::new()?;
     let relative_cwd = std::path::PathBuf::from("relative-cwd");

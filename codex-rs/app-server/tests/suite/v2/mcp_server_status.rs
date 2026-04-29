@@ -102,6 +102,45 @@ url = "{mcp_server_url}/mcp"
     Ok(())
 }
 
+#[tokio::test]
+async fn mcp_server_status_list_rejects_non_local_environment_id() -> Result<()> {
+    let server = create_mock_responses_server_sequence_unchecked(Vec::new()).await;
+    let codex_home = TempDir::new()?;
+    write_mock_responses_config_toml(
+        codex_home.path(),
+        &server.uri(),
+        &BTreeMap::new(),
+        /*auto_compact_limit*/ 1024,
+        /*requires_openai_auth*/ None,
+        "mock_provider",
+        "compact",
+    )?;
+
+    let mut mcp = McpProcess::new(codex_home.path()).await?;
+    timeout(DEFAULT_READ_TIMEOUT, mcp.initialize()).await??;
+
+    let request_id = mcp
+        .send_list_mcp_server_status_request(ListMcpServerStatusParams {
+            environment_id: Some("remote".to_string()),
+            cursor: None,
+            limit: None,
+            detail: None,
+        })
+        .await?;
+    let error = timeout(
+        DEFAULT_READ_TIMEOUT,
+        mcp.read_stream_until_error_message(RequestId::Integer(request_id)),
+    )
+    .await??;
+    assert!(
+        error.error.message.contains("only `local` is supported"),
+        "unexpected error: {}",
+        error.error.message
+    );
+
+    Ok(())
+}
+
 #[derive(Clone)]
 struct McpStatusServer {
     tool_name: Arc<String>,

@@ -3,6 +3,7 @@
 mod common;
 
 use std::ffi::OsString;
+use std::os::unix::ffi::OsStringExt;
 #[cfg(target_os = "linux")]
 use std::os::unix::fs::PermissionsExt;
 use std::os::unix::fs::symlink;
@@ -408,6 +409,8 @@ async fn file_system_methods_cover_surface_area(use_remote: bool) -> Result<()> 
         source_dir.join("broken-link"),
     )?;
     symlink(source_dir.join("root.txt"), source_dir.join("root-link"))?;
+    let non_utf8_name = OsString::from_vec(b"non-utf8-\xFF.txt".to_vec());
+    std::fs::write(source_dir.join(&non_utf8_name), "non utf8 name")?;
 
     let mut entries = file_system
         .read_directory(&absolute_path(source_dir), /*sandbox*/ None)
@@ -422,10 +425,30 @@ async fn file_system_methods_cover_surface_area(use_remote: bool) -> Result<()> 
         entries,
         vec![
             ReadDirectoryEntry {
+                file_name: OsString::from("broken-link"),
+                metadata: FileMetadata {
+                    is_directory: false,
+                    is_file: false,
+                    is_symlink: true,
+                    created_at_ms: 0,
+                    modified_at_ms: 0,
+                },
+            },
+            ReadDirectoryEntry {
                 file_name: OsString::from("nested"),
                 metadata: FileMetadata {
                     is_directory: true,
                     is_file: false,
+                    is_symlink: false,
+                    created_at_ms: 0,
+                    modified_at_ms: 0,
+                },
+            },
+            ReadDirectoryEntry {
+                file_name: non_utf8_name,
+                metadata: FileMetadata {
+                    is_directory: false,
+                    is_file: true,
                     is_symlink: false,
                     created_at_ms: 0,
                     modified_at_ms: 0,

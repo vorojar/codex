@@ -79,6 +79,7 @@ It is important to remember:
 "#;
 
 const APPLY_PATCH_MULTI_ENV_PATH_DESCRIPTION: &str = "In multi-environment turns, each patch must target exactly one selected environment. Omit environment_id to use the primary environment, pass environment_id to target another selected environment, or use oai_env://<environment_id>/<absolute-path> in patch file headers. If both are present, they must match.";
+const APPLY_PATCH_MULTI_ENV_FREEFORM_PATH_DESCRIPTION: &str = "In multi-environment turns, each patch must target exactly one selected environment. Omit env-qualified patch file headers to use the primary environment, or use oai_env://<environment_id>/<absolute-path> in patch file headers to target another selected environment.";
 const APPLY_PATCH_MULTI_ENV_JSON_PATH_RULE: &str = "File references can be relative to the selected environment's current working directory, absolute within that environment, or env-qualified as oai_env://<environment_id>/<absolute-path>. Each patch must target exactly one environment.";
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -127,7 +128,7 @@ pub fn create_apply_patch_freeform_tool_with_options(options: ApplyPatchToolOpti
             .to_string();
     if options.has_multiple_environments {
         description.push(' ');
-        description.push_str(APPLY_PATCH_MULTI_ENV_PATH_DESCRIPTION);
+        description.push_str(APPLY_PATCH_MULTI_ENV_FREEFORM_PATH_DESCRIPTION);
     }
 
     ToolSpec::Freeform(FreeformTool {

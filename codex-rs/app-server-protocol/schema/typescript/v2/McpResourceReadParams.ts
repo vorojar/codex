@@ -4,8 +4,9 @@
 
 export type McpResourceReadParams = { threadId?: string | null,
 /**
- * Optional environment used to read the resource. For thread-scoped
- * requests this must resolve to the thread's selected primary environment
- * until per-environment MCP managers are available.
+ * Optional environment used to read the resource. Threadless reads
+ * currently support only `local`; thread-scoped requests must resolve to
+ * the thread's selected primary environment until per-environment MCP
+ * managers are available.
  */
 environmentId?: string | null, server: string, uri: string, };

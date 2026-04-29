@@ -20,6 +20,9 @@ mod unavailable_tool;
 pub(crate) mod unified_exec;
 mod view_image;
 
+use codex_sandboxing::SandboxManager;
+use codex_sandboxing::SandboxType;
+use codex_sandboxing::SandboxablePreference;
 use codex_sandboxing::policy_transforms::intersect_permission_profiles;
 use codex_sandboxing::policy_transforms::merge_permission_profiles;
 use codex_sandboxing::policy_transforms::normalize_additional_permissions;
@@ -32,8 +35,11 @@ use std::path::Path;
 use crate::function_tool::FunctionCallError;
 use crate::sandboxing::SandboxPermissions;
 use crate::session::session::Session;
+use crate::session::turn_context::TurnContext;
 pub(crate) use crate::tools::code_mode::CodeModeExecuteHandler;
 pub(crate) use crate::tools::code_mode::CodeModeWaitHandler;
+use crate::tools::sandboxing::ExecApprovalRequirement;
+use crate::tools::sandboxing::sandbox_override_for_first_attempt;
 pub use apply_patch::ApplyPatchHandler;
 use codex_protocol::models::AdditionalPermissionProfile;
 use codex_protocol::protocol::AskForApproval;
@@ -169,6 +175,8 @@ pub(super) fn implicit_granted_permissions(
 
 pub(super) async fn apply_granted_turn_permissions(
     session: &Session,
+    turn: &TurnContext,
+    environment_id: &str,
     cwd: &std::path::Path,
     sandbox_permissions: SandboxPermissions,
     additional_permissions: Option<AdditionalPermissionProfile>,
@@ -181,12 +189,14 @@ pub(super) async fn apply_granted_turn_permissions(
         };
     }
 
-    let granted_session_permissions = session.granted_session_permissions().await;
-    let granted_turn_permissions = session.granted_turn_permissions().await;
-    let granted_permissions = merge_permission_profiles(
-        granted_session_permissions.as_ref(),
-        granted_turn_permissions.as_ref(),
-    );
+    let granted_permissions = if granted_permissions_apply_to_environment(turn, environment_id) {
+        merge_permission_profiles(
+            session.granted_session_permissions().await.as_ref(),
+            session.granted_turn_permissions().await.as_ref(),
+        )
+    } else {
+        None
+    };
     let effective_permissions = merge_permission_profiles(
         additional_permissions.as_ref(),
         granted_permissions.as_ref(),
@@ -212,6 +222,42 @@ pub(super) async fn apply_granted_turn_permissions(
     }
 }
 
+pub(crate) fn reject_remote_process_when_sandbox_required(
+    turn: &TurnContext,
+    environment_id: &str,
+    sandbox_permissions: SandboxPermissions,
+    exec_approval_requirement: &ExecApprovalRequirement,
+    tool_name: &str,
+) -> Result<(), String> {
+    if sandbox_override_for_first_attempt(sandbox_permissions, exec_approval_requirement)
+        == crate::tools::sandboxing::SandboxOverride::BypassSandboxFirstAttempt
+    {
+        return Ok(());
+    }
+
+    let sandbox = SandboxManager::new().select_initial(
+        &turn.file_system_sandbox_policy(),
+        turn.network_sandbox_policy(),
+        SandboxablePreference::Auto,
+        turn.windows_sandbox_level,
+        turn.network.is_some(),
+    );
+    if sandbox == SandboxType::None {
+        return Ok(());
+    }
+
+    Err(format!(
+        "{tool_name} cannot target remote environment `{environment_id}` while sandboxing is required; request escalated permissions or target a local environment"
+    ))
+}
+
+fn granted_permissions_apply_to_environment(turn: &TurnContext, environment_id: &str) -> bool {
+    !turn.has_multiple_selected_environments()
+        || turn
+            .primary_environment()
+            .is_some_and(|environment| environment.environment_id == environment_id)
+}
+
 fn permissions_are_preapproved(
     effective_permissions: &AdditionalPermissionProfile,
     granted_permissions: AdditionalPermissionProfile,
@@ -229,13 +275,19 @@ fn permissions_are_preapproved(
 #[cfg(test)]
 mod tests {
     use super::EffectiveAdditionalPermissions;
+    use super::granted_permissions_apply_to_environment;
     use super::implicit_granted_permissions;
     use super::normalize_and_validate_additional_permissions;
     use super::permissions_are_preapproved;
+    use super::reject_remote_process_when_sandbox_required;
     use crate::sandboxing::SandboxPermissions;
+    use crate::session::tests::make_session_and_context;
+    use crate::session::turn_context::TurnEnvironment;
+    use crate::tools::sandboxing::ExecApprovalRequirement;
     use codex_protocol::models::AdditionalPermissionProfile;
     use codex_protocol::models::FileSystemPermissions;
     use codex_protocol::models::NetworkPermissions;
+    use codex_protocol::models::PermissionProfile;
     use codex_protocol::permissions::FileSystemAccessMode;
     use codex_protocol::permissions::FileSystemPath;
     use codex_protocol::permissions::FileSystemSandboxEntry;
@@ -246,6 +298,7 @@ mod tests {
     use codex_sandboxing::policy_transforms::merge_permission_profiles;
     use codex_utils_absolute_path::AbsolutePathBuf;
     use pretty_assertions::assert_eq;
+    use std::sync::Arc;
     use tempfile::tempdir;
 
     fn network_permissions() -> AdditionalPermissionProfile {
@@ -345,6 +398,66 @@ mod tests {
         );
 
         assert_eq!(implicit_permissions, None);
+    }
+
+    #[tokio::test]
+    async fn granted_permissions_only_apply_to_primary_environment_when_multiple_selected() {
+        let (_session, mut turn) = make_session_and_context().await;
+        let primary = turn.primary_environment().expect("primary env").clone();
+        let secondary_cwd = tempdir().expect("tempdir");
+        turn.environments.push(TurnEnvironment {
+            environment_id: "secondary".to_string(),
+            environment: Arc::clone(&primary.environment),
+            cwd: AbsolutePathBuf::from_absolute_path(secondary_cwd.path()).expect("absolute cwd"),
+        });
+
+        assert!(granted_permissions_apply_to_environment(
+            &turn,
+            &primary.environment_id
+        ));
+        assert!(!granted_permissions_apply_to_environment(
+            &turn,
+            "secondary"
+        ));
+    }
+
+    #[tokio::test]
+    async fn remote_process_rejects_sandbox_required_without_escalation() {
+        let (_session, mut turn) = make_session_and_context().await;
+        turn.permission_profile = PermissionProfile::read_only();
+        let err = reject_remote_process_when_sandbox_required(
+            &turn,
+            "remote",
+            SandboxPermissions::UseDefault,
+            &ExecApprovalRequirement::Skip {
+                bypass_sandbox: false,
+                proposed_execpolicy_amendment: None,
+            },
+            "shell",
+        )
+        .expect_err("remote sandboxed process should be rejected");
+
+        assert_eq!(
+            err,
+            "shell cannot target remote environment `remote` while sandboxing is required; request escalated permissions or target a local environment"
+        );
+    }
+
+    #[tokio::test]
+    async fn remote_process_allows_escalated_permissions_to_bypass_local_sandbox() {
+        let (_session, mut turn) = make_session_and_context().await;
+        turn.permission_profile = PermissionProfile::read_only();
+        reject_remote_process_when_sandbox_required(
+            &turn,
+            "remote",
+            SandboxPermissions::RequireEscalated,
+            &ExecApprovalRequirement::NeedsApproval {
+                reason: None,
+                proposed_execpolicy_amendment: None,
+            },
+            "shell",
+        )
+        .expect("escalated remote process should bypass local sandbox wrapper");
     }
 
     #[test]

@@ -932,6 +932,7 @@ async fn view_image_tool_call_adds_history_cell() {
         id: "sub-image".into(),
         msg: EventMsg::ViewImageToolCall(ViewImageToolCallEvent {
             call_id: "call-image".into(),
+            environment_id: None,
             path: image_path,
         }),
     });
@@ -940,6 +941,29 @@ async fn view_image_tool_call_adds_history_cell() {
     assert_eq!(cells.len(), 1, "expected a single history cell");
     let combined = lines_to_single_string(&cells[0]);
     assert_chatwidget_snapshot!("local_image_attachment_history_snapshot", combined);
+}
+
+#[tokio::test]
+async fn remote_view_image_tool_call_shows_environment() {
+    let (mut chat, mut rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
+    let image_path = chat.config.cwd.join("example.png");
+
+    chat.handle_codex_event(Event {
+        id: "sub-image".into(),
+        msg: EventMsg::ViewImageToolCall(ViewImageToolCallEvent {
+            call_id: "call-image".into(),
+            environment_id: Some("remote".to_string()),
+            path: image_path,
+        }),
+    });
+
+    let cells = drain_insert_history(&mut rx);
+    assert_eq!(cells.len(), 1, "expected a single history cell");
+    let combined = lines_to_single_string(&cells[0]);
+    assert!(
+        combined.contains("Environment: remote"),
+        "unexpected history cell: {combined}"
+    );
 }
 
 #[tokio::test]

@@ -118,7 +118,7 @@
           "$ref": "#/definitions/AbsolutePathBuf"
         },
         "qualifiedPath": {
-          "description": "Environment-qualified path suitable for multi-environment references. This is `null` for legacy single-environment listings.",
+          "description": "Environment-qualified path suitable for multi-environment references. Omitted for legacy single-environment listings.",
           "type": [
             "string",
             "null"

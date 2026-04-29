@@ -570,6 +570,7 @@ impl ThreadHistoryBuilder {
     fn handle_view_image_tool_call(&mut self, payload: &ViewImageToolCallEvent) {
         let item = ThreadItem::ImageView {
             id: payload.call_id.clone(),
+            environment_id: payload.environment_id.clone(),
             path: payload.path.clone(),
         };
         self.upsert_item_in_current_turn(item);

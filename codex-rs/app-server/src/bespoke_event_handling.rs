@@ -1523,6 +1523,7 @@ pub(crate) async fn apply_bespoke_event_handling(
         EventMsg::ViewImageToolCall(view_image_event) => {
             let item = ThreadItem::ImageView {
                 id: view_image_event.call_id.clone(),
+                environment_id: view_image_event.environment_id.clone(),
                 path: view_image_event.path.clone(),
             };
             let started = ItemStartedNotification {

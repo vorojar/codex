@@ -5,8 +5,9 @@ import type { SkillsListExtraRootsForCwd } from "./SkillsListExtraRootsForCwd";
 
 export type SkillsListParams = {
 /**
- * Optional environment to scan. Omitted preserves the legacy default/local
- * skills list behavior.
+ * Optional environment to scan. Threadless `skills/list` currently
+ * supports only `local` because config/plugin skill layers are still
+ * loaded from local config files.
  */
 environmentId?: string | null,
 /**

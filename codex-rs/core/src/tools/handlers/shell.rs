@@ -28,6 +28,7 @@ use crate::tools::handlers::implicit_granted_permissions;
 use crate::tools::handlers::normalize_and_validate_additional_permissions;
 use crate::tools::handlers::parse_arguments;
 use crate::tools::handlers::parse_arguments_with_base_path;
+use crate::tools::handlers::reject_remote_process_when_sandbox_required;
 use crate::tools::handlers::resolve_workdir_base_path;
 use crate::tools::hook_names::HookToolName;
 use crate::tools::orchestrator::ToolOrchestrator;
@@ -463,6 +464,16 @@ impl ShellHandler {
 
         let mut exec_params = exec_params;
         let fs = environment.get_filesystem();
+        if environment.is_remote()
+            && matches!(
+                shell_runtime_backend,
+                ShellRuntimeBackend::ShellCommandZshFork
+            )
+        {
+            return Err(FunctionCallError::RespondToModel(
+                "shell_command zsh-fork is not supported for remote environments".to_string(),
+            ));
+        }
 
         let dependency_env = session.dependency_env().await;
         if !dependency_env.is_empty() {
@@ -481,6 +492,8 @@ impl ShellHandler {
         let requested_additional_permissions = additional_permissions.clone();
         let effective_additional_permissions = apply_granted_turn_permissions(
             session.as_ref(),
+            turn.as_ref(),
+            &environment_id,
             exec_params.cwd.as_path(),
             exec_params.sandbox_permissions,
             additional_permissions,
@@ -578,6 +591,16 @@ impl ShellHandler {
                 prefix_rule,
             })
             .await;
+        if environment.is_remote() {
+            reject_remote_process_when_sandbox_required(
+                turn.as_ref(),
+                &environment_id,
+                effective_additional_permissions.sandbox_permissions,
+                &exec_approval_requirement,
+                tool_name.as_str(),
+            )
+            .map_err(FunctionCallError::RespondToModel)?;
+        }
 
         let req = ShellRequest {
             command: exec_params.command.clone(),

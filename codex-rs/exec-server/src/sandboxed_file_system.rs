@@ -3,7 +3,6 @@ use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD;
 use codex_app_server_protocol::JSONRPCErrorError;
 use codex_utils_absolute_path::AbsolutePathBuf;
-use std::ffi::OsString;
 use tokio::io;
 
 use crate::CopyOptions;
@@ -25,6 +24,7 @@ use crate::protocol::FsReadDirectoryParams;
 use crate::protocol::FsReadFileParams;
 use crate::protocol::FsRemoveParams;
 use crate::protocol::FsWriteFileParams;
+use crate::protocol::decode_os_string;
 
 #[derive(Clone)]
 pub struct SandboxedFileSystem {
@@ -166,7 +166,10 @@ impl ExecutorFileSystem for SandboxedFileSystem {
             .entries
             .into_iter()
             .map(|entry| ReadDirectoryEntry {
-                file_name: OsString::from(entry.file_name),
+                file_name: entry
+                    .file_name_base64
+                    .map(decode_os_string)
+                    .unwrap_or_else(|| entry.file_name.into()),
                 metadata: FileMetadata {
                     is_directory: entry.is_directory,
                     is_file: entry.is_file,

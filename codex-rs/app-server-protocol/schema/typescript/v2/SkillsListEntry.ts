@@ -4,4 +4,4 @@
 import type { SkillErrorInfo } from "./SkillErrorInfo";
 import type { SkillMetadata } from "./SkillMetadata";
 
-export type SkillsListEntry = { cwd: string, environmentId: string | null, skills: Array<SkillMetadata>, errors: Array<SkillErrorInfo>, };
+export type SkillsListEntry = { cwd: string, environmentId?: string, skills: Array<SkillMetadata>, errors: Array<SkillErrorInfo>, };

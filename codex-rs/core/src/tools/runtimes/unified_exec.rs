@@ -327,7 +327,7 @@ impl<'a> ToolRuntime<UnifiedExecRequest, UnifiedExecProcess> for UnifiedExecRunt
                             &prepared.exec_request,
                             req.tty,
                             prepared.spawn_lifecycle,
-                            environment.as_ref(),
+                            environment,
                         )
                         .await
                         .map_err(|err| match err {
@@ -363,7 +363,7 @@ impl<'a> ToolRuntime<UnifiedExecRequest, UnifiedExecProcess> for UnifiedExecRunt
                 &exec_env,
                 req.tty,
                 Box::new(NoopSpawnLifecycle),
-                environment.as_ref(),
+                environment,
             )
             .await
             .map_err(|err| match err {

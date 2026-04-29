@@ -880,10 +880,10 @@ fn available_skills_cost(budget: SkillMetadataBudget, available: &AvailableSkill
     metadata_cost.saturating_add(lines_cost(budget, &available.skill_lines))
 }
 
-fn ordered_absolute_skill_lines(
-    skills: &[SkillMetadata],
+fn ordered_absolute_skill_lines<'a>(
+    skills: &'a [SkillMetadata],
     environment_id: Option<&str>,
-) -> Vec<SkillLine<'_>> {
+) -> Vec<SkillLine<'a>> {
     ordered_skills_for_budget(skills)
         .into_iter()
         .map(|skill| SkillLine::new(skill, environment_id))
@@ -894,11 +894,27 @@ fn format_skill_path(path: &AbsolutePathBuf, environment_id: Option<&str>) -> St
     let path = path.to_string_lossy().replace('\\', "/");
     match environment_id {
         Some(environment_id) if path.starts_with('/') => {
+            let environment_id = encode_environment_id(environment_id);
             format!("oai_env://{environment_id}{path}")
         }
-        Some(environment_id) => format!("oai_env://{environment_id}/{path}"),
+        Some(environment_id) => {
+            let environment_id = encode_environment_id(environment_id);
+            format!("oai_env://{environment_id}/{path}")
+        }
         None => path,
     }
+}
+
+fn encode_environment_id(environment_id: &str) -> String {
+    let mut encoded = String::with_capacity(environment_id.len());
+    for byte in environment_id.bytes() {
+        if byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'.' | b'_' | b'~') {
+            encoded.push(byte as char);
+        } else {
+            encoded.push_str(&format!("%{byte:02X}"));
+        }
+    }
+    encoded
 }
 
 fn ordered_skills_for_budget(skills: &[SkillMetadata]) -> Vec<&SkillMetadata> {
@@ -1238,7 +1254,7 @@ mod tests {
             vec![skill_with_path("alpha-skill", &alpha_path)],
             vec![root],
         );
-        outcome.path_display_environment_id = Some("remote".to_string());
+        outcome.path_display_environment_id = Some("remote/env".to_string());
 
         let rendered = build_available_skills(
             &outcome,
@@ -1251,7 +1267,7 @@ mod tests {
         assert_eq!(
             rendered.skill_lines,
             vec![format!(
-                "- alpha-skill: desc (file: oai_env://remote{})",
+                "- alpha-skill: desc (file: oai_env://remote%2Fenv{})",
                 normalized_path(&alpha_path)
             )]
         );

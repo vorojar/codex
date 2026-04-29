@@ -104,7 +104,7 @@ pub const REALTIME_CONVERSATION_OPEN_TAG: &str = "<realtime_conversation>";
 pub const REALTIME_CONVERSATION_CLOSE_TAG: &str = "</realtime_conversation>";
 pub const USER_MESSAGE_BEGIN: &str = "## My request for Codex:";
 
-#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, JsonSchema)]
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, JsonSchema, TS)]
 pub struct TurnEnvironmentSelection {
     pub environment_id: String,
     pub cwd: AbsolutePathBuf,
@@ -2829,6 +2829,8 @@ pub struct TurnContextItem {
     pub trace_id: Option<String>,
     pub cwd: PathBuf,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub environments: Option<Vec<TurnEnvironmentSelection>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub current_date: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub timezone: Option<String>,
@@ -3127,6 +3129,9 @@ pub struct ExecCommandEndEvent {
 pub struct ViewImageToolCallEvent {
     /// Identifier for the originating tool call.
     pub call_id: String,
+    /// Selected environment id for this image, when it is known.
+    #[serde(default)]
+    pub environment_id: Option<String>,
     /// Local filesystem path provided to the tool.
     pub path: AbsolutePathBuf,
 }
@@ -5051,6 +5056,7 @@ mod tests {
             personality: None,
             collaboration_mode: None,
             realtime_active: None,
+            environments: None,
             effort: None,
             summary: ReasoningSummaryConfig::Auto,
             user_instructions: None,

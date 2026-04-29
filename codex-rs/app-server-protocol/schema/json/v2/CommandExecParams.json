@@ -497,7 +497,7 @@
       ]
     },
     "environmentId": {
-      "description": "Optional environment for command start. Omitted preserves the legacy server-local command execution behavior. Continuation calls identify the process by `processId` and do not accept a separate environment.",
+      "description": "Optional environment for command start. Currently supports only `local` because this threadless API still runs through the app-server's local command executor. Continuation calls identify the process by `processId` and do not accept a separate environment.",
       "type": [
         "string",
         "null"

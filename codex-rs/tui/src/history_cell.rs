@@ -2744,13 +2744,20 @@ pub(crate) fn new_patch_apply_failure(stderr: String) -> PlainHistoryCell {
     PlainHistoryCell { lines }
 }
 
-pub(crate) fn new_view_image_tool_call(path: AbsolutePathBuf, cwd: &Path) -> PlainHistoryCell {
+pub(crate) fn new_view_image_tool_call(
+    path: AbsolutePathBuf,
+    cwd: &Path,
+    environment_id: Option<&str>,
+) -> PlainHistoryCell {
     let display_path = display_path_for(path.as_path(), cwd);
 
-    let lines: Vec<Line<'static>> = vec![
-        vec!["• ".dim(), "Viewed Image".bold()].into(),
-        vec!["  └ ".dim(), display_path.dim()].into(),
-    ];
+    let mut lines: Vec<Line<'static>> = vec![vec!["• ".dim(), "Viewed Image".bold()].into()];
+    if let Some(environment_id) = environment_id.filter(|id| *id != "local") {
+        lines.push(vec!["  ├ ".dim(), "Environment: ".dim(), environment_id.dim()].into());
+        lines.push(vec!["  └ ".dim(), display_path.dim()].into());
+    } else {
+        lines.push(vec!["  └ ".dim(), display_path.dim()].into());
+    }
 
     PlainHistoryCell { lines }
 }

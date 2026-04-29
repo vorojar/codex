@@ -2574,8 +2574,8 @@ pub struct ExperimentalFeatureEnablementSetResponse {
 #[ts(export_to = "v2/")]
 pub struct ListMcpServerStatusParams {
     /// Optional environment used to start executor-backed MCP servers for this
-    /// threadless status read. Omitted preserves the legacy default/local
-    /// runtime environment.
+    /// threadless status read. Currently supports only `local` because
+    /// threadless MCP configuration is still loaded from local config/cwd.
     #[ts(optional = nullable)]
     pub environment_id: Option<String>,
     /// Opaque pagination cursor returned by a previous call.
@@ -2625,9 +2625,10 @@ pub struct ListMcpServerStatusResponse {
 pub struct McpResourceReadParams {
     #[ts(optional = nullable)]
     pub thread_id: Option<String>,
-    /// Optional environment used to read the resource. For thread-scoped
-    /// requests this must resolve to the thread's selected primary environment
-    /// until per-environment MCP managers are available.
+    /// Optional environment used to read the resource. Threadless reads
+    /// currently support only `local`; thread-scoped requests must resolve to
+    /// the thread's selected primary environment until per-environment MCP
+    /// managers are available.
     #[ts(optional = nullable)]
     pub environment_id: Option<String>,
     pub server: String,
@@ -3275,9 +3276,10 @@ pub struct CommandExecTerminalSize {
 pub struct CommandExecParams {
     /// Command argv vector. Empty arrays are rejected.
     pub command: Vec<String>,
-    /// Optional environment for command start. Omitted preserves the legacy
-    /// server-local command execution behavior. Continuation calls identify the
-    /// process by `processId` and do not accept a separate environment.
+    /// Optional environment for command start. Currently supports only `local`
+    /// because this threadless API still runs through the app-server's local
+    /// command executor. Continuation calls identify the process by `processId`
+    /// and do not accept a separate environment.
     #[ts(optional = nullable)]
     pub environment_id: Option<String>,
     /// Optional client-supplied, connection-scoped process id.
@@ -4340,8 +4342,9 @@ pub struct ThreadTurnsListResponse {
 #[serde(rename_all = "camelCase")]
 #[ts(export_to = "v2/")]
 pub struct SkillsListParams {
-    /// Optional environment to scan. Omitted preserves the legacy default/local
-    /// skills list behavior.
+    /// Optional environment to scan. Threadless `skills/list` currently
+    /// supports only `local` because config/plugin skill layers are still
+    /// loaded from local config files.
     #[ts(optional = nullable)]
     pub environment_id: Option<String>,
 
@@ -4510,7 +4513,9 @@ pub struct SkillMetadata {
     pub dependencies: Option<SkillDependencies>,
     pub path: AbsolutePathBuf,
     /// Environment-qualified path suitable for multi-environment references.
-    /// This is `null` for legacy single-environment listings.
+    /// Omitted for legacy single-environment listings.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
     pub qualified_path: Option<String>,
     pub scope: SkillScope,
     pub enabled: bool,
@@ -4576,6 +4581,8 @@ pub struct SkillErrorInfo {
 #[ts(export_to = "v2/")]
 pub struct SkillsListEntry {
     pub cwd: PathBuf,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
     pub environment_id: Option<String>,
     pub skills: Vec<SkillMetadata>,
     pub errors: Vec<SkillErrorInfo>,
@@ -5740,7 +5747,13 @@ pub enum ThreadItem {
     },
     #[serde(rename_all = "camelCase")]
     #[ts(rename_all = "camelCase")]
-    ImageView { id: String, path: AbsolutePathBuf },
+    ImageView {
+        id: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[ts(optional = nullable)]
+        environment_id: Option<String>,
+        path: AbsolutePathBuf,
+    },
     #[serde(rename_all = "camelCase")]
     #[ts(rename_all = "camelCase")]
     ImageGeneration {

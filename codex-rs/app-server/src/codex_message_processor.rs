@@ -289,6 +289,7 @@ use codex_core_plugins::remote::RemotePluginServiceConfig;
 use codex_core_plugins::remote::RemotePluginSummary as RemoteCatalogPluginSummary;
 use codex_exec_server::Environment;
 use codex_exec_server::EnvironmentManager;
+use codex_exec_server::LOCAL_ENVIRONMENT_ID;
 use codex_exec_server::LOCAL_FS;
 use codex_external_agent_sessions::ImportedExternalAgentSession;
 use codex_features::FEATURES;
@@ -872,6 +873,26 @@ impl CodexMessageProcessor {
                     .default_environment()
                     .unwrap_or_else(|| environment_manager.local_environment()),
             )),
+        }
+    }
+
+    fn resolve_threadless_local_environment(
+        environment_manager: &EnvironmentManager,
+        environment_id: Option<&str>,
+        api_name: &str,
+    ) -> Result<(Option<String>, Arc<Environment>), JSONRPCErrorError> {
+        match environment_id {
+            Some("") => Err(invalid_request(format!(
+                "{api_name} environmentId must be non-empty"
+            ))),
+            Some(LOCAL_ENVIRONMENT_ID) => Ok((
+                Some(LOCAL_ENVIRONMENT_ID.to_string()),
+                environment_manager.local_environment(),
+            )),
+            Some(environment_id) => Err(invalid_request(format!(
+                "{api_name} environmentId `{environment_id}` is not supported yet; only `local` is supported"
+            ))),
+            None => Ok((None, environment_manager.local_environment())),
         }
     }
 
@@ -2151,18 +2172,11 @@ impl CodexMessageProcessor {
             sandbox_policy,
             permission_profile,
         } = params;
-        if let Some(environment_id) = environment_id.as_deref() {
-            let (_, environment) = Self::resolve_threadless_environment(
-                self.thread_manager.environment_manager().as_ref(),
-                Some(environment_id),
-                "command/exec",
-            )?;
-            if environment.is_remote() {
-                return Err(invalid_request(
-                    "command/exec environmentId currently supports only local environments",
-                ));
-            }
-        }
+        Self::resolve_threadless_local_environment(
+            self.thread_manager.environment_manager().as_ref(),
+            environment_id.as_deref(),
+            "command/exec",
+        )?;
         if sandbox_policy.is_some() && permission_profile.is_some() {
             return Err(invalid_request(
                 "`permissionProfile` cannot be combined with `sandboxPolicy`",
@@ -5572,7 +5586,7 @@ impl CodexMessageProcessor {
             .await;
         let auth = self.auth_manager.auth().await;
         let environment_manager = self.thread_manager.environment_manager();
-        let (_, environment) = match Self::resolve_threadless_environment(
+        let (_, environment) = match Self::resolve_threadless_local_environment(
             environment_manager.as_ref(),
             params.environment_id.as_deref(),
             "mcp/server/status/list",
@@ -5761,7 +5775,7 @@ impl CodexMessageProcessor {
             .await;
         let auth = self.auth_manager.auth().await;
         let environment_manager = self.thread_manager.environment_manager();
-        let (_, environment) = match Self::resolve_threadless_environment(
+        let (_, environment) = match Self::resolve_threadless_local_environment(
             environment_manager.as_ref(),
             environment_id.as_deref(),
             "mcp/resource/read",
@@ -6286,25 +6300,12 @@ impl CodexMessageProcessor {
         let environment_manager = self.thread_manager.environment_manager();
         // TODO(multi-env): add selected-environment batch semantics if
         // skills/list grows a thread-scoped multi-env form.
-        let (resolved_environment_id, fs) = match environment_id.as_deref() {
-            Some(environment_id) => {
-                let (environment_id, environment) = Self::resolve_threadless_environment(
-                    environment_manager.as_ref(),
-                    Some(environment_id),
-                    "skills/list",
-                )?;
-                (environment_id, Some(environment.get_filesystem()))
-            }
-            None => {
-                let environment = environment_manager.default_environment();
-                (
-                    environment_manager
-                        .default_environment_id()
-                        .map(str::to_string),
-                    environment.map(|environment| environment.get_filesystem()),
-                )
-            }
-        };
+        let (resolved_environment_id, environment) = Self::resolve_threadless_local_environment(
+            environment_manager.as_ref(),
+            environment_id.as_deref(),
+            "skills/list",
+        )?;
+        let fs = Some(environment.get_filesystem());
         let mut data = Vec::new();
         for cwd in cwds {
             let extra_roots = extra_roots_by_cwd
@@ -8751,11 +8752,24 @@ fn marketplace_plugin_source_to_info(source: MarketplacePluginSource) -> PluginS
 
 fn format_oai_env_path(environment_id: &str, path: &AbsolutePathBuf) -> String {
     let path = path.to_string_lossy().replace('\\', "/");
+    let environment_id = encode_environment_id(environment_id);
     if path.starts_with('/') {
         format!("oai_env://{environment_id}{path}")
     } else {
         format!("oai_env://{environment_id}/{path}")
     }
+}
+
+fn encode_environment_id(environment_id: &str) -> String {
+    let mut encoded = String::with_capacity(environment_id.len());
+    for byte in environment_id.bytes() {
+        if byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'.' | b'_' | b'~') {
+            encoded.push(byte as char);
+        } else {
+            encoded.push_str(&format!("%{byte:02X}"));
+        }
+    }
+    encoded
 }
 
 fn errors_to_info(

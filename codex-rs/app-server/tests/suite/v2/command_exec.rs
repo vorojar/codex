@@ -318,6 +318,88 @@ async fn command_exec_permission_profile_project_roots_use_command_cwd() -> Resu
 }
 
 #[tokio::test]
+async fn command_exec_accepts_explicit_local_environment_id() -> Result<()> {
+    let server = create_mock_responses_server_sequence_unchecked(Vec::new()).await;
+    let codex_home = TempDir::new()?;
+    create_config_toml(codex_home.path(), &server.uri(), "never")?;
+    let mut mcp = McpProcess::new(codex_home.path()).await?;
+    timeout(DEFAULT_READ_TIMEOUT, mcp.initialize()).await??;
+
+    let command_request_id = mcp
+        .send_command_exec_request(CommandExecParams {
+            command: vec![
+                "sh".to_string(),
+                "-lc".to_string(),
+                "printf explicit-local".to_string(),
+            ],
+            environment_id: Some("local".to_string()),
+            process_id: None,
+            tty: false,
+            stream_stdin: false,
+            stream_stdout_stderr: false,
+            output_bytes_cap: None,
+            disable_output_cap: false,
+            disable_timeout: false,
+            timeout_ms: None,
+            cwd: None,
+            env: None,
+            size: None,
+            sandbox_policy: None,
+            permission_profile: None,
+        })
+        .await?;
+
+    let response = mcp
+        .read_stream_until_response_message(RequestId::Integer(command_request_id))
+        .await?;
+    let response: CommandExecResponse = to_response(response)?;
+    assert_eq!(response.stdout, "explicit-local");
+    assert_eq!(response.exit_code, 0);
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn command_exec_rejects_non_local_environment_id() -> Result<()> {
+    let server = create_mock_responses_server_sequence_unchecked(Vec::new()).await;
+    let codex_home = TempDir::new()?;
+    create_config_toml(codex_home.path(), &server.uri(), "never")?;
+    let mut mcp = McpProcess::new(codex_home.path()).await?;
+    timeout(DEFAULT_READ_TIMEOUT, mcp.initialize()).await??;
+
+    let command_request_id = mcp
+        .send_command_exec_request(CommandExecParams {
+            command: vec!["sh".to_string(), "-lc".to_string(), "true".to_string()],
+            environment_id: Some("remote".to_string()),
+            process_id: None,
+            tty: false,
+            stream_stdin: false,
+            stream_stdout_stderr: false,
+            output_bytes_cap: None,
+            disable_output_cap: false,
+            disable_timeout: false,
+            timeout_ms: None,
+            cwd: None,
+            env: None,
+            size: None,
+            sandbox_policy: None,
+            permission_profile: None,
+        })
+        .await?;
+
+    let error = mcp
+        .read_stream_until_error_message(RequestId::Integer(command_request_id))
+        .await?;
+    assert!(
+        error.error.message.contains("only `local` is supported"),
+        "unexpected error: {}",
+        error.error.message
+    );
+
+    Ok(())
+}
+
+#[tokio::test]
 async fn command_exec_rejects_sandbox_policy_with_permission_profile() -> Result<()> {
     let server = create_mock_responses_server_sequence_unchecked(Vec::new()).await;
     let codex_home = TempDir::new()?;

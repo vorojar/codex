@@ -1721,6 +1721,7 @@ async fn record_initial_history_forked_hydrates_previous_turn_settings() {
         turn_id: Some(turn_context.sub_id.clone()),
         trace_id: turn_context.trace_id.clone(),
         cwd: turn_context.cwd.to_path_buf(),
+        environments: None,
         current_date: turn_context.current_date.clone(),
         timezone: turn_context.timezone.clone(),
         approval_policy: turn_context.approval_policy.value(),
@@ -4450,7 +4451,19 @@ async fn mcp_runtime_environment_with_unknown_environment_errors() {
 
 #[tokio::test]
 async fn multiple_turn_environments_use_first_as_primary_environment() {
-    let (session, _turn_context, _rx) = make_session_and_context_with_rx().await;
+    let (mut session, _turn_context) = make_session_and_context().await;
+    let runtime_paths = codex_exec_server::ExecServerRuntimePaths::new(
+        std::env::current_exe().expect("current exe"),
+        /*codex_linux_sandbox_exe*/ None,
+    )
+    .expect("runtime paths");
+    session.services.environment_manager = Arc::new(
+        codex_exec_server::EnvironmentManager::create_for_tests(
+            Some("ws://127.0.0.1:8765".to_string()),
+            runtime_paths,
+        )
+        .await,
+    );
     let session_cwd = session.get_config().await.cwd.clone();
     let first_cwd =
         AbsolutePathBuf::try_from(session_cwd.as_path().join("first")).expect("absolute path");
@@ -4467,7 +4480,7 @@ async fn multiple_turn_environments_use_first_as_primary_environment() {
                         cwd: first_cwd.clone(),
                     },
                     TurnEnvironmentSelection {
-                        environment_id: "local".to_string(),
+                        environment_id: codex_exec_server::REMOTE_ENVIRONMENT_ID.to_string(),
                         cwd: second_cwd.clone(),
                     },
                 ]),

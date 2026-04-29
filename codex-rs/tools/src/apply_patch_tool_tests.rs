@@ -74,4 +74,5 @@ fn create_apply_patch_freeform_tool_mentions_env_paths_for_multi_env() {
     };
 
     assert!(description.contains("oai_env://<environment_id>/<absolute-path>"));
+    assert!(!description.contains("pass environment_id"));
 }

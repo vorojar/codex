@@ -20,6 +20,7 @@ use crate::tools::context::ExecCommandToolOutput;
 use crate::tools::events::ToolEmitter;
 use crate::tools::events::ToolEventCtx;
 use crate::tools::events::ToolEventStage;
+use crate::tools::handlers::reject_remote_process_when_sandbox_required;
 use crate::tools::network_approval::DeferredNetworkApproval;
 use crate::tools::network_approval::finish_deferred_network_approval;
 use crate::tools::orchestrator::ToolOrchestrator;
@@ -772,6 +773,16 @@ impl UnifiedExecProcessManager {
                 prefix_rule: request.prefix_rule.clone(),
             })
             .await;
+        if request.environment.is_remote() {
+            reject_remote_process_when_sandbox_required(
+                &context.turn,
+                &request.environment_id,
+                request.sandbox_permissions,
+                &exec_approval_requirement,
+                "exec_command",
+            )
+            .map_err(UnifiedExecError::create_process)?;
+        }
         let req = UnifiedExecToolRequest {
             command: request.command.clone(),
             hook_command: request.hook_command.clone(),

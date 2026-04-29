@@ -175,7 +175,7 @@ Example with notification opt-out:
 - `thread/realtime/appendText` — append text input to the active realtime session (experimental); returns `{}`.
 - `thread/realtime/stop` — stop the active realtime session for the thread (experimental); returns `{}`.
 - `review/start` — kick off Codex’s automated reviewer for a thread; responds like `turn/start` and emits `item/started`/`item/completed` notifications with `enteredReviewMode` and `exitedReviewMode` items, plus a final assistant `agentMessage` containing the review.
-- `command/exec` — run a single command under the server sandbox without starting a thread/turn (handy for utilities and validation). Accepts optional `environmentId` for command start; continuation APIs keep using `processId`.
+- `command/exec` — run a single command under the server sandbox without starting a thread/turn (handy for utilities and validation). Accepts optional `environmentId: "local"` for command start; continuation APIs keep using `processId`.
 - `command/exec/write` — write base64-decoded stdin bytes to a running `command/exec` session or close stdin; returns `{}`.
 - `command/exec/resize` — resize a running PTY-backed `command/exec` session by `processId`; returns `{}`.
 - `command/exec/terminate` — terminate a running `command/exec` session by `processId`; returns `{}`.
@@ -195,7 +195,7 @@ Example with notification opt-out:
 - `experimentalFeature/list` — list feature flags with stage metadata (`beta`, `underDevelopment`, `stable`, etc.), enabled/default-enabled state, and cursor pagination. For non-beta flags, `displayName`/`description`/`announcement` are `null`.
 - `experimentalFeature/enablement/set` — patch the in-memory process-wide runtime feature enablement for the currently supported feature keys (`apps`, `memories`, `plugins`, `remote_control`, `tool_search`, `tool_suggest`, `tool_call_mcp_elicitation`). For each feature, precedence is: cloud requirements > --enable <feature_name> > config.toml > experimentalFeature/enablement/set (new) > code default.
 - `collaborationMode/list` — list available collaboration mode presets (experimental, no pagination). This response omits built-in developer instructions; clients should either pass `settings.developer_instructions: null` when setting a mode to use Codex's built-in instructions, or provide their own instructions explicitly.
-- `skills/list` — list skills for one or more `cwd` values (optional `environmentId` and `forceReload`).
+- `skills/list` — list local skills for one or more `cwd` values (optional `environmentId: "local"` and `forceReload`).
 - `marketplace/add` — add a remote plugin marketplace from an HTTP(S) Git URL, SSH Git URL, or GitHub `owner/repo` shorthand, then persist it into the user marketplace config. Returns the installed root path plus whether the marketplace was already present.
 - `marketplace/remove` — remove a configured marketplace by name from the user marketplace config, and delete its installed marketplace root when one exists.
 - `marketplace/upgrade` — upgrade all configured Git plugin marketplaces, or one named marketplace when `marketplaceName` is provided. Returns selected marketplace names, upgraded roots, and per-marketplace errors.
@@ -213,8 +213,8 @@ Example with notification opt-out:
 - `mcpServer/oauth/login` — start an OAuth login for a configured MCP server; returns an `authorization_url` and later emits `mcpServer/oauthLogin/completed` once the browser flow finishes.
 - `tool/requestUserInput` — prompt the user with 1–3 short questions for a tool call and return their answers (experimental).
 - `config/mcpServer/reload` — reload MCP server config from disk and queue a refresh for loaded threads (applied on each thread's next active turn); returns `{}`. Use this after editing `config.toml` without restarting the server.
-- `mcpServerStatus/list` — enumerate configured MCP servers with their tools and auth status, plus resources/resource templates for `full` detail; supports optional `environmentId` plus cursor+limit pagination. If `detail` is omitted, the server defaults to `full`.
-- `mcpServer/resource/read` — read a resource from a configured MCP server by optional `threadId`, optional `environmentId`, `server`, and `uri`, returning text/blob resource `contents`. If `threadId` is omitted, the server reads from the latest MCP config directly.
+- `mcpServerStatus/list` — enumerate configured MCP servers with their tools and auth status, plus resources/resource templates for `full` detail; supports optional `environmentId: "local"` plus cursor+limit pagination. If `detail` is omitted, the server defaults to `full`.
+- `mcpServer/resource/read` — read a resource from a configured MCP server by optional `threadId`, optional `environmentId`, `server`, and `uri`, returning text/blob resource `contents`. If `threadId` is omitted, only `environmentId: "local"` is supported because the server reads from the latest local MCP config directly.
 - `mcpServer/tool/call` — call a tool on a thread's configured MCP server by `threadId`, `server`, `tool`, optional `arguments`, and optional `_meta`, returning the MCP tool result.
 - `windowsSandbox/setupStart` — start Windows sandbox setup for the selected mode (`elevated` or `unelevated`); accepts an optional absolute `cwd` to target setup for a specific workspace, returns `{ started: true }` immediately, and later emits `windowsSandbox/setupCompleted`.
 - `feedback/upload` — submit a feedback report (classification + optional reason/logs, conversation_id, and optional `extraLogFiles` attachments array); returns the tracking thread id.
@@ -933,7 +933,7 @@ Run a standalone command (argv vector) in the server’s sandbox without creatin
 Notes:
 
 - Empty `command` arrays are rejected.
-- Unknown `environmentId` values are rejected before command start. When omitted, the server uses legacy local command execution. Non-local command starts are not yet routed through this API.
+- `environmentId` currently supports only `local` for this threadless API. When omitted, the server uses legacy local command execution.
 - Prefer `permissionProfile` for command permission overrides. The legacy `sandboxPolicy` field accepts the same shape used by `turn/start` (e.g., `dangerFullAccess`, `readOnly`, `workspaceWrite` with flags, `externalSandbox` with `networkAccess` `restricted|enabled`), but cannot be combined with `permissionProfile`.
 - `env` merges into the environment produced by the server's shell environment policy. Matching names are overridden; unspecified variables are left intact.
 - When omitted, `timeoutMs` falls back to the server default.
@@ -1379,11 +1379,12 @@ Example:
 $skill-creator Add a new skill for triaging flaky CI and include step-by-step usage.
 ```
 
-Use `skills/list` to fetch the available skills (optionally scoped by `environmentId` and `cwds`, with `forceReload`).
+Use `skills/list` to fetch the available local skills (optionally scoped by `environmentId: "local"` and `cwds`, with `forceReload`).
 You can also add `perCwdExtraUserRoots` to scan additional absolute paths as `user` scope for specific `cwd` entries.
 Entries whose `cwd` is not present in `cwds` are ignored.
 `skills/list` might reuse a cached skills result per `cwd` and environment; setting `forceReload` to `true` refreshes the result from disk.
-When `environmentId` is provided, each entry echoes `environmentId` and each skill includes `qualifiedPath` using `oai_env://<environmentId>/<absolute-path>`.
+Threadless `skills/list` currently supports only `environmentId: "local"` because config/plugin skill layers are loaded from local config files.
+When `environmentId: "local"` is provided, each entry echoes `environmentId` and each skill includes `qualifiedPath` using `oai_env://local/<absolute-path>`.
 The server also emits `skills/changed` notifications when watched local skill files change. Treat this as an invalidation signal and re-run `skills/list` with your current params when needed.
 
 ```json

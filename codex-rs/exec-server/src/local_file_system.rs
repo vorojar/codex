@@ -287,7 +287,10 @@ impl ExecutorFileSystem for DirectFileSystem {
         reject_sandbox_context(sandbox)?;
         let metadata = tokio::fs::metadata(path.as_path()).await?;
         let symlink_metadata = tokio::fs::symlink_metadata(path.as_path()).await?;
-        Ok(file_metadata_from_fs_metadata(&metadata, &symlink_metadata))
+        Ok(file_metadata_from_fs_metadata(
+            Some(&metadata),
+            &symlink_metadata,
+        ))
     }
 
     async fn read_directory(
@@ -300,15 +303,13 @@ impl ExecutorFileSystem for DirectFileSystem {
         let mut read_dir = tokio::fs::read_dir(path.as_path()).await?;
         while let Some(entry) = read_dir.next_entry().await? {
             let entry_path = entry.path();
-            let Ok(metadata) = tokio::fs::metadata(&entry_path).await else {
-                continue;
-            };
             let Ok(symlink_metadata) = tokio::fs::symlink_metadata(&entry_path).await else {
                 continue;
             };
+            let metadata = tokio::fs::metadata(&entry_path).await.ok();
             entries.push(ReadDirectoryEntry {
                 file_name: entry.file_name(),
-                metadata: file_metadata_from_fs_metadata(&metadata, &symlink_metadata),
+                metadata: file_metadata_from_fs_metadata(metadata.as_ref(), &symlink_metadata),
             });
         }
         Ok(entries)
@@ -504,15 +505,22 @@ fn symlink_points_to_directory(source: &Path) -> io::Result<bool> {
 }
 
 fn file_metadata_from_fs_metadata(
-    metadata: &std::fs::Metadata,
+    metadata: Option<&std::fs::Metadata>,
     symlink_metadata: &std::fs::Metadata,
 ) -> FileMetadata {
+    let timestamp_metadata = metadata.unwrap_or(symlink_metadata);
     FileMetadata {
-        is_directory: metadata.is_dir(),
-        is_file: metadata.is_file(),
+        is_directory: metadata.is_some_and(std::fs::Metadata::is_dir),
+        is_file: metadata.is_some_and(std::fs::Metadata::is_file),
         is_symlink: symlink_metadata.file_type().is_symlink(),
-        created_at_ms: metadata.created().ok().map_or(0, system_time_to_unix_ms),
-        modified_at_ms: metadata.modified().ok().map_or(0, system_time_to_unix_ms),
+        created_at_ms: timestamp_metadata
+            .created()
+            .ok()
+            .map_or(0, system_time_to_unix_ms),
+        modified_at_ms: timestamp_metadata
+            .modified()
+            .ok()
+            .map_or(0, system_time_to_unix_ms),
     }
 }
 

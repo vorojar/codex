@@ -47,8 +47,6 @@ pub struct UnifiedExecHandler;
 pub(crate) struct ExecCommandArgs {
     cmd: String,
     #[serde(default)]
-    environment_id: Option<String>,
-    #[serde(default)]
     pub(crate) workdir: Option<String>,
     #[serde(default)]
     shell: Option<String>,
@@ -219,6 +217,17 @@ impl ToolHandler for UnifiedExecHandler {
                 let environment = Arc::clone(&turn_environment.environment);
                 let environment_id = turn_environment.environment_id.clone();
                 let fs = environment.get_filesystem();
+                if environment.is_remote()
+                    && matches!(
+                        &turn.tools_config.unified_exec_shell_mode,
+                        UnifiedExecShellMode::ZshFork(_)
+                    )
+                {
+                    return Err(FunctionCallError::RespondToModel(
+                        "unified_exec zsh-fork is not supported for remote environments"
+                            .to_string(),
+                    ));
+                }
                 let turn_environment_cwd = &turn_environment.cwd;
                 let exec_cwd = resolve_workdir_base_path(&arguments, turn_environment_cwd)?;
                 let args: ExecCommandArgs = parse_arguments_with_base_path(&arguments, &exec_cwd)?;
@@ -241,7 +250,6 @@ impl ToolHandler for UnifiedExecHandler {
 
                 let ExecCommandArgs {
                     workdir: _,
-                    environment_id: _,
                     tty,
                     yield_time_ms,
                     max_output_tokens,
@@ -259,6 +267,8 @@ impl ToolHandler for UnifiedExecHandler {
                 let requested_additional_permissions = additional_permissions.clone();
                 let effective_additional_permissions = apply_granted_turn_permissions(
                     context.session.as_ref(),
+                    context.turn.as_ref(),
+                    &environment_id,
                     exec_cwd.as_path(),
                     sandbox_permissions,
                     additional_permissions,

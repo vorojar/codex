@@ -48,7 +48,9 @@ pub(super) fn resolve_environment_path<'a>(
     let qualified_path = parse_oai_env_uri(raw_path, field_name)?;
     let environment_id = selected_environment_id(
         explicit_environment_id,
-        qualified_path.as_ref().map(|path| path.environment_id),
+        qualified_path
+            .as_ref()
+            .map(|path| path.environment_id.as_str()),
     )?;
     let environment = resolve_tool_environment(turn, environment_id, tool_name)?;
     let path = match qualified_path {
@@ -61,6 +63,7 @@ pub(super) fn resolve_environment_path<'a>(
 
 pub(super) fn format_oai_env_uri(environment_id: &str, path: &AbsolutePathBuf) -> String {
     let path = path.display().to_string();
+    let environment_id = encode_environment_id(environment_id);
     if path.starts_with('/') {
         format!("oai_env://{environment_id}{path}")
     } else {
@@ -69,15 +72,15 @@ pub(super) fn format_oai_env_uri(environment_id: &str, path: &AbsolutePathBuf) -
 }
 
 #[derive(Debug)]
-pub(super) struct OaiEnvPath<'a> {
-    pub(super) environment_id: &'a str,
+pub(super) struct OaiEnvPath {
+    pub(super) environment_id: String,
     pub(super) path: AbsolutePathBuf,
 }
 
-pub(super) fn parse_oai_env_uri<'a>(
-    raw_path: &'a str,
+pub(super) fn parse_oai_env_uri(
+    raw_path: &str,
     field_name: &str,
-) -> Result<Option<OaiEnvPath<'a>>, FunctionCallError> {
+) -> Result<Option<OaiEnvPath>, FunctionCallError> {
     if !raw_path.starts_with(OAI_ENV_SCHEME_PREFIX) {
         return Ok(None);
     }
@@ -85,13 +88,14 @@ pub(super) fn parse_oai_env_uri<'a>(
     let Some(remainder) = raw_path.strip_prefix(OAI_ENV_SCHEME) else {
         return Err(malformed_oai_env_uri(field_name, raw_path));
     };
-    let Some((environment_id, uri_path)) = remainder.split_once('/') else {
+    let Some((encoded_environment_id, uri_path)) = remainder.split_once('/') else {
         return Err(malformed_oai_env_uri(field_name, raw_path));
     };
-    if environment_id.is_empty() {
+    if encoded_environment_id.is_empty() {
         return Err(malformed_oai_env_uri(field_name, raw_path));
     }
 
+    let environment_id = decode_environment_id(encoded_environment_id, field_name, raw_path)?;
     let path =
         absolute_uri_path(uri_path).ok_or_else(|| malformed_oai_env_uri(field_name, raw_path))?;
     let path = AbsolutePathBuf::try_from(path)
@@ -100,6 +104,55 @@ pub(super) fn parse_oai_env_uri<'a>(
         environment_id,
         path,
     }))
+}
+
+fn encode_environment_id(environment_id: &str) -> String {
+    let mut encoded = String::with_capacity(environment_id.len());
+    for byte in environment_id.bytes() {
+        if byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'.' | b'_' | b'~') {
+            encoded.push(byte as char);
+        } else {
+            encoded.push_str(&format!("%{byte:02X}"));
+        }
+    }
+    encoded
+}
+
+fn decode_environment_id(
+    encoded: &str,
+    field_name: &str,
+    raw_path: &str,
+) -> Result<String, FunctionCallError> {
+    let bytes = encoded.as_bytes();
+    let mut decoded = Vec::with_capacity(bytes.len());
+    let mut index = 0;
+    while index < bytes.len() {
+        if bytes[index] == b'%' {
+            if index + 2 >= bytes.len() {
+                return Err(malformed_oai_env_uri(field_name, raw_path));
+            }
+            let high = hex_value(bytes[index + 1])
+                .ok_or_else(|| malformed_oai_env_uri(field_name, raw_path))?;
+            let low = hex_value(bytes[index + 2])
+                .ok_or_else(|| malformed_oai_env_uri(field_name, raw_path))?;
+            decoded.push(high << 4 | low);
+            index += 3;
+        } else {
+            decoded.push(bytes[index]);
+            index += 1;
+        }
+    }
+
+    String::from_utf8(decoded).map_err(|_| malformed_oai_env_uri(field_name, raw_path))
+}
+
+fn hex_value(byte: u8) -> Option<u8> {
+    match byte {
+        b'0'..=b'9' => Some(byte - b'0'),
+        b'a'..=b'f' => Some(byte - b'a' + 10),
+        b'A'..=b'F' => Some(byte - b'A' + 10),
+        _ => None,
+    }
 }
 
 fn selected_environment_id<'a>(
@@ -163,6 +216,25 @@ mod tests {
             .expect("qualified path");
 
         assert_eq!(parsed.environment_id, "remote");
+        assert_eq!(parsed.path, path);
+    }
+
+    #[test]
+    fn parse_oai_env_uri_round_trips_opaque_environment_id() {
+        let path = AbsolutePathBuf::current_dir()
+            .expect("cwd")
+            .join("src/lib.rs");
+        let uri = format_oai_env_uri("team/remote env", &path);
+
+        let parsed = parse_oai_env_uri(&uri, "path")
+            .expect("parse")
+            .expect("qualified path");
+
+        assert_eq!(
+            uri,
+            format!("oai_env://team%2Fremote%20env{}", path.display())
+        );
+        assert_eq!(parsed.environment_id, "team/remote env");
         assert_eq!(parsed.path, path);
     }
 

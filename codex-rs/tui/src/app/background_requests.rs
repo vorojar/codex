@@ -430,6 +430,7 @@ pub(super) async fn fetch_all_mcp_server_statuses(
                     cursor: cursor.clone(),
                     limit: Some(100),
                     detail: Some(detail),
+                    environment_id: None,
                 },
             })
             .await
@@ -488,6 +489,7 @@ pub(super) async fn fetch_skills_list(
             request_id,
             params: SkillsListParams {
                 cwds: vec![cwd],
+                environment_id: None,
                 force_reload: true,
                 per_cwd_extra_user_roots: None,
             },

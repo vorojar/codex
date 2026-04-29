@@ -1,7 +1,9 @@
 use crate::session::turn_context::TurnContext;
+use crate::session::turn_context::TurnEnvironment;
 use crate::shell::Shell;
 use codex_protocol::protocol::TurnContextItem;
 use codex_protocol::protocol::TurnContextNetworkItem;
+use codex_protocol::protocol::TurnEnvironmentSelection;
 use std::path::PathBuf;
 
 use super::ContextualUserFragment;
@@ -9,6 +11,7 @@ use super::ContextualUserFragment;
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct EnvironmentContext {
     pub(crate) cwd: Option<PathBuf>,
+    pub(crate) environments: Option<Vec<TurnEnvironmentSelection>>,
     pub(crate) shell: String,
     pub(crate) current_date: Option<String>,
     pub(crate) timezone: Option<String>,
@@ -42,6 +45,7 @@ impl EnvironmentContext {
     ) -> Self {
         Self {
             cwd,
+            environments: None,
             shell,
             current_date,
             timezone,
@@ -56,6 +60,7 @@ impl EnvironmentContext {
     pub(crate) fn equals_except_shell(&self, other: &EnvironmentContext) -> bool {
         let EnvironmentContext {
             cwd,
+            environments,
             current_date,
             timezone,
             network,
@@ -63,6 +68,7 @@ impl EnvironmentContext {
             shell: _,
         } = other;
         self.cwd == *cwd
+            && self.environments == *environments
             && self.current_date == *current_date
             && self.timezone == *timezone
             && self.network == *network
@@ -83,6 +89,11 @@ impl EnvironmentContext {
         } else {
             before_network
         };
+        let environments = if before.environments != after.environments {
+            Some(after.environments.clone().unwrap_or_default())
+        } else {
+            None
+        };
         EnvironmentContext::new(
             cwd,
             after.shell.clone(),
@@ -91,6 +102,7 @@ impl EnvironmentContext {
             network,
             /*subagents*/ None,
         )
+        .with_environments(environments)
     }
 
     pub(crate) fn from_turn_context(turn_context: &TurnContext, shell: &Shell) -> Self {
@@ -102,6 +114,7 @@ impl EnvironmentContext {
             Self::network_from_turn_context(turn_context),
             /*subagents*/ None,
         )
+        .with_environments(selected_environments_from_turn_context(turn_context))
     }
 
     pub(crate) fn from_turn_context_item(
@@ -116,12 +129,21 @@ impl EnvironmentContext {
             Self::network_from_turn_context_item(turn_context_item),
             /*subagents*/ None,
         )
+        .with_environments(turn_context_item.environments.clone())
     }
 
     pub(crate) fn with_subagents(mut self, subagents: String) -> Self {
         if !subagents.is_empty() {
             self.subagents = Some(subagents);
         }
+        self
+    }
+
+    pub(crate) fn with_environments(
+        mut self,
+        environments: Option<Vec<TurnEnvironmentSelection>>,
+    ) -> Self {
+        self.environments = environments;
         self
     }
 
@@ -171,6 +193,19 @@ impl ContextualUserFragment for EnvironmentContext {
         if let Some(cwd) = &self.cwd {
             lines.push(format!("  <cwd>{}</cwd>", cwd.to_string_lossy()));
         }
+        if let Some(environments) = &self.environments {
+            lines.push("  <environments>".to_string());
+            for (index, environment) in environments.iter().enumerate() {
+                let primary = if index == 0 { " primary=\"true\"" } else { "" };
+                lines.push(format!(
+                    "    <environment id=\"{}\" cwd=\"{}\"{} />",
+                    environment.environment_id,
+                    environment.cwd.to_string_lossy(),
+                    primary
+                ));
+            }
+            lines.push("  </environments>".to_string());
+        }
 
         lines.push(format!("  <shell>{}</shell>", self.shell));
         if let Some(current_date) = &self.current_date {
@@ -202,6 +237,18 @@ impl ContextualUserFragment for EnvironmentContext {
         }
         format!("\n{}\n", lines.join("\n"))
     }
+}
+
+fn selected_environments_from_turn_context(
+    turn_context: &TurnContext,
+) -> Option<Vec<TurnEnvironmentSelection>> {
+    turn_context.has_multiple_selected_environments().then(|| {
+        turn_context
+            .environments
+            .iter()
+            .map(TurnEnvironment::selection)
+            .collect()
+    })
 }
 
 #[cfg(test)]
