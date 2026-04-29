@@ -65,7 +65,6 @@ use codex_app_server_protocol::InitializeCapabilities;
 use codex_app_server_protocol::InitializeParams;
 use codex_app_server_protocol::JSONRPCErrorError;
 use codex_app_server_protocol::NonSteerableTurnKind;
-use codex_app_server_protocol::PermissionProfile as AppServerPermissionProfile;
 use codex_app_server_protocol::RequestId;
 use codex_app_server_protocol::SandboxPolicy as AppServerSandboxPolicy;
 use codex_app_server_protocol::ServerNotification;
@@ -154,14 +153,11 @@ fn sample_thread_start_response(thread_id: &str, ephemeral: bool, model: &str) -
             approval_policy: AppServerAskForApproval::OnFailure,
             approvals_reviewer: AppServerApprovalsReviewer::User,
             sandbox: AppServerSandboxPolicy::DangerFullAccess,
-            permission_profile: Some(sample_permission_profile()),
+            permission_profile: None,
+            active_permission_profile: None,
             reasoning_effort: None,
         },
     }
-}
-
-fn sample_permission_profile() -> AppServerPermissionProfile {
-    CorePermissionProfile::Disabled.into()
 }
 
 fn sample_app_server_client_metadata() -> CodexAppServerClientMetadata {
@@ -210,7 +206,8 @@ fn sample_thread_resume_response_with_source(
             approval_policy: AppServerAskForApproval::OnFailure,
             approvals_reviewer: AppServerApprovalsReviewer::User,
             sandbox: AppServerSandboxPolicy::DangerFullAccess,
-            permission_profile: Some(sample_permission_profile()),
+            permission_profile: None,
+            active_permission_profile: None,
             reasoning_effort: None,
         },
     }
