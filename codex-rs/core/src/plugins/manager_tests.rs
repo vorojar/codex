@@ -1886,12 +1886,49 @@ enabled = true
         outcome.plugin.hooks,
         vec![
             PluginHookSummary {
+                key: "hooks/hooks.json:PreToolUse:0:0".to_string(),
                 event_name: HookEventName::PreToolUse,
-                handler_count: 2,
+                matcher: None,
+                enabled: true,
+                status_message: None,
+                definition: serde_json::json!({
+                    "type": "command",
+                    "command": "echo first",
+                    "timeout": null,
+                    "async": false,
+                    "statusMessage": null,
+                }),
+                display_order: 0,
             },
             PluginHookSummary {
+                key: "hooks/hooks.json:PreToolUse:0:1".to_string(),
+                event_name: HookEventName::PreToolUse,
+                matcher: None,
+                enabled: true,
+                status_message: None,
+                definition: serde_json::json!({
+                    "type": "command",
+                    "command": "echo second",
+                    "timeout": null,
+                    "async": false,
+                    "statusMessage": null,
+                }),
+                display_order: 1,
+            },
+            PluginHookSummary {
+                key: "hooks/hooks.json:SessionStart:0:0".to_string(),
                 event_name: HookEventName::SessionStart,
-                handler_count: 1,
+                matcher: None,
+                enabled: true,
+                status_message: None,
+                definition: serde_json::json!({
+                    "type": "command",
+                    "command": "echo startup",
+                    "timeout": null,
+                    "async": false,
+                    "statusMessage": null,
+                }),
+                display_order: 2,
             },
         ]
     );

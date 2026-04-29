@@ -992,12 +992,20 @@ pub(super) fn plugins_test_detail(
             .collect(),
         hooks: hooks
             .iter()
-            .map(
-                |(event_name, handler_count)| codex_app_server_protocol::PluginHookSummary {
+            .flat_map(|(event_name, handler_count)| {
+                (0..*handler_count).map(move |index| codex_app_server_protocol::PluginHookSummary {
+                    key: format!("test:{event_name:?}:0:{index}"),
                     event_name: *event_name,
-                    handler_count: *handler_count,
-                },
-            )
+                    matcher: None,
+                    enabled: true,
+                    status_message: None,
+                    definition: serde_json::json!({
+                        "type": "command",
+                        "command": format!("echo {index}"),
+                    }),
+                    display_order: i64::try_from(index).unwrap_or(i64::MAX),
+                })
+            })
             .collect(),
         apps: apps
             .iter()

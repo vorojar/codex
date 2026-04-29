@@ -717,17 +717,56 @@ enabled = true
         "Summarize email threads"
     );
     assert!(!response.plugin.skills[0].enabled);
-    assert_eq!(response.plugin.hooks.len(), 2);
     assert_eq!(
-        response.plugin.hooks[0].event_name,
-        HookEventName::PreToolUse
+        response.plugin.hooks,
+        vec![
+            codex_app_server_protocol::PluginHookSummary {
+                key: "hooks/hooks.json:PreToolUse:0:0".to_string(),
+                event_name: HookEventName::PreToolUse,
+                matcher: None,
+                enabled: true,
+                status_message: None,
+                definition: json!({
+                    "type": "command",
+                    "command": "echo first",
+                    "timeout": null,
+                    "async": false,
+                    "statusMessage": null,
+                }),
+                display_order: 0,
+            },
+            codex_app_server_protocol::PluginHookSummary {
+                key: "hooks/hooks.json:PreToolUse:0:1".to_string(),
+                event_name: HookEventName::PreToolUse,
+                matcher: None,
+                enabled: true,
+                status_message: None,
+                definition: json!({
+                    "type": "command",
+                    "command": "echo second",
+                    "timeout": null,
+                    "async": false,
+                    "statusMessage": null,
+                }),
+                display_order: 1,
+            },
+            codex_app_server_protocol::PluginHookSummary {
+                key: "hooks/hooks.json:SessionStart:0:0".to_string(),
+                event_name: HookEventName::SessionStart,
+                matcher: None,
+                enabled: true,
+                status_message: None,
+                definition: json!({
+                    "type": "command",
+                    "command": "echo startup",
+                    "timeout": null,
+                    "async": false,
+                    "statusMessage": null,
+                }),
+                display_order: 2,
+            },
+        ]
     );
-    assert_eq!(response.plugin.hooks[0].handler_count, 2);
-    assert_eq!(
-        response.plugin.hooks[1].event_name,
-        HookEventName::SessionStart
-    );
-    assert_eq!(response.plugin.hooks[1].handler_count, 1);
     assert_eq!(response.plugin.apps.len(), 1);
     assert_eq!(response.plugin.apps[0].id, "gmail");
     assert_eq!(response.plugin.apps[0].name, "gmail");

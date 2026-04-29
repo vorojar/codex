@@ -1647,10 +1647,20 @@ fn plugin_hook_summary(plugin: &PluginDetail) -> String {
     if plugin.hooks.is_empty() {
         "No plugin hooks.".to_string()
     } else {
-        plugin
-            .hooks
-            .iter()
-            .map(|hook| format!("{:?} ({})", hook.event_name, hook.handler_count))
+        let mut event_counts = Vec::<(codex_app_server_protocol::HookEventName, usize)>::new();
+        for hook in &plugin.hooks {
+            if let Some((_, handler_count)) = event_counts
+                .iter_mut()
+                .find(|(event_name, _)| *event_name == hook.event_name)
+            {
+                *handler_count += 1;
+            } else {
+                event_counts.push((hook.event_name, 1));
+            }
+        }
+        event_counts
+            .into_iter()
+            .map(|(event_name, handler_count)| format!("{event_name:?} ({handler_count})"))
             .collect::<Vec<_>>()
             .join(", ")
     }

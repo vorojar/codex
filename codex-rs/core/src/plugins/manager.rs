@@ -62,6 +62,7 @@ use codex_plugin::prompt_safe_plugin_description;
 use codex_protocol::protocol::HookEventName;
 use codex_protocol::protocol::Product;
 use codex_utils_absolute_path::AbsolutePathBuf;
+use serde_json::Value as JsonValue;
 use std::collections::HashMap;
 use std::collections::HashSet;
 use std::path::PathBuf;
@@ -181,10 +182,15 @@ pub struct PluginDetail {
     pub details_unavailable_reason: Option<PluginDetailsUnavailableReason>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct PluginHookSummary {
+    pub key: String,
     pub event_name: HookEventName,
-    pub handler_count: usize,
+    pub matcher: Option<String>,
+    pub enabled: bool,
+    pub status_message: Option<String>,
+    pub definition: JsonValue,
+    pub display_order: i64,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1506,30 +1512,71 @@ impl PluginsManager {
 }
 
 fn summarize_plugin_hooks(hook_sources: &[PluginHookSource]) -> Vec<PluginHookSummary> {
-    let Some(first_source) = hook_sources.first() else {
-        return Vec::new();
-    };
-    let mut counts = first_source
-        .hooks
-        .matcher_groups()
-        .map(|(event_name, _)| (event_name, 0));
+    let mut hooks = Vec::new();
+    let mut display_order = 0_i64;
 
     for source in hook_sources {
-        for ((_, count), (_, groups)) in counts.iter_mut().zip(source.hooks.matcher_groups()) {
-            let handler_count = groups.iter().map(|group| group.hooks.len()).sum::<usize>();
-            *count += handler_count;
+        for (event_name, groups) in source.hooks.matcher_groups() {
+            for (group_index, group) in groups.iter().enumerate() {
+                for (handler_index, handler) in group.hooks.iter().enumerate() {
+                    hooks.push(PluginHookSummary {
+                        key: plugin_hook_key(
+                            &source.source_relative_path,
+                            event_name,
+                            group_index,
+                            handler_index,
+                        ),
+                        event_name,
+                        matcher: group.matcher.clone(),
+                        // Plugin hooks do not yet have handler-level config overrides in this
+                        // branch, so every bundled handler is currently enabled by default.
+                        enabled: true,
+                        status_message: plugin_hook_status_message(handler),
+                        definition: serde_json::to_value(handler).unwrap_or(JsonValue::Null),
+                        display_order,
+                    });
+                    display_order += 1;
+                }
+            }
         }
     }
 
-    counts
-        .into_iter()
-        .filter_map(|(event_name, handler_count)| {
-            (handler_count > 0).then_some(PluginHookSummary {
-                event_name,
-                handler_count,
-            })
-        })
-        .collect()
+    hooks
+}
+
+fn plugin_hook_key(
+    source_relative_path: &str,
+    event_name: HookEventName,
+    group_index: usize,
+    handler_index: usize,
+) -> String {
+    format!(
+        "{}:{}:{}:{}",
+        source_relative_path,
+        plugin_hook_event_label(event_name),
+        group_index,
+        handler_index
+    )
+}
+
+fn plugin_hook_event_label(event_name: HookEventName) -> &'static str {
+    match event_name {
+        HookEventName::PreToolUse => "PreToolUse",
+        HookEventName::PermissionRequest => "PermissionRequest",
+        HookEventName::PostToolUse => "PostToolUse",
+        HookEventName::SessionStart => "SessionStart",
+        HookEventName::UserPromptSubmit => "UserPromptSubmit",
+        HookEventName::Stop => "Stop",
+    }
+}
+
+fn plugin_hook_status_message(handler: &codex_config::HookHandlerConfig) -> Option<String> {
+    match handler {
+        codex_config::HookHandlerConfig::Command { status_message, .. } => status_message.clone(),
+        codex_config::HookHandlerConfig::Prompt {} | codex_config::HookHandlerConfig::Agent {} => {
+            None
+        }
+    }
 }
 
 fn remote_plugin_install_required_description(source: &MarketplacePluginSource) -> String {

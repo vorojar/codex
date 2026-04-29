@@ -4687,8 +4687,13 @@ pub struct PluginDetail {
 #[serde(rename_all = "camelCase")]
 #[ts(export_to = "v2/")]
 pub struct PluginHookSummary {
+    pub key: String,
     pub event_name: HookEventName,
-    pub handler_count: usize,
+    pub matcher: Option<String>,
+    pub enabled: bool,
+    pub status_message: Option<String>,
+    pub definition: JsonValue,
+    pub display_order: i64,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, JsonSchema, TS)]
