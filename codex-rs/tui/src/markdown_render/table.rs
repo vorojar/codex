@@ -1,8 +1,6 @@
 use std::borrow::Cow;
 
-use ratatui::style::Stylize;
 use ratatui::text::Line;
-use ratatui::text::Span;
 use unicode_width::UnicodeWidthStr;
 
 #[derive(Debug, Default)]
@@ -643,19 +641,51 @@ fn render_vertical_table(rows: &[Vec<String>], available_width: usize) -> Vec<Li
         .map(|index| vertical_label(headers, *index).width())
         .max()
         .unwrap_or(4);
-    let label_width = max_header_width.min(20).min(available_width / 3).max(4);
-    let value_width = available_width.saturating_sub(label_width + 2).max(1);
+    let max_value_width = body_rows
+        .iter()
+        .flat_map(|row| included_columns.iter().filter_map(|index| row.get(*index)))
+        .flat_map(|cell| cell.split('\n'))
+        .map(UnicodeWidthStr::width)
+        .max()
+        .unwrap_or(1);
+    let available_content_width = available_width.saturating_sub(7);
+    let (label_width, value_width) = if available_content_width < 6 {
+        let label_width = available_content_width.saturating_div(2).max(1);
+        (
+            label_width,
+            available_content_width.saturating_sub(label_width).max(1),
+        )
+    } else {
+        let min_label_width = 3;
+        let min_value_width = 3;
+        let desired_label_width = max_header_width.min(20).max(min_label_width);
+        let label_width =
+            desired_label_width.min(available_content_width.saturating_sub(min_value_width));
+        let desired_value_width = max_value_width.max(min_value_width);
+        let value_width = desired_value_width
+            .min(available_content_width.saturating_sub(label_width))
+            .max(min_value_width);
+        (label_width, value_width)
+    };
     let mut out = Vec::new();
 
+    out.push(Line::from(border_line(
+        "┌",
+        "┬",
+        "┐",
+        &[label_width, value_width],
+        /*padding*/ 1,
+    )));
     for (row_index, row) in body_rows.iter().enumerate() {
         if row_index > 0 {
-            out.push(Line::default());
+            out.push(Line::from(border_line(
+                "├",
+                "┼",
+                "┤",
+                &[label_width, value_width],
+                /*padding*/ 1,
+            )));
         }
-        out.push(
-            Line::from(format_vertical_row_title(headers, row, row_index))
-                .dim()
-                .bold(),
-        );
         for index in &included_columns {
             let label = truncate_to_width(&vertical_label(headers, *index), label_width);
             let cell = row.get(*index).map(String::as_str).unwrap_or("").trim();
@@ -663,7 +693,7 @@ fn render_vertical_table(rows: &[Vec<String>], available_width: usize) -> Vec<Li
             let wrapped = textwrap::wrap(
                 value,
                 textwrap::Options::new(value_width)
-                    .break_words(false)
+                    .break_words(true)
                     .word_separator(textwrap::WordSeparator::AsciiSpace)
                     .wrap_algorithm(textwrap::WrapAlgorithm::FirstFit),
             )
@@ -677,23 +707,24 @@ fn render_vertical_table(rows: &[Vec<String>], available_width: usize) -> Vec<Li
             };
 
             for (line_index, value_line) in wrapped.iter().enumerate() {
-                if line_index == 0 {
-                    let prefix = format!("{label:>label_width$}: ");
-                    let value_span = if cell.is_empty() {
-                        Span::from(value_line.clone()).dim()
-                    } else {
-                        Span::from(value_line.clone())
-                    };
-                    out.push(Line::from(vec![prefix.dim(), value_span]));
-                } else {
-                    out.push(Line::from(vec![
-                        " ".repeat(label_width + 2).into(),
-                        value_line.clone().into(),
-                    ]));
-                }
+                let label = if line_index == 0 { label.as_str() } else { "" };
+                let label_padding = label_width.saturating_sub(label.width());
+                let value_padding = value_width.saturating_sub(value_line.width());
+                out.push(Line::from(format!(
+                    "│ {}{label} │ {value_line}{} │",
+                    " ".repeat(label_padding),
+                    " ".repeat(value_padding),
+                )));
             }
         }
     }
+    out.push(Line::from(border_line(
+        "└",
+        "┴",
+        "┘",
+        &[label_width, value_width],
+        /*padding*/ 1,
+    )));
     out
 }
 
@@ -722,20 +753,6 @@ fn vertical_label(headers: &[String], index: usize) -> String {
         .filter(|header| !header.is_empty())
         .unwrap_or("Column")
         .to_string()
-}
-
-fn format_vertical_row_title(headers: &[String], row: &[String], row_index: usize) -> String {
-    let first_header = headers.first().map(|header| normalized_header(header));
-    let first_cell = row.first().map(|cell| cell.trim()).unwrap_or("");
-    if first_header
-        .as_deref()
-        .is_some_and(|header| matches!(header, "#" | "id" | "idx" | "index" | "row"))
-        && !first_cell.is_empty()
-    {
-        format!("Row {first_cell}")
-    } else {
-        format!("Row {}", row_index + 1)
-    }
 }
 
 fn truncate_to_width(input: &str, max_width: usize) -> String {

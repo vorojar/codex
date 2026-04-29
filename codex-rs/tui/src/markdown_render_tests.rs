@@ -123,8 +123,12 @@ fn table_resize_lifecycle_renderer_uses_vertical_fallback_only_at_tiny_width() {
     let lines = plain_lines(&rendered);
 
     assert!(
-        lines.iter().any(|line| line == "Row 1"),
+        lines.iter().any(|line| line.contains("┬")),
         "tiny width should trigger vertical fallback: {lines:?}"
+    );
+    assert!(
+        lines.iter().all(|line| !line.starts_with("Row ")),
+        "vertical fallback should not render row headers: {lines:?}"
     );
 }
 
@@ -157,17 +161,19 @@ fn table_readability_fallback_uses_vertical_for_dense_large_table_when_narrow() 
     let lines = plain_lines(&rendered);
 
     assert!(
-        lines.iter().all(|line| !line.contains('┌')),
-        "narrow large table should not render as boxed table: {lines:?}"
+        lines.iter().any(|line| line.contains("│       Token │ Row 31"))
+            && lines
+                .iter()
+                .any(|line| line.contains("│        Link │ row (https://example.com/31)")),
+        "vertical fallback should render aligned key/value records: {lines:?}"
     );
     assert!(
-        lines.iter().any(|line| line == "Row 31"),
-        "narrow large table should render row records: {lines:?}"
+        lines.iter().any(|line| line.contains('┼')),
+        "vertical fallback should separate source rows: {lines:?}"
     );
     assert!(
-        lines.iter().any(|line| line.contains("      Token: Row 31"))
-            && lines.iter().any(|line| line.contains("       Link: row")),
-        "vertical fallback should align labels in a gutter: {lines:?}"
+        lines.iter().all(|line| !line.starts_with("Row ")),
+        "vertical fallback should not render row headers: {lines:?}"
     );
 }
 
@@ -177,19 +183,23 @@ fn table_readability_fallback_wraps_vertical_values_under_value_column() {
     let rendered = render_markdown_text_with_width_and_cwd(markdown, Some(30), /*cwd*/ None);
     let lines = plain_lines(&rendered);
 
-    assert_eq!(lines[0], "Row 31");
+    assert_eq!(lines[0], "┌──────────────┬─────────────┐");
     assert!(
         lines
             .iter()
-            .any(|line| line.starts_with("Color Sam…: The color")),
-        "first vertical value line should include the label: {lines:?}"
+            .any(|line| line.starts_with("│ Color Sample │ The color")),
+        "first vertical value line should include the boxed label: {lines:?}"
     );
     assert!(
         lines
             .iter()
             .skip(1)
-            .any(|line| line.starts_with("            ")),
+            .any(|line| line.starts_with("│              │ sample")),
         "wrapped vertical value should align under the value column: {lines:?}"
+    );
+    assert!(
+        lines.iter().all(|line| !line.starts_with("Row ")),
+        "vertical fallback should not render row headers: {lines:?}"
     );
 }
 
@@ -224,13 +234,14 @@ fn table_readability_fallback_uses_vertical_for_emoji_near_fit() {
     let lines = plain_lines(&rendered);
 
     assert!(
-        lines.iter().all(|line| !line.contains('┌')),
-        "emoji-heavy near-fit table should fall back to vertical layout: {lines:?}"
+        lines
+            .iter()
+            .any(|line| line.contains("│ Markdown Coverage │ 😎 ✅ 🧩")),
+        "emoji-heavy near-fit table should fall back to key/value layout: {lines:?}"
     );
     assert!(
-        lines.iter().any(|line| line == "Row 1")
-            && lines.iter().any(|line| line.contains("Markdown Cov…:")),
-        "emoji-heavy fallback should render row records: {lines:?}"
+        lines.iter().all(|line| !line.starts_with("Row ")),
+        "emoji-heavy fallback should not render row headers: {lines:?}"
     );
 }
 
