@@ -681,9 +681,9 @@ mod tests {
         let mut buf = Buffer::empty(area);
         view.render(area, &mut buf);
 
-        let rendered = (0..area.height)
+        (0..area.height)
             .map(|row| {
-                (0..area.width)
+                let rendered = (0..area.width)
                     .map(|col| {
                         let symbol = buf[(area.x + col, area.y + row)].symbol();
                         if symbol.is_empty() {
@@ -692,11 +692,13 @@ mod tests {
                             symbol.to_string()
                         }
                     })
-                    .collect::<String>()
+                    .collect::<String>();
+                let normalized =
+                    rendered.replace(&test_path_display("/tmp/hooks.json"), "/tmp/hooks.json");
+                format!("{normalized:width$}", width = area.width as usize)
             })
             .collect::<Vec<_>>()
-            .join("\n");
-        rendered.replace(&test_path_display("/tmp/hooks.json"), "/tmp/hooks.json")
+            .join("\n")
     }
 
     #[allow(clippy::too_many_arguments)]

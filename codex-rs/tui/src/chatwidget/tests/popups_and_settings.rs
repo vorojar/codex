@@ -124,7 +124,7 @@ async fn hooks_popup_shows_list_diagnostics() {
         }),
     );
 
-    let popup = render_bottom_popup(&chat, /*width*/ 112);
+    let popup = normalize_snapshot_paths(render_bottom_popup(&chat, /*width*/ 112));
     assert_chatwidget_snapshot!("hooks_popup_shows_list_diagnostics", popup);
 }
 
