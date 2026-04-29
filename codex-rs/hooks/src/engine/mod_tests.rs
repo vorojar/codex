@@ -119,7 +119,7 @@ with Path(r"{log_path}").open("a", encoding="utf-8") as handle:
 
     assert!(engine.warnings().is_empty());
     assert_eq!(engine.handlers.len(), 1);
-    assert!(engine.handlers[0].is_managed);
+    assert!(engine.handlers[0].source.is_managed());
     let cwd = cwd();
     let preview = engine.preview_pre_tool_use(&PreToolUseRequest {
         session_id: ThreadId::new(),
@@ -181,51 +181,10 @@ fn user_disablement_filters_non_managed_hooks_but_not_managed_hooks() {
         AbsolutePathBuf::try_from(temp.path().join("config.toml")).expect("absolute path");
     let managed_disabled_key = format!("{}:pre_tool_use:0:0", managed_dir.display());
     let user_disabled_key = format!("{}:pre_tool_use:0:0", config_path.display());
-    let mut user_config = TomlValue::Table(Default::default());
-    let TomlValue::Table(user_config_entries) = &mut user_config else {
-        unreachable!("config TOML root should be a table");
-    };
-    let mut hooks = TomlValue::Table(Default::default());
-    let TomlValue::Table(hooks_entries) = &mut hooks else {
-        unreachable!("hooks should be a table");
-    };
-    let mut state = TomlValue::Table(Default::default());
-    let TomlValue::Table(state_entries) = &mut state else {
-        unreachable!("state should be a table");
-    };
-    for key in [managed_disabled_key.clone(), user_disabled_key.clone()] {
-        let mut hook_state = TomlValue::Table(Default::default());
-        let TomlValue::Table(hook_state_entries) = &mut hook_state else {
-            unreachable!("hook state should be a table");
-        };
-        hook_state_entries.insert("enabled".to_string(), TomlValue::Boolean(false));
-        state_entries.insert(key, hook_state);
-    }
-    hooks_entries.insert("state".to_string(), state);
-    let mut user_hook_group = TomlValue::Table(Default::default());
-    let TomlValue::Table(user_hook_group_entries) = &mut user_hook_group else {
-        unreachable!("user hook group should be a table");
-    };
-    user_hook_group_entries.insert(
-        "hooks".to_string(),
-        TomlValue::Array(vec![TomlValue::Table(Default::default())]),
+    let user_config = config_with_pre_tool_use_hook_and_states(
+        "python3 /tmp/user.py",
+        [&managed_disabled_key, &user_disabled_key],
     );
-    let Some(TomlValue::Array(user_hooks)) = user_hook_group_entries.get_mut("hooks") else {
-        unreachable!("user hooks should be an array");
-    };
-    let Some(TomlValue::Table(user_handler_entries)) = user_hooks.first_mut() else {
-        unreachable!("user hook handler should be a table");
-    };
-    user_handler_entries.insert("type".to_string(), TomlValue::String("command".to_string()));
-    user_handler_entries.insert(
-        "command".to_string(),
-        TomlValue::String("python3 /tmp/user.py".to_string()),
-    );
-    hooks_entries.insert(
-        "PreToolUse".to_string(),
-        TomlValue::Array(vec![user_hook_group]),
-    );
-    user_config_entries.insert("hooks".to_string(), hooks);
     let config_layer_stack = ConfigLayerStack::new(
         vec![ConfigLayerEntry::new(
             ConfigLayerSource::User { file: config_path },
@@ -257,7 +216,7 @@ fn user_disablement_filters_non_managed_hooks_but_not_managed_hooks() {
     );
 
     assert_eq!(engine.handlers.len(), 1);
-    assert!(engine.handlers[0].is_managed);
+    assert!(engine.handlers[0].source.is_managed());
     let discovered =
         super::discovery::discover_handlers(Some(&config_layer_stack), Vec::new(), Vec::new());
     assert_eq!(discovered.hook_entries.len(), 2);
@@ -308,7 +267,7 @@ fn user_disablement_does_not_filter_managed_layer_hooks() {
     );
 
     assert_eq!(engine.handlers.len(), 1);
-    assert!(engine.handlers[0].is_managed);
+    assert!(engine.handlers[0].source.is_managed());
     let discovered =
         super::discovery::discover_handlers(Some(&config_layer_stack), Vec::new(), Vec::new());
     assert_eq!(discovered.hook_entries.len(), 1);
@@ -324,6 +283,28 @@ fn config_with_hook_state(key: &str, enabled: bool) -> TomlValue {
                     "enabled": enabled,
                 },
             },
+        },
+    }))
+    .expect("config TOML should deserialize")
+}
+
+fn config_with_pre_tool_use_hook_and_states<const N: usize>(
+    command: &str,
+    disabled_keys: [&str; N],
+) -> TomlValue {
+    let state = disabled_keys
+        .into_iter()
+        .map(|key| (key.to_string(), serde_json::json!({ "enabled": false })))
+        .collect::<serde_json::Map<_, _>>();
+    serde_json::from_value(serde_json::json!({
+        "hooks": {
+            "state": state,
+            "PreToolUse": [{
+                "hooks": [{
+                    "type": "command",
+                    "command": command,
+                }],
+            }],
         },
     }))
     .expect("config TOML should deserialize")
@@ -518,7 +499,12 @@ fn discovers_hooks_from_json_and_toml_in_the_same_layer() {
         tool_input: serde_json::json!({ "command": "echo hello" }),
     });
     assert_eq!(preview.len(), 2);
-    assert!(engine.handlers.iter().all(|handler| !handler.is_managed));
+    assert!(
+        engine
+            .handlers
+            .iter()
+            .all(|handler| !handler.source.is_managed())
+    );
     assert_eq!(preview[0].source_path, hooks_json_path);
     assert_eq!(preview[1].source_path, config_path);
 }

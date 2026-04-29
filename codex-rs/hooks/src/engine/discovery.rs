@@ -32,7 +32,6 @@ pub(crate) struct DiscoveryResult {
     pub warnings: Vec<String>,
 }
 
-#[derive(Clone)]
 struct HookHandlerSource<'a> {
     path: &'a AbsolutePathBuf,
     key_source: String,
@@ -348,7 +347,7 @@ fn append_hook_events(
             hook_entries,
             warnings,
             display_order,
-            source.clone(),
+            &source,
             event_name,
             groups,
         );
@@ -360,7 +359,7 @@ fn append_matcher_groups(
     hook_entries: &mut Vec<HookListEntry>,
     warnings: &mut Vec<String>,
     display_order: &mut i64,
-    source: HookHandlerSource<'_>,
+    source: &HookHandlerSource<'_>,
     event_name: codex_protocol::protocol::HookEventName,
     groups: Vec<MatcherGroup>,
 ) {
@@ -429,7 +428,6 @@ fn append_matcher_groups(
                     if enabled {
                         handlers.push(ConfiguredHandler {
                             event_name,
-                            is_managed: source.source.is_managed(),
                             matcher: matcher.map(ToOwned::to_owned),
                             command,
                             timeout_sec,
@@ -560,7 +558,7 @@ mod tests {
             &mut Vec::new(),
             &mut warnings,
             &mut display_order,
-            hook_handler_source(&source_path, &disabled_hook_keys),
+            &hook_handler_source(&source_path, &disabled_hook_keys),
             HookEventName::UserPromptSubmit,
             vec![command_group(Some("["))],
         );
@@ -570,7 +568,6 @@ mod tests {
             handlers,
             vec![ConfiguredHandler {
                 event_name: HookEventName::UserPromptSubmit,
-                is_managed: false,
                 matcher: None,
                 command: "echo hello".to_string(),
                 timeout_sec: 600,
@@ -596,7 +593,7 @@ mod tests {
             &mut Vec::new(),
             &mut warnings,
             &mut display_order,
-            hook_handler_source(&source_path, &disabled_hook_keys),
+            &hook_handler_source(&source_path, &disabled_hook_keys),
             HookEventName::PreToolUse,
             vec![command_group(Some("^Bash$"))],
         );
@@ -606,7 +603,6 @@ mod tests {
             handlers,
             vec![ConfiguredHandler {
                 event_name: HookEventName::PreToolUse,
-                is_managed: false,
                 matcher: Some("^Bash$".to_string()),
                 command: "echo hello".to_string(),
                 timeout_sec: 600,
@@ -632,7 +628,7 @@ mod tests {
             &mut Vec::new(),
             &mut warnings,
             &mut display_order,
-            hook_handler_source(&source_path, &disabled_hook_keys),
+            &hook_handler_source(&source_path, &disabled_hook_keys),
             HookEventName::PreToolUse,
             vec![command_group(Some("*"))],
         );
@@ -655,7 +651,7 @@ mod tests {
             &mut Vec::new(),
             &mut warnings,
             &mut display_order,
-            hook_handler_source(&source_path, &disabled_hook_keys),
+            &hook_handler_source(&source_path, &disabled_hook_keys),
             HookEventName::PostToolUse,
             vec![command_group(Some("Edit|Write"))],
         );
