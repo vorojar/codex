@@ -1417,14 +1417,22 @@ impl Session {
         };
         self.services.skills_manager.clear_cache();
         self.services.plugins_manager.clear_cache();
-        self.services.hooks.store(Arc::new(
-            build_hooks_for_config(
-                config.as_ref(),
-                self.services.plugins_manager.as_ref(),
-                self.services.user_shell.as_ref(),
-            )
-            .await,
-        ));
+        let hooks = build_hooks_for_config(
+            config.as_ref(),
+            self.services.plugins_manager.as_ref(),
+            self.services.user_shell.as_ref(),
+        )
+        .await;
+
+        let state = self.state.lock().await;
+        // A newer reload may have updated the config while this hook build was in flight.
+        // Only publish hooks derived from the current config snapshot.
+        if Arc::ptr_eq(
+            &state.session_configuration.original_config_do_not_use,
+            &config,
+        ) {
+            self.services.hooks.store(Arc::new(hooks));
+        }
     }
 
     async fn build_settings_update_items(

@@ -297,7 +297,7 @@ fn load_toml_hooks_from_layer(
 ) -> Option<(AbsolutePathBuf, HookEventsToml)> {
     let source_path = config_toml_source_path(layer);
     let hook_value = layer.config.get("hooks")?.clone();
-    let parsed = match codex_config::HooksToml::deserialize(hook_value) {
+    let parsed = match HookEventsToml::deserialize(hook_value) {
         Ok(parsed) => parsed,
         Err(err) => {
             warnings.push(format!(
@@ -308,7 +308,7 @@ fn load_toml_hooks_from_layer(
         }
     };
 
-    (!parsed.events.is_empty()).then_some((source_path, parsed.events))
+    (!parsed.is_empty()).then_some((source_path, parsed))
 }
 
 fn config_toml_source_path(layer: &ConfigLayerEntry) -> AbsolutePathBuf {
@@ -513,7 +513,9 @@ fn hook_source_for_requirement_source(source: Option<&RequirementSource>) -> Hoo
 
 #[cfg(test)]
 mod tests {
+    use codex_config::ConfigLayerEntry;
     use codex_config::ConfigLayerSource;
+    use codex_config::HookEventsToml;
     use codex_protocol::protocol::HookEventName;
     use codex_protocol::protocol::HookSource;
     use codex_utils_absolute_path::AbsolutePathBuf;
@@ -525,6 +527,7 @@ mod tests {
     use super::append_matcher_groups;
     use codex_config::HookHandlerConfig;
     use codex_config::MatcherGroup;
+    use codex_config::TomlValue;
 
     fn source_path() -> AbsolutePathBuf {
         test_path_buf("/tmp/hooks.json").abs()
@@ -678,6 +681,87 @@ mod tests {
         assert_eq!(handlers.len(), 1);
         assert_eq!(handlers[0].event_name, HookEventName::PostToolUse);
         assert_eq!(handlers[0].matcher.as_deref(), Some("Edit|Write"));
+    }
+
+    #[test]
+    fn toml_hook_discovery_ignores_malformed_state_entries() {
+        let layer = ConfigLayerEntry::new(
+            ConfigLayerSource::User {
+                file: test_path_buf("/tmp/config.toml").abs(),
+            },
+            config_with_malformed_state_and_session_start_hook(),
+        );
+        let mut warnings = Vec::new();
+
+        let (_, hooks) = super::load_toml_hooks_from_layer(&layer, &mut warnings)
+            .expect("valid hook events should still load");
+
+        assert_eq!(warnings, Vec::<String>::new());
+        assert_eq!(
+            hooks,
+            HookEventsToml {
+                session_start: vec![MatcherGroup {
+                    matcher: None,
+                    hooks: vec![HookHandlerConfig::Command {
+                        command: "echo hello".to_string(),
+                        timeout_sec: None,
+                        r#async: false,
+                        status_message: None,
+                    }],
+                }],
+                ..Default::default()
+            }
+        );
+    }
+
+    fn config_with_malformed_state_and_session_start_hook() -> TomlValue {
+        let mut config = TomlValue::Table(Default::default());
+        let TomlValue::Table(config_entries) = &mut config else {
+            unreachable!("config root should be a table");
+        };
+
+        let mut hooks = TomlValue::Table(Default::default());
+        let TomlValue::Table(hook_entries) = &mut hooks else {
+            unreachable!("hooks should be a table");
+        };
+
+        let mut state_entries = TomlValue::Table(Default::default());
+        let TomlValue::Table(state_map) = &mut state_entries else {
+            unreachable!("state should be a table");
+        };
+        let mut hook_state = TomlValue::Table(Default::default());
+        let TomlValue::Table(hook_state_entries) = &mut hook_state else {
+            unreachable!("hook state should be a table");
+        };
+        hook_state_entries.insert(
+            "enabled".to_string(),
+            TomlValue::String("not a bool".to_string()),
+        );
+        state_map.insert("some_key".to_string(), hook_state);
+        hook_entries.insert("state".to_string(), state_entries);
+
+        let mut handler = TomlValue::Table(Default::default());
+        let TomlValue::Table(handler_entries) = &mut handler else {
+            unreachable!("handler should be a table");
+        };
+        handler_entries.insert("type".to_string(), TomlValue::String("command".to_string()));
+        handler_entries.insert(
+            "command".to_string(),
+            TomlValue::String("echo hello".to_string()),
+        );
+
+        let mut matcher_group = TomlValue::Table(Default::default());
+        let TomlValue::Table(group_entries) = &mut matcher_group else {
+            unreachable!("matcher group should be a table");
+        };
+        group_entries.insert("hooks".to_string(), TomlValue::Array(vec![handler]));
+        hook_entries.insert(
+            "SessionStart".to_string(),
+            TomlValue::Array(vec![matcher_group]),
+        );
+
+        config_entries.insert("hooks".to_string(), hooks);
+        config
     }
 
     #[test]
