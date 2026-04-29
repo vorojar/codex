@@ -47,7 +47,7 @@ CRATE_ALIAS_PATTERNS = (
 )
 GROUPED_USE_PATTERN = re.compile(
     rf"\buse{REQUIRED_TOKEN_SEPARATOR}"
-    rf"(?:::{TOKEN_SEPARATOR})?({IDENTIFIER})"
+    rf"(?:::{TOKEN_SEPARATOR})?({PATH_PREFIX}{IDENTIFIER})"
     rf"{TOKEN_SEPARATOR}::{TOKEN_SEPARATOR}\{{([^;]*)\}}\s*;"
 )
 GROUPED_SELF_ALIAS_PATTERN = re.compile(
@@ -114,25 +114,30 @@ def source_failures() -> list[str]:
         tui_manifest, workspace_dependencies(workspace_manifest)
     )
     source_texts = [(path, path.read_text()) for path in sorted(TUI_ROOT.glob("**/*.rs"))]
-    codex_protocol_names = expanded_crate_aliases(
-        "\n".join(text for _path, text in source_texts), codex_protocol_names
-    )
 
     for path, text in source_texts:
+        match_text = comments_as_whitespace(text)
         seen_locations = set()
         for message, patterns in FORBIDDEN_SOURCE_RULES:
             for pattern in patterns:
-                for match in pattern.finditer(text):
+                for match in pattern.finditer(match_text):
                     failures.append(source_failure(path, text, match.start(), message))
                     seen_locations.add((match.start(), message))
 
-        for match in protocol_reference_matches(text, codex_protocol_names):
+        for match in protocol_reference_matches(match_text, codex_protocol_names):
             key = (match.start(), CODEX_PROTOCOL_MESSAGE)
             if key in seen_locations:
                 continue
             failures.append(source_failure(path, text, match.start(), CODEX_PROTOCOL_MESSAGE))
             seen_locations.add(key)
     return failures
+
+
+def comments_as_whitespace(text: str) -> str:
+    def whitespace(match: re.Match[str]) -> str:
+        return "".join("\n" if char == "\n" else " " for char in match.group(0))
+
+    return re.sub(r"//[^\n]*(?:\n|$)|/\*(?:.|\n)*?\*/", whitespace, text)
 
 
 def workspace_dependencies(manifest: dict) -> dict:
@@ -209,7 +214,7 @@ def crate_alias_pairs(text: str) -> list[tuple[str, str]]:
         for match in pattern.finditer(text):
             pairs.append((path_tail(match.group(1)), match.group(2)))
     for match in GROUPED_USE_PATTERN.finditer(text):
-        source = match.group(1)
+        source = path_tail(match.group(1))
         body = match.group(2)
         for alias_match in GROUPED_SELF_ALIAS_PATTERN.finditer(body):
             pairs.append((source, alias_match.group(1)))
