@@ -32,6 +32,40 @@ fn table_fixture() -> &'static str {
     "| Area | Result |\n| --- | --- |\n| Streaming resize | This cell contains enough prose to wrap differently across widths. |\n| Scrollback preservation | SENTINEL_TABLE_VALUE_WITH_LONG_UNBREAKABLE_TOKEN |\n"
 }
 
+fn dense_large_table_fixture() -> String {
+    let mut markdown = String::from("| # | Token | Style | Link | Code Sample |\n| --- | --- | --- | --- | --- |\n");
+    for row in 1..=34 {
+        let token = match row {
+            1 => "Alpha".to_string(),
+            2 => "Beta".to_string(),
+            3 => "Gamma".to_string(),
+            24 => "Omega".to_string(),
+            _ => format!("Row {row}"),
+        };
+        let style = match row {
+            1 => "bold",
+            2 => "italic",
+            3 => "both",
+            21 => "a \\| b",
+            31 => "Mixed code",
+            33 => "Escaped \\*",
+            34 => "Done",
+            _ => "Normal",
+        };
+        let code = match row {
+            1 => "alpha()",
+            2 => "beta + 1",
+            3 => "Vec::<String>::new()",
+            21 => "split_fn",
+            _ => "row",
+        };
+        markdown.push_str(&format!(
+            "| {row} | {token} | {style} | row (https://example.com/{row}) | {code}_{row} |\n"
+        ));
+    }
+    markdown
+}
+
 #[test]
 fn table_resize_lifecycle_renderer_uses_thin_borders_and_fits_widths() {
     for width in [36, 64, 96] {
@@ -91,6 +125,112 @@ fn table_resize_lifecycle_renderer_uses_vertical_fallback_only_at_tiny_width() {
     assert!(
         lines.iter().any(|line| line == "Row 1"),
         "tiny width should trigger vertical fallback: {lines:?}"
+    );
+}
+
+#[test]
+fn table_readability_fallback_keeps_dense_large_table_boxed_when_wide() {
+    let rendered = render_markdown_text_with_width_and_cwd(
+        &dense_large_table_fixture(),
+        Some(140),
+        /*cwd*/ None,
+    );
+    let lines = plain_lines(&rendered);
+
+    assert!(
+        lines.iter().any(|line| line.contains('┌')),
+        "wide large table should remain boxed: {lines:?}"
+    );
+    assert!(
+        lines.iter().all(|line| !line.starts_with("Row 31")),
+        "wide large table should not use vertical fallback: {lines:?}"
+    );
+}
+
+#[test]
+fn table_readability_fallback_uses_vertical_for_dense_large_table_when_narrow() {
+    let rendered = render_markdown_text_with_width_and_cwd(
+        &dense_large_table_fixture(),
+        Some(64),
+        /*cwd*/ None,
+    );
+    let lines = plain_lines(&rendered);
+
+    assert!(
+        lines.iter().all(|line| !line.contains('┌')),
+        "narrow large table should not render as boxed table: {lines:?}"
+    );
+    assert!(
+        lines.iter().any(|line| line == "Row 31"),
+        "narrow large table should render row records: {lines:?}"
+    );
+    assert!(
+        lines.iter().any(|line| line.contains("      Token: Row 31"))
+            && lines.iter().any(|line| line.contains("       Link: row")),
+        "vertical fallback should align labels in a gutter: {lines:?}"
+    );
+}
+
+#[test]
+fn table_readability_fallback_wraps_vertical_values_under_value_column() {
+    let markdown = "| # | Color Sample |\n| --- | --- |\n| 31 | The color sample is the same as the others, but with a touch of white too. |\n";
+    let rendered = render_markdown_text_with_width_and_cwd(markdown, Some(30), /*cwd*/ None);
+    let lines = plain_lines(&rendered);
+
+    assert_eq!(lines[0], "Row 31");
+    assert!(
+        lines
+            .iter()
+            .any(|line| line.starts_with("Color Sam…: The color")),
+        "first vertical value line should include the label: {lines:?}"
+    );
+    assert!(
+        lines
+            .iter()
+            .skip(1)
+            .any(|line| line.starts_with("            ")),
+        "wrapped vertical value should align under the value column: {lines:?}"
+    );
+}
+
+#[test]
+fn table_readability_fallback_keeps_small_status_table_boxed_when_narrow() {
+    let markdown = "| ID | Status | Owner | Summary |\n| --- | --- | --- | --- |\n| 1 | ✅ Done | Ana | Added markdown_table parsing |\n| 2 | 🟡 Review | Ben | Checks links like RFC (https://example.com/rfc) |\n| 3 | 🔴 Blocked | ci-bot | Fails on foo \\| bar escaping |\n| 4 | ⚪ Planned | Dana | Needs snapshot coverage |\n";
+    let rendered = render_markdown_text_with_width_and_cwd(markdown, Some(64), /*cwd*/ None);
+    let lines = plain_lines(&rendered);
+
+    assert!(
+        lines.iter().any(|line| line.contains('┌')),
+        "small status table should remain boxed at narrow widths: {lines:?}"
+    );
+}
+
+#[test]
+fn table_readability_fallback_keeps_tiny_table_boxed() {
+    let markdown = "| Tiny | Table |\n| --- | --- |\n| A | B |\n| C | D |\n";
+    let rendered = render_markdown_text_with_width_and_cwd(markdown, Some(40), /*cwd*/ None);
+    let lines = plain_lines(&rendered);
+
+    assert!(
+        lines.iter().any(|line| line.contains('┌')),
+        "tiny table should remain boxed when there is enough width: {lines:?}"
+    );
+}
+
+#[test]
+fn table_readability_fallback_uses_vertical_for_emoji_near_fit() {
+    let markdown = "| Feature | Markdown Coverage | Sample Output |\n| --- | --- | --- |\n| Emoji | 😎 ✅ 🧩 | Visual glyphs |\n";
+    let rendered = render_markdown_text_with_width_and_cwd(markdown, Some(41), /*cwd*/ None);
+    let lines = plain_lines(&rendered);
+
+    assert!(
+        lines.iter().all(|line| !line.contains('┌')),
+        "emoji-heavy near-fit table should fall back to vertical layout: {lines:?}"
+    );
+    assert!(
+        lines.iter().any(|line| line == "Row 1")
+            && lines.iter().any(|line| line.contains("Markdown Cov…:")),
+        "emoji-heavy fallback should render row records: {lines:?}"
     );
 }
 

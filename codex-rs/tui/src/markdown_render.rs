@@ -406,7 +406,7 @@ where
             return;
         };
         let lines = render_table_lines(&table.rows, self.wrap_width);
-        self.text.lines.extend(lines.into_iter().map(Line::from));
+        self.text.lines.extend(lines);
         self.needs_newline = true;
     }
 

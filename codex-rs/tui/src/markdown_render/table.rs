@@ -1,5 +1,8 @@
 use std::borrow::Cow;
 
+use ratatui::style::Stylize;
+use ratatui::text::Line;
+use ratatui::text::Span;
 use unicode_width::UnicodeWidthStr;
 
 #[derive(Debug, Default)]
@@ -68,13 +71,22 @@ impl TableState {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum TableLayoutMode {
-    Normal,
-    Compact,
+#[derive(Debug)]
+struct TableLayoutCandidate {
+    column_widths: Vec<usize>,
+    padding: usize,
+    hard_wrap: bool,
 }
 
-pub(super) fn render_table_lines(rows: &[Vec<String>], width: Option<usize>) -> Vec<String> {
+#[derive(Debug)]
+struct TableMetrics {
+    average_body_row_height: f64,
+    max_body_row_height: usize,
+    hard_wraps_url_or_code: bool,
+    hard_wrap_count: usize,
+}
+
+pub(super) fn render_table_lines(rows: &[Vec<String>], width: Option<usize>) -> Vec<Line<'static>> {
     if rows.is_empty() {
         return Vec::new();
     }
@@ -88,11 +100,16 @@ pub(super) fn render_table_lines(rows: &[Vec<String>], width: Option<usize>) -> 
     let normalized_rows = normalize_table_rows(rows, column_count);
     let widths = desired_column_widths(&normalized_rows, column_count);
 
-    let layout = choose_table_layout(&widths, available_width, column_count);
-    match layout {
-        Some((mode, column_widths, padding)) => {
-            render_box_table(&normalized_rows, &column_widths, padding, mode)
-        }
+    match choose_table_layout(&normalized_rows, &widths, available_width, column_count) {
+        Some(candidate) => render_box_table(
+            &normalized_rows,
+            &candidate.column_widths,
+            candidate.padding,
+            candidate.hard_wrap,
+        )
+        .into_iter()
+        .map(Line::from)
+        .collect(),
         None => render_vertical_table(&normalized_rows, available_width),
     }
 }
@@ -230,21 +247,32 @@ fn desired_column_widths(rows: &[Vec<String>], column_count: usize) -> Vec<usize
 }
 
 fn choose_table_layout(
+    rows: &[Vec<String>],
     desired_widths: &[usize],
     available_width: usize,
     column_count: usize,
-) -> Option<(TableLayoutMode, Vec<usize>, usize)> {
-    if available_width < 20 {
+) -> Option<TableLayoutCandidate> {
+    if available_width < 32 || width_shape_requires_vertical(column_count, available_width) {
         return None;
     }
 
-    if let Some(widths) = allocate_table_widths(
+    let normal = allocate_table_widths(
         desired_widths,
         available_width,
         column_count,
         /*padding*/ 1,
-    ) {
-        return Some((TableLayoutMode::Normal, widths, 1));
+    )
+    .and_then(|widths| {
+        build_table_candidate(
+            rows,
+            desired_widths,
+            widths,
+            available_width,
+            /*padding*/ 1,
+        )
+    });
+    if normal.is_some() {
+        return normal;
     }
 
     allocate_table_widths(
@@ -253,7 +281,56 @@ fn choose_table_layout(
         column_count,
         /*padding*/ 0,
     )
-    .map(|widths| (TableLayoutMode::Compact, widths, 0))
+    .and_then(|widths| {
+        build_table_candidate(
+            rows,
+            desired_widths,
+            widths,
+            available_width,
+            /*padding*/ 0,
+        )
+    })
+}
+
+fn width_shape_requires_vertical(column_count: usize, available_width: usize) -> bool {
+    (column_count >= 5 && available_width < 72) || (column_count >= 6 && available_width < 96)
+}
+
+fn build_table_candidate(
+    rows: &[Vec<String>],
+    desired_widths: &[usize],
+    column_widths: Vec<usize>,
+    available_width: usize,
+    padding: usize,
+) -> Option<TableLayoutCandidate> {
+    let metrics = table_metrics(rows, &column_widths, /*hard_wrap*/ false);
+    let needs_hard_wrap = metrics.hard_wrap_count > 0 || metrics.max_body_row_height > 12;
+    let (hard_wrap, metrics) = if needs_hard_wrap {
+        (
+            true,
+            table_metrics(rows, &column_widths, /*hard_wrap*/ true),
+        )
+    } else {
+        (false, metrics)
+    };
+
+    if should_render_vertical(
+        rows,
+        desired_widths,
+        &column_widths,
+        available_width,
+        padding,
+        hard_wrap,
+        &metrics,
+    ) {
+        return None;
+    }
+
+    Some(TableLayoutCandidate {
+        column_widths,
+        padding,
+        hard_wrap,
+    })
 }
 
 fn allocate_table_widths(
@@ -293,29 +370,6 @@ fn allocate_table_widths(
 }
 
 fn render_box_table(
-    rows: &[Vec<String>],
-    column_widths: &[usize],
-    padding: usize,
-    _mode: TableLayoutMode,
-) -> Vec<String> {
-    let mut rendered =
-        render_box_table_with_wrap(rows, column_widths, padding, /*hard_wrap*/ false);
-    let available_width = table_total_width(column_widths, padding);
-    let needs_hard_wrap = rendered.iter().any(|line| line.width() > available_width)
-        || any_row_too_tall(rows, column_widths, padding, /*hard_wrap*/ false);
-
-    if needs_hard_wrap {
-        rendered =
-            render_box_table_with_wrap(rows, column_widths, padding, /*hard_wrap*/ true);
-        if any_row_too_tall(rows, column_widths, padding, /*hard_wrap*/ true) {
-            return render_vertical_table(rows, available_width);
-        }
-    }
-
-    rendered
-}
-
-fn render_box_table_with_wrap(
     rows: &[Vec<String>],
     column_widths: &[usize],
     padding: usize,
@@ -408,20 +462,94 @@ fn wrap_table_cell(cell: &str, width: usize, hard_wrap: bool) -> Vec<String> {
     }
 }
 
-fn any_row_too_tall(
-    rows: &[Vec<String>],
-    column_widths: &[usize],
-    _padding: usize,
-    hard_wrap: bool,
-) -> bool {
-    rows.iter().skip(1).any(|row| {
-        row.iter()
+fn table_metrics(rows: &[Vec<String>], column_widths: &[usize], hard_wrap: bool) -> TableMetrics {
+    let mut row_heights = Vec::with_capacity(rows.len());
+    let mut hard_wraps_url_or_code = false;
+    let mut hard_wrap_count = 0usize;
+
+    for row in rows {
+        let row_height = row
+            .iter()
             .zip(column_widths)
-            .map(|(cell, width)| wrap_table_cell(cell, *width, hard_wrap).len())
+            .map(|(cell, width)| {
+                if cell_needs_hard_wrap(cell, *width) {
+                    hard_wrap_count += 1;
+                    hard_wraps_url_or_code |= is_url_or_code_like(cell);
+                }
+                wrap_table_cell(cell, *width, hard_wrap).len()
+            })
             .max()
-            .unwrap_or(1)
-            > 20
-    })
+            .unwrap_or(1);
+        row_heights.push(row_height);
+    }
+
+    let body_heights = row_heights.iter().skip(1).copied().collect::<Vec<_>>();
+    let body_row_count = body_heights.len();
+    let max_body_row_height = body_heights.iter().copied().max().unwrap_or(0);
+    let average_body_row_height = if body_row_count == 0 {
+        0.0
+    } else {
+        body_heights.iter().sum::<usize>() as f64 / body_row_count as f64
+    };
+
+    TableMetrics {
+        average_body_row_height,
+        max_body_row_height,
+        hard_wraps_url_or_code,
+        hard_wrap_count,
+    }
+}
+
+fn cell_needs_hard_wrap(cell: &str, width: usize) -> bool {
+    cell.split('\n')
+        .flat_map(str::split_whitespace)
+        .any(|token| token.width() > width)
+}
+
+fn should_render_vertical(
+    rows: &[Vec<String>],
+    desired_widths: &[usize],
+    column_widths: &[usize],
+    available_width: usize,
+    padding: usize,
+    hard_wrap: bool,
+    metrics: &TableMetrics,
+) -> bool {
+    let column_count = column_widths.len();
+    let body_rows = rows.len().saturating_sub(1);
+    if metrics.max_body_row_height > 12
+        || (body_rows >= 10 && metrics.average_body_row_height > 2.5)
+        || (body_rows >= 24 && metrics.average_body_row_height > 1.75)
+    {
+        return true;
+    }
+
+    if hard_wrap && ((body_rows > 5 && metrics.hard_wraps_url_or_code) || body_rows >= 10) {
+        return true;
+    }
+
+    if column_count >= 4 && (body_rows >= 8 || column_count >= 5) {
+        let starved_columns = column_widths.iter().filter(|width| **width <= 3).count();
+        if starved_columns > 1 {
+            return true;
+        }
+
+        for (index, width) in column_widths.iter().enumerate().take(column_count) {
+            if is_index_column(rows, index) {
+                continue;
+            }
+            if is_content_heavy_column(rows, index) && *width < 12 {
+                return true;
+            }
+        }
+    }
+
+    let slack = available_width.saturating_sub(table_total_width(column_widths, padding));
+    has_width_risk_chars(rows)
+        && column_count >= 3
+        && available_width <= 48
+        && slack < 2
+        && desired_widths.iter().sum::<usize>() + column_count + 1 >= available_width
 }
 
 fn table_total_width(column_widths: &[usize], padding: usize) -> usize {
@@ -431,26 +559,207 @@ fn table_total_width(column_widths: &[usize], padding: usize) -> usize {
         + padding * 2 * column_widths.len()
 }
 
-fn render_vertical_table(rows: &[Vec<String>], available_width: usize) -> Vec<String> {
+fn is_index_column(rows: &[Vec<String>], index: usize) -> bool {
+    let header = rows
+        .first()
+        .and_then(|row| row.get(index))
+        .map(|header| normalized_header(header))
+        .unwrap_or_default();
+    if matches!(header.as_str(), "#" | "id" | "idx" | "index" | "row") {
+        return true;
+    }
+
+    rows.iter()
+        .skip(1)
+        .filter_map(|row| row.get(index))
+        .filter(|cell| !cell.trim().is_empty())
+        .all(|cell| cell.trim().chars().all(|ch| ch.is_ascii_digit()))
+}
+
+fn is_content_heavy_column(rows: &[Vec<String>], index: usize) -> bool {
+    let header = rows
+        .first()
+        .and_then(|row| row.get(index))
+        .map(|header| normalized_header(header))
+        .unwrap_or_default();
+    if [
+        "link",
+        "url",
+        "code",
+        "sample",
+        "content",
+        "description",
+        "summary",
+        "expectation",
+        "notes",
+    ]
+    .iter()
+    .any(|needle| header.contains(needle))
+    {
+        return true;
+    }
+
+    rows.iter()
+        .skip(1)
+        .filter_map(|row| row.get(index))
+        .any(|cell| is_url_or_code_like(cell) || cell.width() > 24)
+}
+
+fn is_url_or_code_like(cell: &str) -> bool {
+    cell.contains("://")
+        || cell.contains("::")
+        || cell.contains("=>")
+        || cell.contains("->")
+        || cell.contains('`')
+        || cell.contains('{')
+        || cell.contains('}')
+        || cell.contains('(')
+        || cell.contains(')')
+}
+
+fn has_width_risk_chars(rows: &[Vec<String>]) -> bool {
+    rows.iter().flatten().any(|cell| {
+        cell.chars().any(|ch| {
+            matches!(ch, '\u{fe0f}' | '\u{200d}') || ('\u{1f300}'..='\u{1faff}').contains(&ch)
+        })
+    })
+}
+
+fn normalized_header(header: &str) -> String {
+    header.trim().to_ascii_lowercase()
+}
+
+fn render_vertical_table(rows: &[Vec<String>], available_width: usize) -> Vec<Line<'static>> {
     let Some((headers, body_rows)) = rows.split_first() else {
         return Vec::new();
     };
-    let wrap_width = available_width.max(1);
+    let included_columns = included_vertical_columns(headers, body_rows);
+    if included_columns.is_empty() {
+        return Vec::new();
+    }
+
+    let max_header_width = included_columns
+        .iter()
+        .map(|index| vertical_label(headers, *index).width())
+        .max()
+        .unwrap_or(4);
+    let label_width = max_header_width.min(20).min(available_width / 3).max(4);
+    let value_width = available_width.saturating_sub(label_width + 2).max(1);
     let mut out = Vec::new();
+
     for (row_index, row) in body_rows.iter().enumerate() {
         if row_index > 0 {
-            out.push(String::new());
+            out.push(Line::default());
         }
-        out.push(format!("Row {}", row_index + 1));
-        for (header, cell) in headers.iter().zip(row) {
-            let label = if header.is_empty() { "Column" } else { header };
-            let line = format!("{label}: {cell}");
-            out.extend(
-                textwrap::wrap(&line, textwrap::Options::new(wrap_width))
-                    .into_iter()
-                    .map(std::borrow::Cow::into_owned),
-            );
+        out.push(
+            Line::from(format_vertical_row_title(headers, row, row_index))
+                .dim()
+                .bold(),
+        );
+        for index in &included_columns {
+            let label = truncate_to_width(&vertical_label(headers, *index), label_width);
+            let cell = row.get(*index).map(String::as_str).unwrap_or("").trim();
+            let value = if cell.is_empty() { "—" } else { cell };
+            let wrapped = textwrap::wrap(
+                value,
+                textwrap::Options::new(value_width)
+                    .break_words(false)
+                    .word_separator(textwrap::WordSeparator::AsciiSpace)
+                    .wrap_algorithm(textwrap::WrapAlgorithm::FirstFit),
+            )
+            .into_iter()
+            .map(std::borrow::Cow::into_owned)
+            .collect::<Vec<_>>();
+            let wrapped = if wrapped.is_empty() {
+                vec![String::new()]
+            } else {
+                wrapped
+            };
+
+            for (line_index, value_line) in wrapped.iter().enumerate() {
+                if line_index == 0 {
+                    let prefix = format!("{label:>label_width$}: ");
+                    let value_span = if cell.is_empty() {
+                        Span::from(value_line.clone()).dim()
+                    } else {
+                        Span::from(value_line.clone())
+                    };
+                    out.push(Line::from(vec![prefix.dim(), value_span]));
+                } else {
+                    out.push(Line::from(vec![
+                        " ".repeat(label_width + 2).into(),
+                        value_line.clone().into(),
+                    ]));
+                }
+            }
         }
     }
+    out
+}
+
+fn included_vertical_columns(headers: &[String], body_rows: &[Vec<String>]) -> Vec<usize> {
+    let first_column_titles_rows = headers
+        .first()
+        .map(|header| normalized_header(header))
+        .is_some_and(|header| matches!(header.as_str(), "#" | "id" | "idx" | "index" | "row"))
+        && headers.len() > 1;
+
+    (0..headers.len())
+        .filter(|index| !(first_column_titles_rows && *index == 0))
+        .filter(|index| {
+            !headers[*index].trim().is_empty()
+                || body_rows
+                    .iter()
+                    .any(|row| row.get(*index).is_some_and(|cell| !cell.trim().is_empty()))
+        })
+        .collect()
+}
+
+fn vertical_label(headers: &[String], index: usize) -> String {
+    headers
+        .get(index)
+        .map(|header| header.trim())
+        .filter(|header| !header.is_empty())
+        .unwrap_or("Column")
+        .to_string()
+}
+
+fn format_vertical_row_title(headers: &[String], row: &[String], row_index: usize) -> String {
+    let first_header = headers.first().map(|header| normalized_header(header));
+    let first_cell = row.first().map(|cell| cell.trim()).unwrap_or("");
+    if first_header
+        .as_deref()
+        .is_some_and(|header| matches!(header, "#" | "id" | "idx" | "index" | "row"))
+        && !first_cell.is_empty()
+    {
+        format!("Row {first_cell}")
+    } else {
+        format!("Row {}", row_index + 1)
+    }
+}
+
+fn truncate_to_width(input: &str, max_width: usize) -> String {
+    if input.width() <= max_width {
+        return input.to_string();
+    }
+    if max_width == 0 {
+        return String::new();
+    }
+    if max_width == 1 {
+        return "…".to_string();
+    }
+
+    let mut out = String::new();
+    let target = max_width - 1;
+    let mut width = 0usize;
+    for ch in input.chars() {
+        let ch_width = ch.to_string().width();
+        if width + ch_width > target {
+            break;
+        }
+        out.push(ch);
+        width += ch_width;
+    }
+    out.push('…');
     out
 }
