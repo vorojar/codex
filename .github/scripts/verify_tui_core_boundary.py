@@ -336,8 +336,12 @@ def protocol_reference_offsets(
     offsets = []
     for crate_name in expanded_crate_aliases(text, codex_protocol_names):
         crate_name_pattern = rf"(?:r#)?{re.escape(normalize_identifier(crate_name))}"
+        qualified_crate_name_pattern = (
+            rf"(?:(?:self|crate){TOKEN_SEPARATOR}::{TOKEN_SEPARATOR})?"
+            rf"{crate_name_pattern}"
+        )
         pattern = re.compile(
-            rf"\b{crate_name_pattern}{TOKEN_SEPARATOR}::{TOKEN_SEPARATOR}"
+            rf"\b{qualified_crate_name_pattern}{TOKEN_SEPARATOR}::{TOKEN_SEPARATOR}"
             rf"{PROTOCOL_IDENTIFIER}\b"
         )
         offsets.extend(match.start() for match in pattern.finditer(text))
@@ -372,7 +376,7 @@ def expanded_crate_aliases(text: str, crate_names: set[str]) -> set[str]:
     while True:
         previous_count = len(aliases)
         for source, alias in crate_alias_pairs(text):
-            if source in aliases:
+            if use_path_matches_alias(source, aliases):
                 aliases.add(alias)
         if len(aliases) == previous_count:
             return aliases
@@ -396,7 +400,7 @@ def crate_alias_pairs(text: str) -> list[tuple[str, str]]:
             if source == "self":
                 source = group_source
             else:
-                source = f"{group_source}::{source}"
+                source = join_paths(group_source, source)
             pairs.append((source, normalize_identifier(alias_match.group(2))))
     for statement in use_statements(text):
         pairs.extend(use_tree_alias_pairs(statement.tree))
@@ -490,14 +494,20 @@ def use_tree_imports_root_glob(tree: str, aliases: set[str]) -> bool:
         tree,
     )
     if direct_glob_match:
-        return normalize_path(direct_glob_match.group(1)) in aliases
+        return use_path_matches_alias(normalize_path(direct_glob_match.group(1)), aliases)
 
     grouped = grouped_use_tree(tree)
     if grouped is None:
         return False
     group_source, body, _body_offset = grouped
-    return group_source in aliases and any(
-        item_without_alias(item).strip() == "*" for item, _ in split_root_items(body)
+    items = split_root_items(body)
+    if use_path_matches_alias(group_source, aliases) and any(
+        item_without_alias(item).strip() == "*" for item, _ in items
+    ):
+        return True
+    return any(
+        use_tree_imports_root_glob(join_paths(group_source, item), aliases)
+        for item, _ in items
     )
 
 
@@ -515,9 +525,15 @@ def use_tree_imports_protocol_at_root(tree: str, aliases: set[str]) -> bool:
     if grouped is None:
         return False
     group_source, body, _body_offset = grouped
-    return group_source in aliases and any(
+    items = split_root_items(body)
+    if use_path_matches_alias(group_source, aliases) and any(
         first_path_segment(item_without_alias(item)) == "protocol"
-        for item, _ in split_root_items(body)
+        for item, _ in items
+    ):
+        return True
+    return any(
+        use_tree_imports_protocol_at_root(join_paths(group_source, item), aliases)
+        for item, _ in items
     )
 
 
@@ -618,6 +634,18 @@ def join_paths(prefix: str, suffix: str) -> str:
     if not suffix:
         return prefix
     return f"{prefix}::{suffix}"
+
+
+def use_path_matches_alias(path: str, aliases: set[str]) -> bool:
+    normalized_path = normalize_path(path)
+    return normalized_path in aliases or strip_root_qualifier(normalized_path) in aliases
+
+
+def strip_root_qualifier(path: str) -> str:
+    parts = path.split("::")
+    if parts and parts[0] in ("self", "crate"):
+        return "::".join(parts[1:])
+    return path
 
 
 def item_without_alias(item: str) -> str:
