@@ -532,7 +532,7 @@ pub(super) fn handle_token_count(chat: &mut ChatWidget, info: Option<TokenUsageI
                 /*replay_kind*/ None,
             );
         }
-        None => chat.set_token_info(None),
+        None => chat.set_token_info(/*info*/ None),
     }
 }
 

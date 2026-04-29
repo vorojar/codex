@@ -252,7 +252,7 @@ async fn steer_rejection_queues_review_follow_up_before_existing_queued_messages
     assert!(drain_insert_history(&mut rx).is_empty());
 
     handle_exited_review_mode(&mut chat);
-    handle_turn_completed(&mut chat, "turn-1", None);
+    handle_turn_completed(&mut chat, "turn-1", /*duration_ms*/ None);
 
     match next_submit_op(&mut op_rx) {
         Op::UserTurn { items, .. } => assert_eq!(
@@ -265,7 +265,7 @@ async fn steer_rejection_queues_review_follow_up_before_existing_queued_messages
         other => panic!("expected merged rejected-steer follow-up submit, got {other:?}"),
     }
 
-    handle_turn_completed(&mut chat, "turn-1", None);
+    handle_turn_completed(&mut chat, "turn-1", /*duration_ms*/ None);
 
     match next_submit_op(&mut op_rx) {
         Op::UserTurn { items, .. } => assert_eq!(

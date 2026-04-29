@@ -625,7 +625,7 @@ async fn unified_exec_wait_after_final_agent_message_snapshot() {
     terminal_interaction(&mut chat, "call-wait-stdin", "proc-1", "");
 
     complete_assistant_message(&mut chat, "msg-1", "Final response.", /*phase*/ None);
-    handle_turn_completed(&mut chat, "turn-1", None);
+    handle_turn_completed(&mut chat, "turn-1", /*duration_ms*/ None);
 
     let cells = drain_insert_history(&mut rx);
     let combined = cells
@@ -649,7 +649,7 @@ async fn unified_exec_wait_before_streamed_agent_message_snapshot() {
     terminal_interaction(&mut chat, "call-wait-stream-stdin", "proc-1", "");
 
     handle_agent_message_delta(&mut chat, "Streaming response.");
-    handle_turn_completed(&mut chat, "turn-wait-1", None);
+    handle_turn_completed(&mut chat, "turn-wait-1", /*duration_ms*/ None);
 
     let cells = drain_insert_history(&mut rx);
     let combined = cells
@@ -737,7 +737,7 @@ async fn unified_exec_waiting_multiple_empty_snapshots() {
     assert_eq!(status.header(), "Waiting for background terminal");
     assert_eq!(status.details(), Some("just fix"));
 
-    handle_turn_completed(&mut chat, "turn-wait-3", None);
+    handle_turn_completed(&mut chat, "turn-wait-3", /*duration_ms*/ None);
 
     let cells = drain_insert_history(&mut rx);
     let combined = cells
@@ -809,7 +809,7 @@ async fn unified_exec_non_empty_then_empty_snapshots() {
         .collect::<String>();
     assert_chatwidget_snapshot!("unified_exec_non_empty_then_empty_active", active_combined);
 
-    handle_turn_completed(&mut chat, "turn-1", None);
+    handle_turn_completed(&mut chat, "turn-1", /*duration_ms*/ None);
 
     let post_cells = drain_insert_history(&mut rx);
     let mut combined = pre_cells
@@ -1009,7 +1009,7 @@ async fn user_message_during_user_shell_command_is_queued_not_steered() {
         "done",
         Some(MessagePhase::FinalAnswer),
     );
-    handle_turn_completed(&mut chat, "turn-1", None);
+    handle_turn_completed(&mut chat, "turn-1", /*duration_ms*/ None);
 
     match next_submit_op(&mut op_rx) {
         Op::UserTurn { items, .. } => assert_eq!(
@@ -1296,7 +1296,7 @@ async fn turn_complete_keeps_unified_exec_processes() {
     begin_unified_exec_startup(&mut chat, "call-2", "process-2", "sleep 6");
     assert_eq!(chat.unified_exec_processes.len(), 2);
 
-    handle_turn_completed(&mut chat, "turn-1", None);
+    handle_turn_completed(&mut chat, "turn-1", /*duration_ms*/ None);
 
     assert_eq!(chat.unified_exec_processes.len(), 2);
 

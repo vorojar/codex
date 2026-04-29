@@ -870,7 +870,7 @@ async fn plan_implementation_popup_shows_once_when_replay_precedes_live_turn_com
         "Plan details",
         Some(MessagePhase::FinalAnswer),
     );
-    handle_turn_completed(&mut chat, "live-turn-complete-1", None);
+    handle_turn_completed(&mut chat, "live-turn-complete-1", /*duration_ms*/ None);
 
     let popup = render_bottom_popup(&chat, /*width*/ 80);
     assert!(
@@ -891,7 +891,7 @@ async fn plan_implementation_popup_shows_once_when_replay_precedes_live_turn_com
         "Plan details",
         Some(MessagePhase::FinalAnswer),
     );
-    handle_turn_completed(&mut chat, "live-turn-complete-2", None);
+    handle_turn_completed(&mut chat, "live-turn-complete-2", /*duration_ms*/ None);
     let duplicate_popup = render_bottom_popup(&chat, /*width*/ 80);
     assert!(
         !duplicate_popup.contains(PLAN_IMPLEMENTATION_TITLE),

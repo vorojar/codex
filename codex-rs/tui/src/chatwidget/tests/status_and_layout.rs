@@ -91,7 +91,12 @@ async fn token_usage_update_uses_runtime_context_window() {
 
     chat.config.model_context_window = Some(1_000_000);
 
-    handle_token_count(&mut chat, Some(make_token_info(0, 950_000)));
+    handle_token_count(
+        &mut chat,
+        Some(make_token_info(
+            /*total_tokens*/ 0, /*context_window*/ 950_000,
+        )),
+    );
 
     assert_eq!(
         chat.status_line_value_for_item(&crate::bottom_pane::StatusLineItem::ContextWindowSize),
@@ -1308,7 +1313,7 @@ async fn status_line_branch_refreshes_after_turn_complete() {
     chat.status_line_branch_lookup_complete = true;
     chat.status_line_branch_pending = false;
 
-    handle_turn_completed(&mut chat, "turn-1", None);
+    handle_turn_completed(&mut chat, "turn-1", /*duration_ms*/ None);
 
     assert!(chat.status_line_branch_pending);
 }
@@ -1905,7 +1910,7 @@ async fn multiple_agent_messages_in_single_turn_emit_multiple_headers() {
     );
 
     // End turn
-    handle_turn_completed(&mut chat, "turn-1", None);
+    handle_turn_completed(&mut chat, "turn-1", /*duration_ms*/ None);
 
     let cells = drain_insert_history(&mut rx);
     let combined: String = cells
@@ -2807,7 +2812,7 @@ printf 'fenced within fenced\n'
     }
 
     // Finalize the stream without sending a final AgentMessage, to flush any tail.
-    handle_turn_completed(&mut chat, "turn-1", None);
+    handle_turn_completed(&mut chat, "turn-1", /*duration_ms*/ None);
     for lines in drain_insert_history(&mut rx) {
         crate::insert_history::insert_history_lines(&mut term, lines)
             .expect("Failed to insert history lines in test");

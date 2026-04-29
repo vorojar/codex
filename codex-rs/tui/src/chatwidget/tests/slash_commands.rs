@@ -1156,7 +1156,7 @@ async fn slash_copy_state_tracks_plan_item_completion() {
         }),
         /*replay_kind*/ None,
     );
-    handle_turn_completed(&mut chat, "turn-1", None);
+    handle_turn_completed(&mut chat, "turn-1", /*duration_ms*/ None);
 
     assert_eq!(chat.last_agent_markdown_text(), Some(plan_text.as_str()));
     assert_matches!(
@@ -1314,7 +1314,7 @@ async fn slash_copy_uses_agent_message_item_when_turn_complete_omits_final_text(
         /*phase*/ None,
     );
     let _ = drain_insert_history(&mut rx);
-    handle_turn_completed(&mut chat, "turn-1", None);
+    handle_turn_completed(&mut chat, "turn-1", /*duration_ms*/ None);
     let _ = drain_insert_history(&mut rx);
 
     assert_eq!(
@@ -1334,7 +1334,7 @@ async fn agent_turn_complete_notification_does_not_reuse_stale_copy_source() {
     complete_turn_with_message(&mut chat, "turn-1", Some("Previous reply"));
     chat.pending_notification = None;
 
-    handle_turn_completed(&mut chat, "turn-2", None);
+    handle_turn_completed(&mut chat, "turn-2", /*duration_ms*/ None);
 
     assert_matches!(
         chat.pending_notification,
