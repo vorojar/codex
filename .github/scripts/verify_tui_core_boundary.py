@@ -50,8 +50,10 @@ GROUPED_USE_PATTERN = re.compile(
     rf"(?:::{TOKEN_SEPARATOR})?({PATH_PREFIX}{IDENTIFIER})"
     rf"{TOKEN_SEPARATOR}::{TOKEN_SEPARATOR}\{{([^;]*)\}}\s*;"
 )
-GROUPED_SELF_ALIAS_PATTERN = re.compile(
-    rf"\bself{REQUIRED_TOKEN_SEPARATOR}as{REQUIRED_TOKEN_SEPARATOR}({IDENTIFIER})\b"
+GROUPED_ITEM_ALIAS_PATTERN = re.compile(
+    rf"\b({PATH_PREFIX}{IDENTIFIER})"
+    rf"{REQUIRED_TOKEN_SEPARATOR}as{REQUIRED_TOKEN_SEPARATOR}"
+    rf"({IDENTIFIER})\b"
 )
 
 
@@ -354,10 +356,13 @@ def crate_alias_pairs(text: str) -> list[tuple[str, str]]:
                 )
             )
     for match in GROUPED_USE_PATTERN.finditer(text):
-        source = normalize_identifier(path_tail(match.group(1)))
+        group_source = normalize_identifier(path_tail(match.group(1)))
         body = match.group(2)
-        for alias_match in GROUPED_SELF_ALIAS_PATTERN.finditer(body):
-            pairs.append((source, normalize_identifier(alias_match.group(1))))
+        for alias_match in GROUPED_ITEM_ALIAS_PATTERN.finditer(body):
+            source = normalize_identifier(path_tail(alias_match.group(1)))
+            if source == "self":
+                source = group_source
+            pairs.append((source, normalize_identifier(alias_match.group(2))))
     return pairs
 
 
