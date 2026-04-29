@@ -3345,8 +3345,7 @@ fn errors_to_info(errors: &[SkillError]) -> Vec<SkillErrorInfo> {
 
 use codex_memories_read::build_memory_tool_developer_instructions;
 
-#[cfg(test)]
-pub(crate) mod tests;
+/// Builds the hook engine for one config snapshot, including any enabled plugin hooks.
 async fn build_hooks_for_config(
     config: &Config,
     plugins_manager: &PluginsManager,
@@ -3375,3 +3374,6 @@ async fn build_hooks_for_config(
         shell_args: hook_shell_argv,
     })
 }
+
+#[cfg(test)]
+pub(crate) mod tests;
