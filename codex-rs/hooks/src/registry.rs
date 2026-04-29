@@ -4,6 +4,7 @@ use tokio::process::Command;
 
 use crate::engine::ClaudeHooksEngine;
 use crate::engine::CommandShell;
+use crate::engine::HookListEntry;
 use crate::events::compact::PostCompactRequest;
 use crate::events::compact::PreCompactOutcome;
 use crate::events::compact::PreCompactRequest;
@@ -34,6 +35,12 @@ pub struct HooksConfig {
     pub plugin_hook_load_warnings: Vec<String>,
     pub shell_program: Option<String>,
     pub shell_args: Vec<String>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct HookListOutcome {
+    pub hooks: Vec<HookListEntry>,
+    pub warnings: Vec<String>,
 }
 
 #[derive(Clone)]
@@ -196,6 +203,22 @@ impl Hooks {
 
     pub async fn run_stop(&self, request: StopRequest) -> StopOutcome {
         self.engine.run_stop(request).await
+    }
+}
+
+pub fn list_hooks(config: HooksConfig) -> HookListOutcome {
+    if !config.feature_enabled {
+        return HookListOutcome::default();
+    }
+
+    let discovered = crate::engine::discovery::discover_handlers(
+        config.config_layer_stack.as_ref(),
+        config.plugin_hook_sources,
+        config.plugin_hook_load_warnings,
+    );
+    HookListOutcome {
+        hooks: discovered.hook_entries,
+        warnings: discovered.warnings,
     }
 }
 
