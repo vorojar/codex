@@ -91,24 +91,7 @@ fn is_safe_to_call_with_exec(command: &[String]) -> bool {
             })
         }
 
-        Some("find") => {
-            // Certain options to `find` can delete files, write to files, or
-            // execute arbitrary commands, so we cannot auto-approve the
-            // invocation of `find` in such cases.
-            #[rustfmt::skip]
-            const UNSAFE_FIND_OPTIONS: &[&str] = &[
-                // Options that can execute arbitrary commands.
-                "-exec", "-execdir", "-ok", "-okdir",
-                // Option that deletes matching files.
-                "-delete",
-                // Options that write pathnames to a file.
-                "-fls", "-fprint", "-fprint0", "-fprintf",
-            ];
-
-            !command
-                .iter()
-                .any(|arg| UNSAFE_FIND_OPTIONS.contains(&arg.as_str()))
-        }
+        Some("find") => find_args_are_read_only(command),
 
         // Ripgrep
         Some("rg") => {
@@ -217,6 +200,110 @@ fn git_has_unsafe_global_option(command: &[String]) -> bool {
         .any(git_global_option_requires_prompt)
 }
 
+fn find_args_are_read_only(command: &[String]) -> bool {
+    const FIND_OPTIONS_BEFORE_PATHS: &[&str] = &["-H", "-L", "-P"];
+    const FIND_READ_ONLY_OPERATORS: &[&str] = &["!", "(", ")", "-a", "-and", "-o", "-or", "-not"];
+    const FIND_READ_ONLY_TESTS_WITH_ARGS: &[&str] = &[
+        "-amin",
+        "-anewer",
+        "-atime",
+        "-cmin",
+        "-cnewer",
+        "-ctime",
+        "-fstype",
+        "-gid",
+        "-group",
+        "-ilname",
+        "-iname",
+        "-inum",
+        "-ipath",
+        "-iregex",
+        "-iwholename",
+        "-links",
+        "-lname",
+        "-mmin",
+        "-mtime",
+        "-name",
+        "-newer",
+        "-path",
+        "-perm",
+        "-regex",
+        "-samefile",
+        "-size",
+        "-type",
+        "-uid",
+        "-user",
+        "-wholename",
+    ];
+    const FIND_READ_ONLY_TESTS_WITHOUT_ARGS: &[&str] = &[
+        "-depth",
+        "-empty",
+        "-executable",
+        "-false",
+        "-mount",
+        "-nogroup",
+        "-nouser",
+        "-prune",
+        "-quit",
+        "-readable",
+        "-true",
+        "-writable",
+        "-xdev",
+    ];
+    const FIND_READ_ONLY_ACTIONS_WITH_ARGS: &[&str] = &["-printf"];
+    const FIND_READ_ONLY_ACTIONS_WITHOUT_ARGS: &[&str] = &["-ls", "-print", "-print0"];
+
+    let mut args = command.iter().skip(1).map(String::as_str).peekable();
+    let mut saw_expression = false;
+
+    while let Some(arg) = args.next() {
+        if !saw_expression && FIND_OPTIONS_BEFORE_PATHS.contains(&arg) {
+            continue;
+        }
+
+        if !saw_expression && !arg_starts_find_expression(arg) {
+            continue;
+        }
+
+        saw_expression = true;
+
+        if FIND_READ_ONLY_OPERATORS.contains(&arg)
+            || FIND_READ_ONLY_TESTS_WITHOUT_ARGS.contains(&arg)
+            || FIND_READ_ONLY_ACTIONS_WITHOUT_ARGS.contains(&arg)
+        {
+            continue;
+        }
+
+        if FIND_READ_ONLY_TESTS_WITH_ARGS.contains(&arg)
+            || FIND_READ_ONLY_ACTIONS_WITH_ARGS.contains(&arg)
+            || arg.starts_with("-newer")
+        {
+            if args.next().is_none() {
+                return false;
+            }
+            continue;
+        }
+
+        if matches!(arg, "-maxdepth" | "-mindepth") {
+            let Some(depth) = args.next() else {
+                return false;
+            };
+            if depth.is_empty() || !depth.chars().all(|ch| ch.is_ascii_digit()) {
+                return false;
+            }
+            continue;
+        }
+
+        return false;
+    }
+
+    true
+}
+
+fn arg_starts_find_expression(arg: &str) -> bool {
+    arg == "!" || arg == "(" || arg == ")" || arg.starts_with('-')
+}
+
 fn git_subcommand_args_are_read_only(args: &[String]) -> bool {
     // Flags that can write to disk or execute external tools should never be
     // auto-approved on an unsandboxed machine.
@@ -306,6 +393,15 @@ mod tests {
         // Safe `find` command (no unsafe options).
         assert!(is_safe_to_call_with_exec(&vec_str(&[
             "find", ".", "-name", "file.txt"
+        ])));
+        assert!(is_safe_to_call_with_exec(&vec_str(&[
+            "find",
+            "/app/test-data",
+            "-maxdepth",
+            "2",
+            "-type",
+            "f",
+            "-print0",
         ])));
 
         if cfg!(target_os = "linux") {
@@ -461,6 +557,8 @@ mod tests {
             vec_str(&["find", ".", "-fprint", "/etc/passwd"]),
             vec_str(&["find", ".", "-fprint0", "/etc/passwd"]),
             vec_str(&["find", ".", "-fprintf", "/root/suid.txt", "%#m %u %p\n"]),
+            vec_str(&["find", ".", "-unknown-primary", "value"]),
+            vec_str(&["find", ".", "-maxdepth", "one"]),
         ] {
             assert!(
                 !is_safe_to_call_with_exec(&args),
