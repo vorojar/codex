@@ -282,6 +282,8 @@ export type { ReasoningSummaryTextDeltaNotification } from "./ReasoningSummaryTe
 export type { ReasoningTextDeltaNotification } from "./ReasoningTextDeltaNotification";
 export type { RemoteControlClientConnectionAudience } from "./RemoteControlClientConnectionAudience";
 export type { RemoteControlClientEnrollmentAudience } from "./RemoteControlClientEnrollmentAudience";
+export type { RemoteControlConnectionStatus } from "./RemoteControlConnectionStatus";
+export type { RemoteControlStatusChangedNotification } from "./RemoteControlStatusChangedNotification";
 export type { RequestPermissionProfile } from "./RequestPermissionProfile";
 export type { ResidencyRequirement } from "./ResidencyRequirement";
 export type { ReviewDelivery } from "./ReviewDelivery";
@@ -294,6 +296,7 @@ export type { SandboxWorkspaceWrite } from "./SandboxWorkspaceWrite";
 export type { SendAddCreditsNudgeEmailParams } from "./SendAddCreditsNudgeEmailParams";
 export type { SendAddCreditsNudgeEmailResponse } from "./SendAddCreditsNudgeEmailResponse";
 export type { ServerRequestResolvedNotification } from "./ServerRequestResolvedNotification";
+export type { SessionMigration } from "./SessionMigration";
 export type { SessionSource } from "./SessionSource";
 export type { SkillDependencies } from "./SkillDependencies";
 export type { SkillErrorInfo } from "./SkillErrorInfo";

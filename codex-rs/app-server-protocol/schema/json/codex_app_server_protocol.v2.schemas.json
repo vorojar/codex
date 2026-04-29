@@ -3055,17 +3055,6 @@
             "null"
           ]
         },
-        "permissionProfile": {
-          "anyOf": [
-            {
-              "$ref": "#/definitions/PermissionProfile"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "description": "Optional full permissions profile for this command.\n\nDefaults to the user's configured permissions when omitted. Cannot be combined with `sandboxPolicy`."
-        },
         "processId": {
           "description": "Optional client-supplied, connection-scoped process id.\n\nRequired for `tty`, `streamStdin`, `streamStdoutStderr`, and follow-up `command/exec/write`, `command/exec/resize`, and `command/exec/terminate` calls. When omitted, buffered execution gets an internal id that is not exposed to the client.",
           "type": [
@@ -4856,7 +4845,8 @@
         "CONFIG",
         "SKILLS",
         "PLUGINS",
-        "MCP_SERVER_CONFIG"
+        "MCP_SERVER_CONFIG",
+        "SESSIONS"
       ],
       "type": "string"
     },
@@ -6320,6 +6310,7 @@
         "project",
         "mdm",
         "sessionFlags",
+        "plugin",
         "legacyManagedConfigFile",
         "legacyManagedConfigMdm",
         "unknown"
@@ -7457,15 +7448,20 @@
     "MigrationDetails": {
       "properties": {
         "plugins": {
+          "default": [],
           "items": {
             "$ref": "#/definitions/PluginsMigration"
           },
           "type": "array"
+        },
+        "sessions": {
+          "default": [],
+          "items": {
+            "$ref": "#/definitions/SessionMigration"
+          },
+          "type": "array"
         }
       },
-      "required": [
-        "plugins"
-      ],
       "type": "object"
     },
     "ModeKind": {
@@ -9176,6 +9172,35 @@
         "remote_control_client_enrollment"
       ],
       "type": "string"
+    },
+    "RemoteControlConnectionStatus": {
+      "enum": [
+        "disabled",
+        "connecting",
+        "connected",
+        "errored"
+      ],
+      "type": "string"
+    },
+    "RemoteControlStatusChangedNotification": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "description": "Current remote-control connection status and environment id exposed to clients.",
+      "properties": {
+        "environmentId": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "status": {
+          "$ref": "#/definitions/RemoteControlConnectionStatus"
+        }
+      },
+      "required": [
+        "status"
+      ],
+      "title": "RemoteControlStatusChangedNotification",
+      "type": "object"
     },
     "RequestId": {
       "anyOf": [
@@ -10917,6 +10942,26 @@
           "properties": {
             "method": {
               "enum": [
+                "remoteControl/status/changed"
+              ],
+              "title": "RemoteControl/status/changedNotificationMethod",
+              "type": "string"
+            },
+            "params": {
+              "$ref": "#/definitions/RemoteControlStatusChangedNotification"
+            }
+          },
+          "required": [
+            "method",
+            "params"
+          ],
+          "title": "RemoteControl/status/changedNotification",
+          "type": "object"
+        },
+        {
+          "properties": {
+            "method": {
+              "enum": [
                 "externalAgentConfig/import/completed"
               ],
               "title": "ExternalAgentConfig/import/completedNotificationMethod",
@@ -11441,6 +11486,27 @@
         "flex"
       ],
       "type": "string"
+    },
+    "SessionMigration": {
+      "properties": {
+        "cwd": {
+          "type": "string"
+        },
+        "path": {
+          "type": "string"
+        },
+        "title": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "cwd",
+        "path"
+      ],
+      "type": "object"
     },
     "SessionSource": {
       "oneOf": [
@@ -12329,17 +12395,6 @@
             "null"
           ]
         },
-        "permissionProfile": {
-          "anyOf": [
-            {
-              "$ref": "#/definitions/PermissionProfile"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "description": "Full permissions override for the forked thread. Cannot be combined with `sandbox`."
-        },
         "sandbox": {
           "anyOf": [
             {
@@ -12407,18 +12462,6 @@
         },
         "modelProvider": {
           "type": "string"
-        },
-        "permissionProfile": {
-          "anyOf": [
-            {
-              "$ref": "#/definitions/PermissionProfile"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "description": "Canonical active permissions view for this thread."
         },
         "reasoningEffort": {
           "anyOf": [
@@ -13853,17 +13896,6 @@
             "null"
           ]
         },
-        "permissionProfile": {
-          "anyOf": [
-            {
-              "$ref": "#/definitions/PermissionProfile"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "description": "Full permissions override for the resumed thread. Cannot be combined with `sandbox`."
-        },
         "personality": {
           "anyOf": [
             {
@@ -13941,18 +13973,6 @@
         },
         "modelProvider": {
           "type": "string"
-        },
-        "permissionProfile": {
-          "anyOf": [
-            {
-              "$ref": "#/definitions/PermissionProfile"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "description": "Canonical active permissions view for this thread."
         },
         "reasoningEffort": {
           "anyOf": [
@@ -14170,17 +14190,6 @@
             "null"
           ]
         },
-        "permissionProfile": {
-          "anyOf": [
-            {
-              "$ref": "#/definitions/PermissionProfile"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "description": "Full permissions override for this thread. Cannot be combined with `sandbox`."
-        },
         "personality": {
           "anyOf": [
             {
@@ -14268,18 +14277,6 @@
         },
         "modelProvider": {
           "type": "string"
-        },
-        "permissionProfile": {
-          "anyOf": [
-            {
-              "$ref": "#/definitions/PermissionProfile"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "description": "Canonical active permissions view for this thread."
         },
         "reasoningEffort": {
           "anyOf": [
@@ -14985,17 +14982,6 @@
         },
         "outputSchema": {
           "description": "Optional JSON Schema used to constrain the final assistant message for this turn."
-        },
-        "permissionProfile": {
-          "anyOf": [
-            {
-              "$ref": "#/definitions/PermissionProfile"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "description": "Override the full permissions profile for this turn and subsequent turns. Cannot be combined with `sandboxPolicy`."
         },
         "personality": {
           "anyOf": [
