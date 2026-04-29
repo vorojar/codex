@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::collections::HashSet;
 use std::future::Future;
 use std::sync::Arc;
@@ -9,8 +10,6 @@ use crate::codex_message_processor::CodexMessageProcessor;
 use crate::codex_message_processor::CodexMessageProcessorArgs;
 use crate::config_api::ConfigApi;
 use crate::config_manager::ConfigManager;
-use crate::config_write_router::ConfigWriteRouter;
-use crate::config_write_router::RemotePluginEnablementWriter;
 use crate::connection_rpc_gate::ConnectionRpcGate;
 use crate::device_key_api::DeviceKeyApi;
 use crate::error_code::invalid_request;
@@ -40,8 +39,10 @@ use codex_app_server_protocol::ClientInfo;
 use codex_app_server_protocol::ClientNotification;
 use codex_app_server_protocol::ClientRequest;
 use codex_app_server_protocol::ConfigBatchWriteParams;
+use codex_app_server_protocol::ConfigEdit;
 use codex_app_server_protocol::ConfigValueWriteParams;
 use codex_app_server_protocol::ConfigWarningNotification;
+use codex_app_server_protocol::ConfigWriteResponse;
 use codex_app_server_protocol::DeviceKeyCreateParams;
 use codex_app_server_protocol::DeviceKeyPublicParams;
 use codex_app_server_protocol::DeviceKeySignParams;
@@ -86,6 +87,7 @@ use codex_protocol::protocol::SessionSource;
 use codex_protocol::protocol::W3cTraceContext;
 use codex_state::log_db::LogDbLayer;
 use futures::FutureExt;
+use serde_json::Value as JsonValue;
 use tokio::sync::broadcast;
 use tokio::sync::watch;
 use tokio::time::Duration;
@@ -163,10 +165,9 @@ impl ExternalAuth for ExternalAuthRefreshBridge {
 
 pub(crate) struct MessageProcessor {
     outgoing: Arc<OutgoingMessageSender>,
-    codex_message_processor: Arc<CodexMessageProcessor>,
+    codex_message_processor: CodexMessageProcessor,
     thread_manager: Arc<ThreadManager>,
     config_api: ConfigApi,
-    config_write_router: ConfigWriteRouter,
     device_key_api: DeviceKeyApi,
     external_agent_config_api: ExternalAgentConfigApi,
     fs_api: FsApi,
@@ -307,18 +308,17 @@ impl MessageProcessor {
             .plugins_manager()
             .set_analytics_events_client(analytics_events_client.clone());
 
-        let codex_message_processor =
-            Arc::new(CodexMessageProcessor::new(CodexMessageProcessorArgs {
-                auth_manager: auth_manager.clone(),
-                thread_manager: Arc::clone(&thread_manager),
-                outgoing: outgoing.clone(),
-                analytics_events_client: analytics_events_client.clone(),
-                arg0_paths,
-                config: Arc::clone(&config),
-                config_manager: config_manager.clone(),
-                feedback,
-                log_db,
-            }));
+        let codex_message_processor = CodexMessageProcessor::new(CodexMessageProcessorArgs {
+            auth_manager: auth_manager.clone(),
+            thread_manager: Arc::clone(&thread_manager),
+            outgoing: outgoing.clone(),
+            analytics_events_client: analytics_events_client.clone(),
+            arg0_paths,
+            config: Arc::clone(&config),
+            config_manager: config_manager.clone(),
+            feedback,
+            log_db,
+        });
         if matches!(plugin_startup_tasks, crate::PluginStartupTasks::Start) {
             // Keep plugin startup warmups aligned at app-server startup.
             // TODO(xl): Move into PluginManager once this no longer depends on config feature gating.
@@ -331,10 +331,6 @@ impl MessageProcessor {
             thread_manager.clone(),
             analytics_events_client.clone(),
         );
-        let remote_plugin_enablement_writer: Arc<dyn RemotePluginEnablementWriter> =
-            codex_message_processor.clone();
-        let config_write_router =
-            ConfigWriteRouter::new(config_api.clone(), remote_plugin_enablement_writer);
         let device_key_api =
             DeviceKeyApi::new(config.sqlite_home.clone(), config.model_provider_id.clone());
         let external_agent_config_api =
@@ -352,7 +348,6 @@ impl MessageProcessor {
             codex_message_processor,
             thread_manager: Arc::clone(&thread_manager),
             config_api,
-            config_write_router,
             device_key_api,
             external_agent_config_api,
             fs_api,
@@ -1000,7 +995,9 @@ impl MessageProcessor {
         request_id: ConnectionRequestId,
         params: ConfigValueWriteParams,
     ) {
-        let result = self.config_write_router.write_value(params).await;
+        let result = self
+            .write_config_value_with_remote_plugin_sync(params)
+            .await;
         self.handle_config_mutation_result(request_id, result).await
     }
 
@@ -1009,8 +1006,120 @@ impl MessageProcessor {
         request_id: ConnectionRequestId,
         params: ConfigBatchWriteParams,
     ) {
-        let result = self.config_write_router.batch_write(params).await;
+        let result = self
+            .batch_write_config_with_remote_plugin_sync(params)
+            .await;
         self.handle_config_mutation_result(request_id, result).await;
+    }
+
+    async fn write_config_value_with_remote_plugin_sync(
+        &self,
+        params: ConfigValueWriteParams,
+    ) -> Result<ConfigWriteResponse, JSONRPCErrorError> {
+        let ConfigValueWriteParams {
+            key_path,
+            value,
+            merge_strategy,
+            file_path,
+            expected_version,
+        } = params;
+
+        if let Some((plugin_id, enabled)) = remote_plugin_enabled_config_edit(&key_path, &value) {
+            let response = self
+                .config_api
+                .batch_write(ConfigBatchWriteParams {
+                    edits: Vec::new(),
+                    file_path,
+                    expected_version,
+                    reload_user_config: false,
+                })
+                .await?;
+            self.codex_message_processor
+                .sync_remote_plugin_enabled_config_write(plugin_id, enabled)
+                .await?;
+            return Ok(response);
+        }
+
+        self.config_api
+            .write_value(ConfigValueWriteParams {
+                key_path,
+                value,
+                merge_strategy,
+                file_path,
+                expected_version,
+            })
+            .await
+    }
+
+    async fn batch_write_config_with_remote_plugin_sync(
+        &self,
+        params: ConfigBatchWriteParams,
+    ) -> Result<ConfigWriteResponse, JSONRPCErrorError> {
+        let ConfigBatchWriteParams {
+            edits,
+            file_path,
+            expected_version,
+            reload_user_config,
+        } = params;
+        let mut local_edits = Vec::<ConfigEdit>::new();
+        let mut remote_plugin_toggles = BTreeMap::<String, bool>::new();
+
+        for edit in edits {
+            if let Some((plugin_id, enabled)) =
+                remote_plugin_enabled_config_edit(&edit.key_path, &edit.value)
+            {
+                remote_plugin_toggles.insert(plugin_id, enabled);
+            } else {
+                local_edits.push(edit);
+            }
+        }
+
+        if !remote_plugin_toggles.is_empty() && !local_edits.is_empty() {
+            return Err(invalid_request(
+                "remote plugin enablement edits cannot be batched with local config edits",
+            ));
+        }
+
+        if remote_plugin_toggles.is_empty() {
+            return self
+                .config_api
+                .batch_write(ConfigBatchWriteParams {
+                    edits: local_edits,
+                    file_path,
+                    expected_version,
+                    reload_user_config,
+                })
+                .await;
+        }
+
+        let response = self
+            .config_api
+            .batch_write(ConfigBatchWriteParams {
+                edits: Vec::new(),
+                file_path: file_path.clone(),
+                expected_version,
+                reload_user_config: false,
+            })
+            .await?;
+
+        for (plugin_id, enabled) in remote_plugin_toggles {
+            self.codex_message_processor
+                .sync_remote_plugin_enabled_config_write(plugin_id, enabled)
+                .await?;
+        }
+
+        if reload_user_config {
+            self.config_api
+                .batch_write(ConfigBatchWriteParams {
+                    edits: Vec::new(),
+                    file_path,
+                    expected_version: None,
+                    reload_user_config: true,
+                })
+                .await?;
+        }
+
+        Ok(response)
     }
 
     async fn handle_experimental_feature_enablement_set(
@@ -1293,6 +1402,33 @@ fn migration_items_need_runtime_refresh(items: &[ExternalAgentConfigMigrationIte
                 | ExternalAgentConfigMigrationItemType::Plugins
         )
     })
+}
+
+fn remote_plugin_enabled_config_edit(key_path: &str, value: &JsonValue) -> Option<(String, bool)> {
+    let enabled = value.as_bool()?;
+    let mut segments = key_path.split('.');
+    let table = segments.next()?;
+    let plugin_id = segments.next()?;
+    let field = segments.next()?;
+    if table == "plugins"
+        && field == "enabled"
+        && segments.next().is_none()
+        && is_remote_plugin_config_id(plugin_id)
+    {
+        return Some((plugin_id.to_string(), enabled));
+    }
+    None
+}
+
+fn is_remote_plugin_config_id(plugin_id: &str) -> bool {
+    !plugin_id.is_empty()
+        && plugin_id
+            .chars()
+            .all(|ch| ch.is_ascii_alphanumeric() || ch == '-' || ch == '_' || ch == '~')
+        && (plugin_id.starts_with("plugins~")
+            || plugin_id.starts_with("app_")
+            || plugin_id.starts_with("asdk_app_")
+            || plugin_id.starts_with("connector_"))
 }
 
 #[cfg(test)]

@@ -77,7 +77,6 @@ mod config;
 mod config_api;
 mod config_manager;
 mod config_manager_service;
-mod config_write_router;
 mod connection_rpc_gate;
 mod device_key_api;
 mod dynamic_tools;

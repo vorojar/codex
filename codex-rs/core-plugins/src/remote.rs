@@ -546,21 +546,6 @@ pub async fn set_remote_plugin_enabled(
     Ok(())
 }
 
-pub fn is_valid_remote_plugin_id(plugin_id: &str) -> bool {
-    plugin_id
-        .chars()
-        .all(|ch| ch.is_ascii_alphanumeric() || ch == '-' || ch == '_' || ch == '~')
-}
-
-pub fn is_supported_remote_plugin_id(plugin_id: &str) -> bool {
-    !plugin_id.is_empty()
-        && is_valid_remote_plugin_id(plugin_id)
-        && (plugin_id.starts_with("plugins~")
-            || plugin_id.starts_with("app_")
-            || plugin_id.starts_with("asdk_app_")
-            || plugin_id.starts_with("connector_"))
-}
-
 pub async fn uninstall_remote_plugin(
     config: &RemotePluginServiceConfig,
     auth: Option<&CodexAuth>,
