@@ -54,7 +54,6 @@ use std::path::PathBuf;
 const SUPPORTED_EXPERIMENTAL_FEATURE_ENABLEMENT: &[&str] = &[
     "apps",
     "memories",
-    "mentions_v2",
     "plugins",
     "remote_control",
     "tool_search",
