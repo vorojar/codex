@@ -1142,7 +1142,7 @@ mod tests {
                 cwd: None,
                 include_managed_config: false,
             },
-            None,
+            /*permissions_json*/ None,
             Some(replay_file),
             CliConfigOverrides::default(),
         )?;
@@ -1168,7 +1168,7 @@ mod tests {
                 include_managed_config: false,
             },
             Some(serde_json::to_string(&payload)?),
-            None,
+            /*permissions_json_file*/ None,
             CliConfigOverrides {
                 raw_overrides: vec!["model=o3".to_string()],
             },
