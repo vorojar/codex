@@ -1,4 +1,3 @@
-use std::collections::BTreeMap;
 use std::collections::HashSet;
 use std::future::Future;
 use std::sync::Arc;
@@ -69,6 +68,8 @@ use codex_chatgpt::connectors;
 use codex_config::CONFIG_TOML_FILE;
 use codex_core::ThreadManager;
 use codex_core::config::Config;
+use codex_core_plugins::remote;
+use codex_core_plugins::remote::RemotePluginEnableOrDisableBatchMessage;
 use codex_exec_server::EnvironmentManager;
 use codex_features::Feature;
 use codex_feedback::CodexFeedback;
@@ -90,7 +91,6 @@ use codex_protocol::protocol::W3cTraceContext;
 use codex_state::log_db::LogDbLayer;
 use codex_utils_absolute_path::AbsolutePathBuf;
 use futures::FutureExt;
-use serde_json::Value as JsonValue;
 use tokio::sync::broadcast;
 use tokio::sync::watch;
 use tokio::time::Duration;
@@ -1000,7 +1000,7 @@ impl MessageProcessor {
         request_id: ConnectionRequestId,
         params: ConfigValueWriteParams,
     ) {
-        let result = if is_remote_plugin_enable_or_disable_value_message(&params) {
+        let result = if remote::is_remote_plugin_enable_or_disable_value_message(&params) {
             self.remote_plugin_enable_or_disable_value_message(params)
                 .await
         } else {
@@ -1015,7 +1015,7 @@ impl MessageProcessor {
         params: ConfigBatchWriteParams,
     ) {
         let result = async {
-            if is_remote_plugin_enable_or_disable_batch_message(&params)? {
+            if remote::is_remote_plugin_enable_or_disable_batch_message(&params) {
                 self.remote_plugin_enable_or_disable_batch_message(params)
                     .await
             } else {
@@ -1030,7 +1030,7 @@ impl MessageProcessor {
         &self,
         params: ConfigValueWriteParams,
     ) -> Result<ConfigWriteResponse, JSONRPCErrorError> {
-        let action = remote_plugin_enable_or_disable_edit(&params.key_path, &params.value)
+        let action = remote::remote_plugin_enable_or_disable_value_message(&params)
             .ok_or_else(|| invalid_request("invalid remote plugin enablement message"))?;
         self.codex_message_processor
             .remote_plugin_enable_or_disable(action.plugin_id, action.enabled)
@@ -1042,13 +1042,22 @@ impl MessageProcessor {
         &self,
         params: ConfigBatchWriteParams,
     ) -> Result<ConfigWriteResponse, JSONRPCErrorError> {
-        let batch = remote_plugin_enable_or_disable_batch(&params)?
-            .ok_or_else(|| invalid_request("invalid remote plugin enablement message"))?;
-
-        for (plugin_id, enabled) in batch.actions {
-            self.codex_message_processor
-                .remote_plugin_enable_or_disable(plugin_id, enabled)
-                .await?;
+        match remote::remote_plugin_enable_or_disable_batch_message(&params) {
+            RemotePluginEnableOrDisableBatchMessage::RemotePluginToggles(toggles) => {
+                for (plugin_id, enabled) in toggles {
+                    self.codex_message_processor
+                        .remote_plugin_enable_or_disable(plugin_id, enabled)
+                        .await?;
+                }
+            }
+            RemotePluginEnableOrDisableBatchMessage::MixedWithLocalConfigEdits => {
+                return Err(invalid_request(
+                    "remote plugin enablement edits cannot be batched with local config edits",
+                ));
+            }
+            RemotePluginEnableOrDisableBatchMessage::NotRemotePluginToggle => {
+                return Err(invalid_request("invalid remote plugin enablement message"));
+            }
         }
 
         self.remote_plugin_enable_or_disable_response().await
@@ -1363,85 +1372,6 @@ fn migration_items_need_runtime_refresh(items: &[ExternalAgentConfigMigrationIte
                 | ExternalAgentConfigMigrationItemType::Plugins
         )
     })
-}
-
-struct RemotePluginEnableOrDisable {
-    plugin_id: String,
-    enabled: bool,
-}
-
-struct RemotePluginEnableOrDisableBatch {
-    actions: BTreeMap<String, bool>,
-}
-
-fn is_remote_plugin_enable_or_disable_value_message(params: &ConfigValueWriteParams) -> bool {
-    remote_plugin_enable_or_disable_edit(&params.key_path, &params.value).is_some()
-}
-
-fn is_remote_plugin_enable_or_disable_batch_message(
-    params: &ConfigBatchWriteParams,
-) -> Result<bool, JSONRPCErrorError> {
-    Ok(remote_plugin_enable_or_disable_batch(params)?.is_some())
-}
-
-fn remote_plugin_enable_or_disable_batch(
-    params: &ConfigBatchWriteParams,
-) -> Result<Option<RemotePluginEnableOrDisableBatch>, JSONRPCErrorError> {
-    let mut actions = BTreeMap::<String, bool>::new();
-    let mut has_local_edits = false;
-
-    for edit in &params.edits {
-        if let Some(action) = remote_plugin_enable_or_disable_edit(&edit.key_path, &edit.value) {
-            actions.insert(action.plugin_id, action.enabled);
-        } else {
-            has_local_edits = true;
-        }
-    }
-
-    if actions.is_empty() {
-        return Ok(None);
-    }
-
-    if has_local_edits {
-        return Err(invalid_request(
-            "remote plugin enablement edits cannot be batched with local config edits",
-        ));
-    }
-
-    Ok(Some(RemotePluginEnableOrDisableBatch { actions }))
-}
-
-fn remote_plugin_enable_or_disable_edit(
-    key_path: &str,
-    value: &JsonValue,
-) -> Option<RemotePluginEnableOrDisable> {
-    let enabled = value.as_bool()?;
-    let mut segments = key_path.split('.');
-    let table = segments.next()?;
-    let plugin_id = segments.next()?;
-    let field = segments.next()?;
-    if table == "plugins"
-        && field == "enabled"
-        && segments.next().is_none()
-        && is_remote_plugin_config_id(plugin_id)
-    {
-        return Some(RemotePluginEnableOrDisable {
-            plugin_id: plugin_id.to_string(),
-            enabled,
-        });
-    }
-    None
-}
-
-fn is_remote_plugin_config_id(plugin_id: &str) -> bool {
-    !plugin_id.is_empty()
-        && plugin_id
-            .chars()
-            .all(|ch| ch.is_ascii_alphanumeric() || ch == '-' || ch == '_' || ch == '~')
-        && (plugin_id.starts_with("plugins~")
-            || plugin_id.starts_with("app_")
-            || plugin_id.starts_with("asdk_app_")
-            || plugin_id.starts_with("connector_"))
 }
 
 #[cfg(test)]

@@ -1,5 +1,7 @@
 use crate::store::PLUGINS_CACHE_DIR;
 use crate::store::PluginStore;
+use codex_app_server_protocol::ConfigBatchWriteParams;
+use codex_app_server_protocol::ConfigValueWriteParams;
 use codex_app_server_protocol::PluginAuthPolicy;
 use codex_app_server_protocol::PluginInstallPolicy;
 use codex_app_server_protocol::PluginInterface;
@@ -9,6 +11,7 @@ use codex_login::default_client::build_reqwest_client;
 use codex_plugin::PluginId;
 use reqwest::RequestBuilder;
 use serde::Deserialize;
+use serde_json::Value as JsonValue;
 use std::collections::BTreeMap;
 use std::collections::BTreeSet;
 use std::collections::HashSet;
@@ -69,6 +72,19 @@ pub struct RemotePluginSkill {
     pub short_description: Option<String>,
     pub interface: Option<SkillInterface>,
     pub enabled: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RemotePluginEnableOrDisable {
+    pub plugin_id: String,
+    pub enabled: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RemotePluginEnableOrDisableBatchMessage {
+    NotRemotePluginToggle,
+    RemotePluginToggles(BTreeMap<String, bool>),
+    MixedWithLocalConfigEdits,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -546,6 +562,81 @@ pub async fn set_remote_plugin_enabled(
     Ok(())
 }
 
+pub fn is_remote_plugin_enable_or_disable_value_message(params: &ConfigValueWriteParams) -> bool {
+    remote_plugin_enable_or_disable_value_message(params).is_some()
+}
+
+pub fn remote_plugin_enable_or_disable_value_message(
+    params: &ConfigValueWriteParams,
+) -> Option<RemotePluginEnableOrDisable> {
+    remote_plugin_enable_or_disable_edit(&params.key_path, &params.value)
+}
+
+pub fn is_remote_plugin_enable_or_disable_batch_message(params: &ConfigBatchWriteParams) -> bool {
+    !matches!(
+        remote_plugin_enable_or_disable_batch_message(params),
+        RemotePluginEnableOrDisableBatchMessage::NotRemotePluginToggle
+    )
+}
+
+pub fn remote_plugin_enable_or_disable_batch_message(
+    params: &ConfigBatchWriteParams,
+) -> RemotePluginEnableOrDisableBatchMessage {
+    let mut toggles = BTreeMap::<String, bool>::new();
+    let mut has_local_edits = false;
+
+    for edit in &params.edits {
+        if let Some(action) = remote_plugin_enable_or_disable_edit(&edit.key_path, &edit.value) {
+            toggles.insert(action.plugin_id, action.enabled);
+        } else {
+            has_local_edits = true;
+        }
+    }
+
+    if toggles.is_empty() {
+        return RemotePluginEnableOrDisableBatchMessage::NotRemotePluginToggle;
+    }
+
+    if has_local_edits {
+        return RemotePluginEnableOrDisableBatchMessage::MixedWithLocalConfigEdits;
+    }
+
+    RemotePluginEnableOrDisableBatchMessage::RemotePluginToggles(toggles)
+}
+
+fn remote_plugin_enable_or_disable_edit(
+    key_path: &str,
+    value: &JsonValue,
+) -> Option<RemotePluginEnableOrDisable> {
+    let enabled = value.as_bool()?;
+    let mut segments = key_path.split('.');
+    let table = segments.next()?;
+    let plugin_id = segments.next()?;
+    let field = segments.next()?;
+    if table == "plugins"
+        && field == "enabled"
+        && segments.next().is_none()
+        && is_remote_plugin_config_id(plugin_id)
+    {
+        return Some(RemotePluginEnableOrDisable {
+            plugin_id: plugin_id.to_string(),
+            enabled,
+        });
+    }
+    None
+}
+
+fn is_remote_plugin_config_id(plugin_id: &str) -> bool {
+    !plugin_id.is_empty()
+        && plugin_id
+            .chars()
+            .all(|ch| ch.is_ascii_alphanumeric() || ch == '-' || ch == '_' || ch == '~')
+        && (plugin_id.starts_with("plugins~")
+            || plugin_id.starts_with("app_")
+            || plugin_id.starts_with("asdk_app_")
+            || plugin_id.starts_with("connector_"))
+}
+
 pub async fn uninstall_remote_plugin(
     config: &RemotePluginServiceConfig,
     auth: Option<&CodexAuth>,
@@ -906,4 +997,83 @@ async fn send_and_decode<T: for<'de> Deserialize<'de>>(
         url: url.to_string(),
         source,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use codex_app_server_protocol::ConfigEdit;
+    use codex_app_server_protocol::MergeStrategy;
+    use pretty_assertions::assert_eq;
+    use serde_json::json;
+
+    const REMOTE_PLUGIN_ID: &str = "plugins~Plugin_00000000000000000000000000000000";
+
+    #[test]
+    fn value_write_message_detects_remote_plugin_enable_or_disable() {
+        let params = ConfigValueWriteParams {
+            key_path: format!("plugins.{REMOTE_PLUGIN_ID}.enabled"),
+            value: json!(false),
+            merge_strategy: MergeStrategy::Upsert,
+            file_path: None,
+            expected_version: None,
+        };
+
+        assert!(is_remote_plugin_enable_or_disable_value_message(&params));
+        assert_eq!(
+            remote_plugin_enable_or_disable_value_message(&params),
+            Some(RemotePluginEnableOrDisable {
+                plugin_id: REMOTE_PLUGIN_ID.to_string(),
+                enabled: false,
+            })
+        );
+    }
+
+    #[test]
+    fn batch_write_message_rejects_mixed_remote_and_local_edits() {
+        let params = ConfigBatchWriteParams {
+            edits: vec![
+                ConfigEdit {
+                    key_path: format!("plugins.{REMOTE_PLUGIN_ID}.enabled"),
+                    value: json!(true),
+                    merge_strategy: MergeStrategy::Upsert,
+                },
+                ConfigEdit {
+                    key_path: "model".to_string(),
+                    value: json!("gpt-5"),
+                    merge_strategy: MergeStrategy::Replace,
+                },
+            ],
+            file_path: None,
+            expected_version: None,
+            reload_user_config: true,
+        };
+
+        assert!(is_remote_plugin_enable_or_disable_batch_message(&params));
+        assert_eq!(
+            remote_plugin_enable_or_disable_batch_message(&params),
+            RemotePluginEnableOrDisableBatchMessage::MixedWithLocalConfigEdits
+        );
+    }
+
+    #[test]
+    fn batch_write_message_collects_remote_plugin_toggles() {
+        let params = ConfigBatchWriteParams {
+            edits: vec![ConfigEdit {
+                key_path: format!("plugins.{REMOTE_PLUGIN_ID}.enabled"),
+                value: json!(true),
+                merge_strategy: MergeStrategy::Upsert,
+            }],
+            file_path: None,
+            expected_version: None,
+            reload_user_config: true,
+        };
+        let mut expected = BTreeMap::new();
+        expected.insert(REMOTE_PLUGIN_ID.to_string(), true);
+
+        assert_eq!(
+            remote_plugin_enable_or_disable_batch_message(&params),
+            RemotePluginEnableOrDisableBatchMessage::RemotePluginToggles(expected)
+        );
+    }
 }
