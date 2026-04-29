@@ -154,28 +154,20 @@ async fn read_rollout_resume_state(path: &Path) -> io::Result<RolloutResumeState
         if trimmed.is_empty() {
             continue;
         }
+        let Ok(record) = serde_json::from_str::<RawRecord>(trimmed) else {
+            continue;
+        };
         saw_record = true;
-        let record = serde_json::from_str::<RawRecord>(trimmed).map_err(|err| {
-            io::Error::other(format!(
-                "failed to parse rollout line in {}: {err}",
-                path.display()
-            ))
-        })?;
         let Some(payload) = record.payload else {
             continue;
         };
 
         match record.item_type.as_str() {
             "session_meta" if state.thread_id.is_none() => {
-                let metadata =
-                    serde_json::from_value::<SessionMetadata>(payload).map_err(|err| {
-                        io::Error::other(format!(
-                            "failed to parse session metadata in {}: {err}",
-                            path.display()
-                        ))
-                    })?;
-                state.thread_id = Some(metadata.id);
-                state.cwd.get_or_insert(metadata.cwd);
+                if let Ok(metadata) = serde_json::from_value::<SessionMetadata>(payload) {
+                    state.thread_id = Some(metadata.id);
+                    state.cwd.get_or_insert(metadata.cwd);
+                }
             }
             "turn_context" => {
                 if let Ok(turn_context) = serde_json::from_value::<TurnContextResumeState>(payload)
@@ -291,6 +283,32 @@ mod tests {
         assert_eq!(state.thread_id, Some(thread_id));
         assert_eq!(state.cwd, Some(cwd));
         assert_eq!(state.model, None);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn rollout_resume_state_skips_malformed_lines() -> std::io::Result<()> {
+        let temp_dir = TempDir::new()?;
+        let thread_id = ThreadId::new();
+        let cwd = temp_dir.path().join("session");
+        let rollout_path = temp_dir.path().join("rollout.jsonl");
+        let valid_line = serde_json::to_string(&rollout_line(
+            "t0",
+            "session_meta",
+            serde_json::json!({
+                "id": thread_id,
+                "cwd": cwd.clone(),
+                "originator": "test",
+                "cli_version": "test",
+            }),
+        ))
+        .expect("serialize rollout line");
+        std::fs::write(&rollout_path, format!("{valid_line}\n{{"))?;
+
+        let state = read_rollout_resume_state(&rollout_path).await?;
+
+        assert_eq!(state.thread_id, Some(thread_id));
+        assert_eq!(state.cwd, Some(cwd));
         Ok(())
     }
 }
