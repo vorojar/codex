@@ -878,9 +878,10 @@ pub(crate) struct ChatWidget {
     agent_turn_running: bool,
     /// Tracks per-server MCP startup state while startup is in progress.
     ///
-    /// The map is `Some(_)` from the first `McpStartupUpdate` until `McpStartupComplete`, and the
-    /// bottom pane is treated as "running" while this is populated, even if no agent turn is
-    /// currently executing.
+    /// The map is `Some(_)` from the first startup status update until the
+    /// app-server-backed startup round settles, and the bottom pane is treated
+    /// as "running" while this is populated, even if no agent turn is currently
+    /// executing.
     mcp_startup_status: Option<HashMap<String, McpStartupStatus>>,
     /// Expected MCP servers for the current startup round, seeded from enabled local config.
     mcp_startup_expected_servers: Option<HashSet<String>>,
@@ -7129,8 +7130,6 @@ impl ChatWidget {
                     self.on_error(message);
                 }
             }
-            EventMsg::McpStartupUpdate(ev) => self.on_mcp_startup_update(ev),
-            EventMsg::McpStartupComplete(ev) => self.on_mcp_startup_complete(ev),
             EventMsg::TurnAborted(ev) => match ev.reason {
                 TurnAbortReason::Interrupted => {
                     let reason = if ev

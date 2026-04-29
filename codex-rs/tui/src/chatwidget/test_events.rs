@@ -49,7 +49,6 @@ use codex_protocol::request_user_input::RequestUserInputEvent;
 use codex_utils_absolute_path::AbsolutePathBuf;
 use serde::Deserialize;
 
-use super::mcp_startup::McpStartupStatus;
 use super::user_messages::UserMessageEvent;
 
 #[derive(Debug, Clone)]
@@ -126,8 +125,6 @@ pub(crate) enum EventMsg {
     AgentReasoningRawContentDelta(AgentReasoningRawContentDeltaEvent),
     SessionConfigured(SessionConfiguredEvent),
     ThreadNameUpdated(ThreadNameUpdatedEvent),
-    McpStartupUpdate(McpStartupUpdateEvent),
-    McpStartupComplete(McpStartupCompleteEvent),
     McpToolCallBegin(McpToolCallBeginEvent),
     McpToolCallEnd(McpToolCallEndEvent),
     WebSearchBegin(WebSearchBeginEvent),
@@ -277,25 +274,6 @@ pub(crate) struct McpListToolsResponseEvent {
     pub(crate) resources: HashMap<String, Vec<McpResource>>,
     pub(crate) resource_templates: HashMap<String, Vec<McpResourceTemplate>>,
     pub(crate) auth_statuses: HashMap<String, McpAuthStatus>,
-}
-
-#[derive(Debug, Clone)]
-pub(crate) struct McpStartupUpdateEvent {
-    pub(crate) server: String,
-    pub(crate) status: McpStartupStatus,
-}
-
-#[derive(Debug, Clone, Default)]
-pub(crate) struct McpStartupCompleteEvent {
-    pub(crate) ready: Vec<String>,
-    pub(crate) failed: Vec<McpStartupFailure>,
-    pub(crate) cancelled: Vec<String>,
-}
-
-#[derive(Debug, Clone)]
-pub(crate) struct McpStartupFailure {
-    pub(crate) server: String,
-    pub(crate) error: String,
 }
 
 #[derive(Debug, Clone)]

@@ -8,17 +8,10 @@ use std::collections::BTreeSet;
 
 use codex_app_server_protocol::McpServerStartupState;
 use codex_app_server_protocol::McpServerStatusUpdatedNotification;
-use serde::Deserialize;
-use serde::Serialize;
 
 use super::ChatWidget;
-#[cfg(test)]
-use super::test_events::McpStartupCompleteEvent;
-#[cfg(test)]
-use super::test_events::McpStartupUpdateEvent;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case", tag = "state")]
+#[derive(Debug, Clone)]
 pub(crate) enum McpStartupStatus {
     Starting,
     Ready,
@@ -179,11 +172,6 @@ impl ChatWidget {
         self.mcp_startup_expected_servers = Some(server_names.into_iter().collect());
     }
 
-    #[cfg(test)]
-    pub(super) fn on_mcp_startup_update(&mut self, ev: McpStartupUpdateEvent) {
-        self.update_mcp_startup_status(ev.server, ev.status, /*complete_when_settled*/ false);
-    }
-
     pub(super) fn finish_mcp_startup(&mut self, failed: Vec<String>, cancelled: Vec<String>) {
         if !cancelled.is_empty() {
             self.on_warning(format!(
@@ -244,12 +232,6 @@ impl ChatWidget {
         cancelled.sort();
         cancelled.dedup();
         self.finish_mcp_startup(failed, cancelled);
-    }
-
-    #[cfg(test)]
-    pub(super) fn on_mcp_startup_complete(&mut self, ev: McpStartupCompleteEvent) {
-        let failed = ev.failed.into_iter().map(|f| f.server).collect();
-        self.finish_mcp_startup(failed, ev.cancelled);
     }
 
     pub(super) fn on_mcp_server_status_updated(

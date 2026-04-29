@@ -4,7 +4,6 @@
 //! snapshot-based so that layout regressions and status/header changes show up as stable,
 //! reviewable diffs.
 
-pub(super) use super::mcp_startup::McpStartupStatus;
 pub(super) use super::*;
 pub(super) use crate::app_command::AppCommand as Op;
 pub(super) use crate::app_event::AppEvent;
@@ -28,8 +27,6 @@ pub(super) use crate::chatwidget::test_events::Event;
 pub(super) use crate::chatwidget::test_events::EventMsg;
 pub(super) use crate::chatwidget::test_events::ExitedReviewModeEvent;
 pub(super) use crate::chatwidget::test_events::ItemCompletedEvent;
-pub(super) use crate::chatwidget::test_events::McpStartupCompleteEvent;
-pub(super) use crate::chatwidget::test_events::McpStartupUpdateEvent;
 pub(super) use crate::chatwidget::test_events::ModelVerificationEvent;
 pub(super) use crate::chatwidget::test_events::SessionConfiguredEvent;
 pub(super) use crate::chatwidget::test_events::StreamErrorEvent;
