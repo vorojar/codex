@@ -399,6 +399,12 @@ fn start_uninitialized(args: InProcessStartArgs) -> InProcessClientHandle {
         });
 
         let processor_outgoing = Arc::clone(&outgoing_message_sender);
+        let state_db = codex_state::StateRuntime::init(
+            args.config.sqlite_home.clone(),
+            args.config.model_provider_id.clone(),
+        )
+        .await
+        .ok();
         let config_manager = ConfigManager::new(
             args.config.codex_home.to_path_buf(),
             args.cli_overrides,
@@ -418,6 +424,7 @@ fn start_uninitialized(args: InProcessStartArgs) -> InProcessClientHandle {
                 environment_manager: args.environment_manager,
                 feedback: args.feedback,
                 log_db: args.log_db,
+                state_db,
                 config_warnings: args.config_warnings,
                 session_source: args.session_source,
                 auth_manager,

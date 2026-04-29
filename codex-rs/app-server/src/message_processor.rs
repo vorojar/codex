@@ -11,6 +11,7 @@ use crate::config_api::ConfigApi;
 use crate::config_manager::ConfigManager;
 use crate::connection_rpc_gate::ConnectionRpcGate;
 use crate::device_key_api::DeviceKeyApi;
+use crate::error_code::internal_error;
 use crate::error_code::invalid_request;
 use crate::external_agent_config_api::ExternalAgentConfigApi;
 use crate::fs_api::FsApi;
@@ -25,6 +26,7 @@ use crate::request_serialization::RequestSerializationQueues;
 use crate::transport::AppServerTransport;
 use crate::transport::ConnectionOrigin;
 use crate::transport::RemoteControlHandle;
+use crate::transport::normalize_remote_control_url;
 use async_trait::async_trait;
 use axum::http::HeaderValue;
 use codex_analytics::AnalyticsEventsClient;
@@ -58,6 +60,8 @@ use codex_app_server_protocol::JSONRPCNotification;
 use codex_app_server_protocol::JSONRPCRequest;
 use codex_app_server_protocol::JSONRPCResponse;
 use codex_app_server_protocol::ModelProviderCapabilitiesReadResponse;
+use codex_app_server_protocol::RemoteControlEnrollment;
+use codex_app_server_protocol::RemoteControlEnrollmentReadResponse;
 use codex_app_server_protocol::ServerNotification;
 use codex_app_server_protocol::ServerRequestPayload;
 use codex_app_server_protocol::experimental_required_message;
@@ -83,6 +87,7 @@ use codex_models_manager::collaboration_mode_presets::CollaborationModesConfig;
 use codex_protocol::ThreadId;
 use codex_protocol::protocol::SessionSource;
 use codex_protocol::protocol::W3cTraceContext;
+use codex_state::StateRuntime;
 use codex_state::log_db::LogDbLayer;
 use futures::FutureExt;
 use tokio::sync::broadcast;
@@ -169,6 +174,7 @@ pub(crate) struct MessageProcessor {
     external_agent_config_api: ExternalAgentConfigApi,
     fs_api: FsApi,
     auth_manager: Arc<AuthManager>,
+    state_db: Option<Arc<StateRuntime>>,
     analytics_events_client: AnalyticsEventsClient,
     fs_watch_manager: FsWatchManager,
     config: Arc<Config>,
@@ -255,6 +261,7 @@ pub(crate) struct MessageProcessorArgs {
     pub(crate) environment_manager: Arc<EnvironmentManager>,
     pub(crate) feedback: CodexFeedback,
     pub(crate) log_db: Option<LogDbLayer>,
+    pub(crate) state_db: Option<Arc<StateRuntime>>,
     pub(crate) config_warnings: Vec<ConfigWarningNotification>,
     pub(crate) session_source: SessionSource,
     pub(crate) auth_manager: Arc<AuthManager>,
@@ -276,6 +283,7 @@ impl MessageProcessor {
             environment_manager,
             feedback,
             log_db,
+            state_db,
             config_warnings,
             session_source,
             auth_manager,
@@ -351,6 +359,7 @@ impl MessageProcessor {
             external_agent_config_api,
             fs_api,
             auth_manager,
+            state_db,
             analytics_events_client,
             fs_watch_manager,
             config,
@@ -946,6 +955,17 @@ impl MessageProcessor {
                 self.handle_model_provider_capabilities_read(request_id_for_connection(request_id))
                     .await;
             }
+            ClientRequest::RemoteControlEnrollmentRead {
+                request_id,
+                params: _,
+            } => {
+                let result = self
+                    .remote_control_enrollment_read(app_server_client_name.as_deref())
+                    .await;
+                self.outgoing
+                    .send_result(request_id_for_connection(request_id), result)
+                    .await;
+            }
             other => {
                 // Box the delegated future so this wrapper's async state machine does not
                 // inline the full `CodexMessageProcessor::process_request` future, which
@@ -981,6 +1001,41 @@ impl MessageProcessor {
         }
         .await;
         self.outgoing.send_result(request_id, result).await;
+    }
+
+    async fn remote_control_enrollment_read(
+        &self,
+        app_server_client_name: Option<&str>,
+    ) -> Result<RemoteControlEnrollmentReadResponse, JSONRPCErrorError> {
+        let Some(state_db) = self.state_db.as_deref() else {
+            return Ok(RemoteControlEnrollmentReadResponse { enrollment: None });
+        };
+        let Some(auth) = self.auth_manager.auth().await else {
+            return Ok(RemoteControlEnrollmentReadResponse { enrollment: None });
+        };
+        let Some(account_id) = auth.get_account_id() else {
+            return Ok(RemoteControlEnrollmentReadResponse { enrollment: None });
+        };
+        let remote_control_target = normalize_remote_control_url(&self.config.chatgpt_base_url)
+            .map_err(|err| {
+                internal_error(format!("failed to resolve remote control URL: {err}"))
+            })?;
+        let enrollment = state_db
+            .get_remote_control_enrollment(
+                &remote_control_target.websocket_url,
+                &account_id,
+                app_server_client_name,
+            )
+            .await
+            .map_err(|err| {
+                internal_error(format!("failed to read remote control enrollment: {err}"))
+            })?
+            .map(|enrollment| RemoteControlEnrollment {
+                server_id: enrollment.server_id,
+                environment_id: enrollment.environment_id,
+            });
+
+        Ok(RemoteControlEnrollmentReadResponse { enrollment })
     }
 
     async fn handle_config_value_write(

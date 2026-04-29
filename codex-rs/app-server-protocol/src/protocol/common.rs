@@ -751,6 +751,11 @@ client_request_definitions! {
         serialization: None,
         response: v2::ModelProviderCapabilitiesReadResponse,
     },
+    RemoteControlEnrollmentRead => "remoteControl/enrollment/read" {
+        params: v2::RemoteControlEnrollmentReadParams,
+        serialization: None,
+        response: v2::RemoteControlEnrollmentReadResponse,
+    },
     ExperimentalFeatureList => "experimentalFeature/list" {
         params: v2::ExperimentalFeatureListParams,
         serialization: global("config"),
@@ -2380,6 +2385,23 @@ mod tests {
         assert_eq!(
             json!({
                 "method": "modelProvider/capabilities/read",
+                "id": 7,
+                "params": {}
+            }),
+            serde_json::to_value(&request)?,
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn serialize_remote_control_enrollment_read() -> Result<()> {
+        let request = ClientRequest::RemoteControlEnrollmentRead {
+            request_id: RequestId::Integer(7),
+            params: v2::RemoteControlEnrollmentReadParams {},
+        };
+        assert_eq!(
+            json!({
+                "method": "remoteControl/enrollment/read",
                 "id": 7,
                 "params": {}
             }),

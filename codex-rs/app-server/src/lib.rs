@@ -749,6 +749,7 @@ pub async fn run_main_with_transport_options(
             environment_manager,
             feedback: feedback.clone(),
             log_db,
+            state_db,
             config_warnings,
             session_source,
             auth_manager,

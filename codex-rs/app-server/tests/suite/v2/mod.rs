@@ -35,6 +35,7 @@ mod plugin_read;
 mod plugin_uninstall;
 mod rate_limits;
 mod realtime_conversation;
+mod remote_control_enrollment_read;
 #[cfg(debug_assertions)]
 mod remote_thread_store;
 mod request_permissions;

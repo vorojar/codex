@@ -10,7 +10,7 @@ use crate::transport::remote_control::websocket::RemoteControlWebsocket;
 pub use self::protocol::ClientId;
 use self::protocol::ServerEvent;
 use self::protocol::StreamId;
-use self::protocol::normalize_remote_control_url;
+pub(crate) use self::protocol::normalize_remote_control_url;
 use super::CHANNEL_CAPACITY;
 use super::TransportEvent;
 use super::next_connection_id;

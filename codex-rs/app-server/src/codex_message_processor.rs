@@ -1310,6 +1310,11 @@ impl CodexMessageProcessor {
                     "ModelProviderCapabilitiesRead request reached CodexMessageProcessor unexpectedly"
                 );
             }
+            ClientRequest::RemoteControlEnrollmentRead { .. } => {
+                warn!(
+                    "RemoteControlEnrollmentRead request reached CodexMessageProcessor unexpectedly"
+                );
+            }
             ClientRequest::ExternalAgentConfigDetect { .. }
             | ClientRequest::ExternalAgentConfigImport { .. } => {
                 warn!("ExternalAgentConfig request reached CodexMessageProcessor unexpectedly");

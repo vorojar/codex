@@ -8,9 +8,9 @@ use url::Host;
 use url::Url;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(super) struct RemoteControlTarget {
-    pub(super) websocket_url: String,
-    pub(super) enroll_url: String,
+pub(crate) struct RemoteControlTarget {
+    pub(crate) websocket_url: String,
+    pub(crate) enroll_url: String,
 }
 
 #[derive(Debug, Serialize)]
@@ -124,7 +124,7 @@ fn is_localhost(host: &Option<Host<&str>>) -> bool {
     }
 }
 
-pub(super) fn normalize_remote_control_url(
+pub(crate) fn normalize_remote_control_url(
     remote_control_url: &str,
 ) -> io::Result<RemoteControlTarget> {
     let map_url_parse_error = |err: url::ParseError| -> io::Error {
