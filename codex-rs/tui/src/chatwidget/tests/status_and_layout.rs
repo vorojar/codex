@@ -929,6 +929,40 @@ async fn streaming_final_answer_keeps_task_running_state() {
 }
 
 #[tokio::test]
+async fn streaming_markdown_tail_updates_in_place_until_next_block_stabilizes_it() {
+    let (mut chat, mut rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
+
+    chat.on_task_started();
+    chat.on_agent_message_delta("First paragraph\n".to_string());
+    assert_eq!(drain_insert_history(&mut rx).len(), 0);
+    assert_eq!(active_blob(&chat), "• First paragraph\n");
+
+    chat.on_agent_message_delta("\nSecond paragraph\n".to_string());
+    chat.on_commit_tick();
+    let inserted = drain_insert_history(&mut rx);
+    assert_eq!(inserted.len(), 1);
+    assert_eq!(lines_to_single_string(&inserted[0]), "• First paragraph\n");
+    assert_eq!(active_blob(&chat), "  \n  Second paragraph\n");
+}
+
+#[tokio::test]
+async fn streaming_table_tail_renders_from_complete_lines_only() {
+    let (mut chat, mut rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
+
+    chat.on_task_started();
+    chat.on_agent_message_delta("| Name | Value |\n".to_string());
+    assert_eq!(drain_insert_history(&mut rx).len(), 0);
+    assert_eq!(active_blob(&chat), "• | Name | Value |\n");
+
+    chat.on_agent_message_delta("| --- | --- |\n".to_string());
+    assert_eq!(drain_insert_history(&mut rx).len(), 0);
+    assert_chatwidget_snapshot!("streaming_table_tail_active", active_blob(&chat));
+
+    chat.on_agent_message_delta("| A | 1 |".to_string());
+    assert_chatwidget_snapshot!("streaming_table_tail_active", active_blob(&chat));
+}
+
+#[tokio::test]
 async fn idle_commit_ticks_do_not_restore_status_without_commentary_completion() {
     let (mut chat, mut rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
 

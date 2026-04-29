@@ -57,6 +57,59 @@ fn paragraph_multiple() {
 }
 
 #[test]
+fn table_renders_as_box() {
+    let text = render_markdown_text("| Name | Value |\n| --- | --- |\n| A | 1 |\n");
+
+    assert_eq!(
+        plain_lines(&text),
+        vec![
+            "┌──────┬───────┐",
+            "│ Name │ Value │",
+            "├──────┼───────┤",
+            "│ A    │ 1     │",
+            "└──────┴───────┘",
+        ],
+    );
+}
+
+#[test]
+fn table_respects_column_alignment() {
+    let text = render_markdown_text("| Left | Center | Right |\n| :--- | :---: | ---: |\n| a | b | c |\n");
+
+    assert_eq!(
+        plain_lines(&text),
+        vec![
+            "┌──────┬────────┬───────┐",
+            "│ Left │ Center │ Right │",
+            "├──────┼────────┼───────┤",
+            "│ a    │   b    │     c │",
+            "└──────┴────────┴───────┘",
+        ],
+    );
+}
+
+#[test]
+fn narrow_table_stays_boxed_even_when_it_overflows() {
+    let text = render_markdown_text_with_width_and_cwd(
+        "| Name | Description |\n| --- | --- |\n| Alpha | a value that wraps |\n",
+        Some(20),
+        /*cwd*/ None,
+    );
+
+    assert_eq!(
+        plain_lines(&text),
+        vec![
+            "┌───────┬─────────────┐",
+            "│ Name  │ Description │",
+            "├───────┼─────────────┤",
+            "│ Alpha │ a value     │",
+            "│       │ that wraps  │",
+            "└───────┴─────────────┘",
+        ],
+    );
+}
+
+#[test]
 fn headings() {
     let md = "# Heading 1\n## Heading 2\n### Heading 3\n#### Heading 4\n##### Heading 5\n###### Heading 6\n";
     let text = render_markdown_text(md);
@@ -1203,6 +1256,7 @@ Table below (alignment test):
 | Left | Center | Right |
 |:-----|:------:|------:|
 | a    |   b    |     c |
+
 Inline HTML: <sup>sup</sup> and <sub>sub</sub>.
 HTML block:
 <div style="border:1px solid #ccc;padding:2px">inline block</div>
