@@ -15,6 +15,7 @@ use codex_protocol::config_types::WindowsSandboxLevel;
 use codex_protocol::error::CodexErr;
 use codex_protocol::error::Result as CodexResult;
 use codex_protocol::mcp::CallToolResult;
+use codex_protocol::models::ActivePermissionProfile;
 use codex_protocol::models::ContentItem;
 use codex_protocol::models::PermissionProfile;
 use codex_protocol::models::ResponseInputItem;
@@ -48,6 +49,7 @@ pub struct ThreadConfigSnapshot {
     pub approval_policy: AskForApproval,
     pub approvals_reviewer: ApprovalsReviewer,
     pub permission_profile: PermissionProfile,
+    pub active_permission_profile: Option<ActivePermissionProfile>,
     pub cwd: AbsolutePathBuf,
     pub ephemeral: bool,
     pub reasoning_effort: Option<ReasoningEffort>,

@@ -82,7 +82,6 @@ use codex_protocol::protocol::ReviewRequest;
 use codex_protocol::protocol::ReviewTarget;
 use codex_protocol::protocol::RolloutItem;
 use codex_protocol::protocol::RolloutLine;
-use codex_protocol::protocol::SandboxPolicy;
 use codex_protocol::protocol::SessionConfiguredEvent;
 use codex_protocol::protocol::SessionSource;
 use codex_protocol::user_input::UserInput;
@@ -660,37 +659,24 @@ async fn run_exec_session(args: ExecRunArgs) -> anyhow::Result<()> {
 
     // Handle resume subcommand through existing `thread/list` + `thread/resume`
     // APIs so exec no longer reaches into rollout storage directly.
-    let (primary_thread_id, fallback_session_configured) =
-        if let Some(ExecCommand::Resume(args)) = command.as_ref() {
-            if let Some(thread_id) = resolve_resume_thread_id(&client, &config, args).await? {
-                let response: ThreadResumeResponse = send_request_with_response(
-                    &client,
-                    ClientRequest::ThreadResume {
-                        request_id: request_ids.next(),
-                        params: thread_resume_params_from_config(&config, thread_id),
-                    },
-                    "thread/resume",
-                )
-                .await
-                .map_err(anyhow::Error::msg)?;
-                let session_configured = session_configured_from_thread_resume_response(&response)
+    let (primary_thread_id, fallback_session_configured) = if let Some(ExecCommand::Resume(args)) =
+        command.as_ref()
+    {
+        if let Some(thread_id) = resolve_resume_thread_id(&client, &config, args).await? {
+            let response: ThreadResumeResponse = send_request_with_response(
+                &client,
+                ClientRequest::ThreadResume {
+                    request_id: request_ids.next(),
+                    params: thread_resume_params_from_config(&config, thread_id),
+                },
+                "thread/resume",
+            )
+            .await
+            .map_err(anyhow::Error::msg)?;
+            let session_configured =
+                session_configured_from_thread_resume_response(&response, &config)
                     .map_err(anyhow::Error::msg)?;
-                (session_configured.session_id, session_configured)
-            } else {
-                let response: ThreadStartResponse = send_request_with_response(
-                    &client,
-                    ClientRequest::ThreadStart {
-                        request_id: request_ids.next(),
-                        params: thread_start_params_from_config(&config),
-                    },
-                    "thread/start",
-                )
-                .await
-                .map_err(anyhow::Error::msg)?;
-                let session_configured = session_configured_from_thread_start_response(&response)
-                    .map_err(anyhow::Error::msg)?;
-                (session_configured.session_id, session_configured)
-            }
+            (session_configured.session_id, session_configured)
         } else {
             let response: ThreadStartResponse = send_request_with_response(
                 &client,
@@ -702,10 +688,26 @@ async fn run_exec_session(args: ExecRunArgs) -> anyhow::Result<()> {
             )
             .await
             .map_err(anyhow::Error::msg)?;
-            let session_configured = session_configured_from_thread_start_response(&response)
-                .map_err(anyhow::Error::msg)?;
+            let session_configured =
+                session_configured_from_thread_start_response(&response, &config)
+                    .map_err(anyhow::Error::msg)?;
             (session_configured.session_id, session_configured)
-        };
+        }
+    } else {
+        let response: ThreadStartResponse = send_request_with_response(
+            &client,
+            ClientRequest::ThreadStart {
+                request_id: request_ids.next(),
+                params: thread_start_params_from_config(&config),
+            },
+            "thread/start",
+        )
+        .await
+        .map_err(anyhow::Error::msg)?;
+        let session_configured = session_configured_from_thread_start_response(&response, &config)
+            .map_err(anyhow::Error::msg)?;
+        (session_configured.session_id, session_configured)
+    };
 
     let primary_thread_id_for_span = primary_thread_id.to_string();
     // Use the start/resume response as the authoritative bootstrap payload.
@@ -972,6 +974,7 @@ where
 
 fn session_configured_from_thread_start_response(
     response: &ThreadStartResponse,
+    config: &Config,
 ) -> Result<SessionConfiguredEvent, String> {
     session_configured_from_thread_response(
         &response.thread.id,
@@ -982,8 +985,8 @@ fn session_configured_from_thread_start_response(
         response.service_tier,
         response.approval_policy.to_core(),
         response.approvals_reviewer.to_core(),
-        response.sandbox.to_core(),
-        response.permission_profile.clone().map(Into::into),
+        config.permissions.permission_profile(),
+        response.active_permission_profile.clone().map(Into::into),
         response.cwd.clone(),
         response.reasoning_effort,
     )
@@ -991,6 +994,7 @@ fn session_configured_from_thread_start_response(
 
 fn session_configured_from_thread_resume_response(
     response: &ThreadResumeResponse,
+    config: &Config,
 ) -> Result<SessionConfiguredEvent, String> {
     session_configured_from_thread_response(
         &response.thread.id,
@@ -1001,8 +1005,8 @@ fn session_configured_from_thread_resume_response(
         response.service_tier,
         response.approval_policy.to_core(),
         response.approvals_reviewer.to_core(),
-        response.sandbox.to_core(),
-        response.permission_profile.clone().map(Into::into),
+        config.permissions.permission_profile(),
+        response.active_permission_profile.clone().map(Into::into),
         response.cwd.clone(),
         response.reasoning_effort,
     )
@@ -1030,8 +1034,8 @@ fn session_configured_from_thread_response(
     service_tier: Option<codex_protocol::config_types::ServiceTier>,
     approval_policy: AskForApproval,
     approvals_reviewer: codex_protocol::config_types::ApprovalsReviewer,
-    sandbox_policy: SandboxPolicy,
-    permission_profile: Option<PermissionProfile>,
+    permission_profile: PermissionProfile,
+    active_permission_profile: Option<codex_protocol::models::ActivePermissionProfile>,
     cwd: AbsolutePathBuf,
     reasoning_effort: Option<codex_protocol::openai_models::ReasoningEffort>,
 ) -> Result<SessionConfiguredEvent, String> {
@@ -1047,9 +1051,8 @@ fn session_configured_from_thread_response(
         service_tier,
         approval_policy,
         approvals_reviewer,
-        permission_profile: permission_profile.unwrap_or_else(|| {
-            PermissionProfile::from_legacy_sandbox_policy_for_cwd(&sandbox_policy, cwd.as_path())
-        }),
+        permission_profile,
+        active_permission_profile,
         cwd,
         reasoning_effort,
         history_log_id: 0,
