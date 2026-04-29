@@ -28,6 +28,16 @@ fn plain_lines(text: &Text<'_>) -> Vec<String> {
         .collect()
 }
 
+fn assert_table_lines_leave_wrap_safety_column(lines: &[String], width: usize) {
+    assert!(
+        lines
+            .iter()
+            .filter(|line| line.contains('│') || line.contains('─'))
+            .all(|line| line.width() < width),
+        "table lines should not consume the final terminal column at width {width}: {lines:?}"
+    );
+}
+
 fn table_fixture() -> &'static str {
     "| Area | Result |\n| --- | --- |\n| Streaming resize | This cell contains enough prose to wrap differently across widths. |\n| Scrollback preservation | SENTINEL_TABLE_VALUE_WITH_LONG_UNBREAKABLE_TOKEN |\n"
 }
@@ -84,8 +94,8 @@ fn table_resize_lifecycle_renderer_uses_thin_borders_and_fits_widths() {
             lines
                 .iter()
                 .filter(|line| line.contains('│') || line.contains('─'))
-                .all(|line| line.width() <= width),
-            "table lines should fit width {width}: {lines:?}"
+                .all(|line| line.width() < width),
+            "table lines should fit inside width {width} without touching the final column: {lines:?}"
         );
         assert!(
             lines.iter().all(|line| !line.starts_with("Row ")),
@@ -130,6 +140,7 @@ fn table_resize_lifecycle_renderer_uses_vertical_fallback_only_at_tiny_width() {
         lines.iter().all(|line| !line.starts_with("Row ")),
         "vertical fallback should not render row headers: {lines:?}"
     );
+    assert_table_lines_leave_wrap_safety_column(&lines, /*width*/ 18);
 }
 
 #[test]
@@ -149,6 +160,7 @@ fn table_readability_fallback_keeps_dense_large_table_boxed_when_wide() {
         lines.iter().all(|line| !line.starts_with("Row 31")),
         "wide large table should not use vertical fallback: {lines:?}"
     );
+    assert_table_lines_leave_wrap_safety_column(&lines, /*width*/ 140);
 }
 
 #[test]
@@ -175,6 +187,7 @@ fn table_readability_fallback_uses_vertical_for_dense_large_table_when_narrow() 
         lines.iter().all(|line| !line.starts_with("Row ")),
         "vertical fallback should not render row headers: {lines:?}"
     );
+    assert_table_lines_leave_wrap_safety_column(&lines, /*width*/ 64);
 }
 
 #[test]
@@ -183,7 +196,7 @@ fn table_readability_fallback_wraps_vertical_values_under_value_column() {
     let rendered = render_markdown_text_with_width_and_cwd(markdown, Some(30), /*cwd*/ None);
     let lines = plain_lines(&rendered);
 
-    assert_eq!(lines[0], "┌──────────────┬─────────────┐");
+    assert_eq!(lines[0], "┌──────────────┬────────────┐");
     assert!(
         lines
             .iter()
@@ -201,6 +214,7 @@ fn table_readability_fallback_wraps_vertical_values_under_value_column() {
         lines.iter().all(|line| !line.starts_with("Row ")),
         "vertical fallback should not render row headers: {lines:?}"
     );
+    assert_table_lines_leave_wrap_safety_column(&lines, /*width*/ 30);
 }
 
 #[test]
@@ -213,6 +227,7 @@ fn table_readability_fallback_keeps_small_status_table_boxed_when_narrow() {
         lines.iter().any(|line| line.contains('┌')),
         "small status table should remain boxed at narrow widths: {lines:?}"
     );
+    assert_table_lines_leave_wrap_safety_column(&lines, /*width*/ 64);
 }
 
 #[test]
@@ -225,6 +240,7 @@ fn table_readability_fallback_keeps_tiny_table_boxed() {
         lines.iter().any(|line| line.contains('┌')),
         "tiny table should remain boxed when there is enough width: {lines:?}"
     );
+    assert_table_lines_leave_wrap_safety_column(&lines, /*width*/ 40);
 }
 
 #[test]
@@ -243,6 +259,7 @@ fn table_readability_fallback_uses_vertical_for_emoji_near_fit() {
         lines.iter().all(|line| !line.starts_with("Row ")),
         "emoji-heavy fallback should not render row headers: {lines:?}"
     );
+    assert_table_lines_leave_wrap_safety_column(&lines, /*width*/ 41);
 }
 
 #[test]

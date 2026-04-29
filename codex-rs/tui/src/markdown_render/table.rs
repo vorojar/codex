@@ -94,7 +94,7 @@ pub(super) fn render_table_lines(rows: &[Vec<String>], width: Option<usize>) -> 
         return Vec::new();
     }
 
-    let available_width = width.unwrap_or(usize::MAX / 4).max(1);
+    let available_width = width.unwrap_or(usize::MAX / 4).saturating_sub(1).max(1);
     let normalized_rows = normalize_table_rows(rows, column_count);
     let widths = desired_column_widths(&normalized_rows, column_count);
 
