@@ -2,6 +2,7 @@ use codex_app_server_protocol::HookErrorInfo;
 use codex_app_server_protocol::HookEventName;
 use codex_app_server_protocol::HookMetadata;
 use codex_app_server_protocol::HookSource;
+use codex_plugin::PluginId;
 use crossterm::event::KeyCode;
 use crossterm::event::KeyEvent;
 use crossterm::event::KeyModifiers;
@@ -320,9 +321,24 @@ impl HooksBrowserView {
                 "Matcher", matcher, width, /*max_lines*/ None,
             ));
         }
+        // Plugin hooks show the marketplace here; other hooks show the config path.
+        let source_value = match hook.source {
+            HookSource::Plugin => hook
+                .plugin_id
+                .as_deref()
+                .and_then(|plugin_id| {
+                    PluginId::parse(plugin_id)
+                        .ok()
+                        .map(|plugin_id| plugin_id.marketplace_name)
+                })
+                .unwrap_or_else(|| {
+                    format_directory_display(&hook.source_path, /*max_width*/ None)
+                }),
+            _ => format_directory_display(&hook.source_path, /*max_width*/ None),
+        };
         lines.extend(detail_wrapped_lines(
             "Source",
-            &format_directory_display(&hook.source_path, /*max_width*/ None),
+            &source_value,
             width,
             /*max_lines*/ None,
         ));
@@ -558,13 +574,21 @@ fn summary_source(hook: &HookMetadata, idx: usize) -> String {
         .filter(|message| !message.trim().is_empty())
         .map(str::to_string)
         .unwrap_or_else(|| format!("Hook {}", idx + 1));
-    match hook.source {
-        HookSource::Plugin => format!(
-            "{hook_label} - {}",
-            hook.plugin_id.as_deref().unwrap_or("Plugin")
-        ),
-        _ => format!("{hook_label} - {}", config_source_label(hook.source)),
-    }
+    let source_label = match hook.source {
+        // Parse the plugin name from the `<plugin>@<marketplace>` id for display.
+        HookSource::Plugin => hook
+            .plugin_id
+            .as_deref()
+            .and_then(|plugin_id| {
+                PluginId::parse(plugin_id)
+                    .ok()
+                    .map(|plugin_id| plugin_id.plugin_name)
+            })
+            .or_else(|| hook.plugin_id.clone())
+            .unwrap_or_else(|| "Plugin".to_string()),
+        _ => config_source_label(hook.source).to_string(),
+    };
+    format!("{hook_label} - {source_label}")
 }
 
 fn config_source_label(source: HookSource) -> &'static str {
