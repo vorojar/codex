@@ -101,6 +101,26 @@ impl TurnContext {
         self.primary_environment().is_some()
     }
 
+    pub(crate) fn has_multiple_selected_environments(&self) -> bool {
+        self.environments.len() > 1
+    }
+
+    pub(crate) fn environment_by_id(&self, environment_id: &str) -> Option<&TurnEnvironment> {
+        self.environments
+            .iter()
+            .find(|environment| environment.environment_id == environment_id)
+    }
+
+    pub(crate) fn selected_environment(
+        &self,
+        environment_id: Option<&str>,
+    ) -> Option<&TurnEnvironment> {
+        match environment_id {
+            Some(environment_id) => self.environment_by_id(environment_id),
+            None => self.primary_environment(),
+        }
+    }
+
     pub(crate) fn permission_profile(&self) -> PermissionProfile {
         self.permission_profile.clone()
     }
@@ -657,6 +677,8 @@ impl Session {
         &self,
         environments: &[TurnEnvironmentSelection],
     ) -> CodexResult<Vec<TurnEnvironment>> {
+        validate_environment_selections(self.services.environment_manager.as_ref(), environments)?;
+
         let mut turn_environments = Vec::with_capacity(environments.len());
         for selected_environment in environments {
             let environment_id = selected_environment.environment_id.clone();

@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::sync::Arc;
 
 use codex_exec_server::Environment;
@@ -25,7 +26,15 @@ pub(crate) fn validate_environment_selections(
     environment_manager: &EnvironmentManager,
     environments: &[TurnEnvironmentSelection],
 ) -> CodexResult<()> {
+    let mut seen_environment_ids = HashSet::with_capacity(environments.len());
     for selected_environment in environments {
+        if !seen_environment_ids.insert(selected_environment.environment_id.as_str()) {
+            return Err(CodexErr::InvalidRequest(format!(
+                "duplicate turn environment id `{}`",
+                selected_environment.environment_id
+            )));
+        }
+
         if environment_manager
             .get_environment(&selected_environment.environment_id)
             .is_none()
@@ -103,6 +112,32 @@ mod tests {
         assert_eq!(
             default_thread_environment_selections(&manager, &cwd),
             Vec::<TurnEnvironmentSelection>::new()
+        );
+    }
+
+    #[tokio::test]
+    async fn validate_environment_selections_rejects_duplicate_environment_ids() {
+        let cwd = AbsolutePathBuf::current_dir().expect("cwd");
+        let manager = EnvironmentManager::create_for_tests(None, test_runtime_paths()).await;
+
+        let err = validate_environment_selections(
+            &manager,
+            &[
+                TurnEnvironmentSelection {
+                    environment_id: codex_exec_server::LOCAL_ENVIRONMENT_ID.to_string(),
+                    cwd: cwd.clone(),
+                },
+                TurnEnvironmentSelection {
+                    environment_id: codex_exec_server::LOCAL_ENVIRONMENT_ID.to_string(),
+                    cwd,
+                },
+            ],
+        )
+        .expect_err("duplicate env");
+
+        assert_eq!(
+            err.to_string(),
+            "duplicate turn environment id `local`".to_string()
         );
     }
 }

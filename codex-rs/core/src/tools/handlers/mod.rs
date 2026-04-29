@@ -1,6 +1,7 @@
 pub(crate) mod agent_jobs;
 pub(crate) mod apply_patch;
 mod dynamic;
+mod env_path;
 mod goal;
 mod list_dir;
 mod mcp;
