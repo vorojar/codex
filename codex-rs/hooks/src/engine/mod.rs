@@ -4,7 +4,10 @@ pub(crate) mod dispatcher;
 pub(crate) mod output_parser;
 pub(crate) mod schema_loader;
 
+use std::collections::HashMap;
+
 use codex_config::ConfigLayerStack;
+use codex_plugin::PluginHookSource;
 use codex_protocol::protocol::HookRunSummary;
 use codex_protocol::protocol::HookSource;
 use codex_utils_absolute_path::AbsolutePathBuf;
@@ -43,6 +46,7 @@ pub(crate) struct ConfiguredHandler {
     pub source_path: AbsolutePathBuf,
     pub source: HookSource,
     pub display_order: i64,
+    pub env: HashMap<String, String>,
 }
 
 impl ConfiguredHandler {
@@ -80,6 +84,8 @@ impl ClaudeHooksEngine {
     pub(crate) fn new(
         enabled: bool,
         config_layer_stack: Option<&ConfigLayerStack>,
+        plugin_hook_sources: Vec<PluginHookSource>,
+        plugin_hook_load_warnings: Vec<String>,
         shell: CommandShell,
     ) -> Self {
         if !enabled {
@@ -91,7 +97,11 @@ impl ClaudeHooksEngine {
         }
 
         let _ = schema_loader::generated_hook_schemas();
-        let discovered = discovery::discover_handlers(config_layer_stack);
+        let discovered = discovery::discover_handlers(
+            config_layer_stack,
+            plugin_hook_sources,
+            plugin_hook_load_warnings,
+        );
         Self {
             handlers: discovered.handlers,
             warnings: discovered.warnings,

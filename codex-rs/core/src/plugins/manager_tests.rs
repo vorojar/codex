@@ -1,23 +1,26 @@
 use super::*;
 use crate::config::CONFIG_TOML_FILE;
 use crate::config::ConfigBuilder;
-use crate::config_loader::ConfigLayerEntry;
-use crate::config_loader::ConfigLayerStack;
-use crate::config_loader::ConfigRequirements;
-use crate::config_loader::ConfigRequirementsToml;
 use crate::plugins::LoadedPlugin;
 use crate::plugins::PluginLoadOutcome;
-use crate::plugins::marketplace_install_root;
+use crate::plugins::test_support::TEST_CURATED_PLUGIN_CACHE_VERSION;
 use crate::plugins::test_support::TEST_CURATED_PLUGIN_SHA;
 use crate::plugins::test_support::write_curated_plugin_sha_with as write_curated_plugin_sha;
 use crate::plugins::test_support::write_file;
 use crate::plugins::test_support::write_openai_curated_marketplace;
 use codex_app_server_protocol::ConfigLayerSource;
+use codex_config::ConfigLayerEntry;
+use codex_config::ConfigLayerStack;
+use codex_config::ConfigRequirements;
+use codex_config::ConfigRequirementsToml;
 use codex_config::McpServerConfig;
 use codex_config::types::McpServerTransportConfig;
+use codex_core_plugins::installed_marketplaces::marketplace_install_root;
+use codex_core_plugins::loader::load_plugins_from_layer_stack;
 use codex_core_plugins::loader::refresh_non_curated_plugin_cache;
 use codex_core_plugins::loader::refresh_non_curated_plugin_cache_force_reinstall;
 use codex_core_plugins::marketplace::MarketplacePluginInstallPolicy;
+use codex_core_plugins::startup_sync::curated_plugins_repo_path;
 use codex_login::CodexAuth;
 use codex_protocol::protocol::Product;
 use codex_utils_absolute_path::test_support::PathBufExt;
@@ -217,6 +220,8 @@ async fn load_plugins_loads_default_skills_and_mcp_servers() {
                 },
             )]),
             apps: vec![AppConnectorId("connector_example".to_string())],
+            hook_sources: Vec::new(),
+            hook_load_warnings: Vec::new(),
             error: None,
         }]
     );
@@ -240,6 +245,67 @@ async fn load_plugins_loads_default_skills_and_mcp_servers() {
         outcome.effective_apps(),
         vec![AppConnectorId("connector_example".to_string())]
     );
+}
+
+#[tokio::test]
+async fn remote_installed_cache_adds_plugin_skill_roots_without_marketplace_config() {
+    let codex_home = TempDir::new().unwrap();
+    let plugin_base = codex_home
+        .path()
+        .join("plugins/cache/chatgpt-global/linear");
+    write_plugin(&plugin_base, "local", "linear");
+    write_file(
+        &codex_home.path().join(CONFIG_TOML_FILE),
+        r#"[features]
+plugins = true
+remote_plugin = true
+"#,
+    );
+
+    let config = load_config(codex_home.path(), codex_home.path()).await;
+    let manager = PluginsManager::new(codex_home.path().to_path_buf());
+    manager.write_remote_installed_plugins_cache(vec![
+        codex_core_plugins::remote::RemoteInstalledPlugin {
+            marketplace_name: "chatgpt-global".to_string(),
+            id: "plugins~Plugin_linear".to_string(),
+            name: "linear".to_string(),
+            enabled: true,
+        },
+    ]);
+
+    let outcome = manager.plugins_for_config(&config).await;
+    assert_eq!(
+        outcome.effective_skill_roots(),
+        vec![AbsolutePathBuf::try_from(plugin_base.join("local/skills")).unwrap()]
+    );
+    assert_eq!(outcome.plugins().len(), 1);
+    assert_eq!(outcome.plugins()[0].config_name, "linear@chatgpt-global");
+}
+
+#[tokio::test]
+async fn remote_installed_cache_ignores_plugins_missing_local_cache() {
+    let codex_home = TempDir::new().unwrap();
+    write_file(
+        &codex_home.path().join(CONFIG_TOML_FILE),
+        r#"[features]
+plugins = true
+remote_plugin = true
+"#,
+    );
+
+    let config = load_config(codex_home.path(), codex_home.path()).await;
+    let manager = PluginsManager::new(codex_home.path().to_path_buf());
+    manager.write_remote_installed_plugins_cache(vec![
+        codex_core_plugins::remote::RemoteInstalledPlugin {
+            marketplace_name: "chatgpt-global".to_string(),
+            id: "plugins~Plugin_linear".to_string(),
+            name: "linear".to_string(),
+            enabled: true,
+        },
+    ]);
+
+    let outcome = manager.plugins_for_config(&config).await;
+    assert_eq!(outcome, PluginLoadOutcome::default());
 }
 
 #[tokio::test]
@@ -717,6 +783,8 @@ async fn load_plugins_preserves_disabled_plugins_without_effective_contributions
             has_enabled_skills: false,
             mcp_servers: HashMap::new(),
             apps: Vec::new(),
+            hook_sources: Vec::new(),
+            hook_load_warnings: Vec::new(),
             error: None,
         }]
     );
@@ -834,6 +902,8 @@ fn capability_index_filters_inactive_and_zero_capability_plugins() {
         has_enabled_skills: false,
         mcp_servers: HashMap::new(),
         apps: Vec::new(),
+        hook_sources: Vec::new(),
+        hook_load_warnings: Vec::new(),
         error: None,
     };
     let summary = |config_name: &str, display_name: &str| PluginCapabilitySummary {
@@ -1019,6 +1089,42 @@ async fn install_plugin_updates_config_with_relative_path_and_plugin_key() {
     let config = fs::read_to_string(tmp.path().join("config.toml")).unwrap();
     assert!(config.contains(r#"[plugins."sample-plugin@debug"]"#));
     assert!(config.contains("enabled = true"));
+}
+
+#[tokio::test]
+async fn install_openai_curated_plugin_uses_short_sha_cache_version() {
+    let tmp = tempfile::tempdir().unwrap();
+    let curated_root = curated_plugins_repo_path(tmp.path());
+    write_openai_curated_marketplace(&curated_root, &["slack"]);
+    write_curated_plugin_sha(tmp.path(), TEST_CURATED_PLUGIN_SHA);
+
+    let result = PluginsManager::new(tmp.path().to_path_buf())
+        .install_plugin(PluginInstallRequest {
+            plugin_name: "slack".to_string(),
+            marketplace_path: AbsolutePathBuf::try_from(
+                curated_root.join(".agents/plugins/marketplace.json"),
+            )
+            .unwrap(),
+        })
+        .await
+        .unwrap();
+
+    let installed_path = tmp.path().join(format!(
+        "plugins/cache/openai-curated/slack/{TEST_CURATED_PLUGIN_CACHE_VERSION}"
+    ));
+    assert_eq!(
+        result,
+        PluginInstallOutcome {
+            plugin_id: PluginId::new(
+                "slack".to_string(),
+                OPENAI_CURATED_MARKETPLACE_NAME.to_string()
+            )
+            .unwrap(),
+            plugin_version: TEST_CURATED_PLUGIN_CACHE_VERSION.to_string(),
+            installed_path: AbsolutePathBuf::try_from(installed_path).unwrap(),
+            auth_policy: MarketplacePluginAuthPolicy::OnInstall,
+        }
+    );
 }
 
 #[tokio::test]
@@ -2659,7 +2765,7 @@ plugins = true
     );
     assert_eq!(
         fs::read_to_string(tmp.path().join(format!(
-            "plugins/cache/openai-curated/gmail/{TEST_CURATED_PLUGIN_SHA}/marker.txt"
+            "plugins/cache/openai-curated/gmail/{TEST_CURATED_PLUGIN_CACHE_VERSION}/marker.txt"
         )))
         .unwrap(),
         "first"
@@ -2738,7 +2844,7 @@ plugins = true
 }
 
 #[test]
-fn refresh_curated_plugin_cache_replaces_existing_local_version_with_sha() {
+fn refresh_curated_plugin_cache_replaces_existing_local_version_with_short_sha_version() {
     let tmp = tempfile::tempdir().unwrap();
     let curated_root = curated_plugins_repo_path(tmp.path());
     write_openai_curated_marketplace(&curated_root, &["slack"]);
@@ -2767,14 +2873,14 @@ fn refresh_curated_plugin_cache_replaces_existing_local_version_with_sha() {
     assert!(
         tmp.path()
             .join(format!(
-                "plugins/cache/openai-curated/slack/{TEST_CURATED_PLUGIN_SHA}"
+                "plugins/cache/openai-curated/slack/{TEST_CURATED_PLUGIN_CACHE_VERSION}"
             ))
             .is_dir()
     );
 }
 
 #[test]
-fn refresh_curated_plugin_cache_reinstalls_missing_configured_plugin_with_current_sha() {
+fn refresh_curated_plugin_cache_reinstalls_missing_configured_plugin_with_current_short_version() {
     let tmp = tempfile::tempdir().unwrap();
     let curated_root = curated_plugins_repo_path(tmp.path());
     write_openai_curated_marketplace(&curated_root, &["slack"]);
@@ -2793,7 +2899,7 @@ fn refresh_curated_plugin_cache_reinstalls_missing_configured_plugin_with_curren
     assert!(
         tmp.path()
             .join(format!(
-                "plugins/cache/openai-curated/slack/{TEST_CURATED_PLUGIN_SHA}"
+                "plugins/cache/openai-curated/slack/{TEST_CURATED_PLUGIN_CACHE_VERSION}"
             ))
             .is_dir()
     );
@@ -2848,13 +2954,49 @@ fn refresh_curated_plugin_cache_returns_false_when_configured_plugins_are_curren
     .unwrap();
     write_plugin(
         &tmp.path().join("plugins/cache/openai-curated"),
-        &format!("slack/{TEST_CURATED_PLUGIN_SHA}"),
+        &format!("slack/{TEST_CURATED_PLUGIN_CACHE_VERSION}"),
         "slack",
     );
 
     assert!(
         !refresh_curated_plugin_cache(tmp.path(), TEST_CURATED_PLUGIN_SHA, &[plugin_id])
             .expect("cache refresh should be a no-op when configured plugins are current")
+    );
+}
+
+#[test]
+fn refresh_curated_plugin_cache_migrates_full_sha_cache_version_to_short_version() {
+    let tmp = tempfile::tempdir().unwrap();
+    let curated_root = curated_plugins_repo_path(tmp.path());
+    write_openai_curated_marketplace(&curated_root, &["slack"]);
+    let plugin_id = PluginId::new(
+        "slack".to_string(),
+        OPENAI_CURATED_MARKETPLACE_NAME.to_string(),
+    )
+    .unwrap();
+    write_plugin(
+        &tmp.path().join("plugins/cache/openai-curated"),
+        &format!("slack/{TEST_CURATED_PLUGIN_SHA}"),
+        "slack",
+    );
+
+    assert!(
+        refresh_curated_plugin_cache(tmp.path(), TEST_CURATED_PLUGIN_SHA, &[plugin_id])
+            .expect("cache refresh should migrate the full sha cache version")
+    );
+    assert!(
+        !tmp.path()
+            .join(format!(
+                "plugins/cache/openai-curated/slack/{TEST_CURATED_PLUGIN_SHA}"
+            ))
+            .exists()
+    );
+    assert!(
+        tmp.path()
+            .join(format!(
+                "plugins/cache/openai-curated/slack/{TEST_CURATED_PLUGIN_CACHE_VERSION}"
+            ))
+            .is_dir()
     );
 }
 
@@ -3220,6 +3362,7 @@ async fn load_plugins_ignores_project_config_files() {
 
     let outcome = load_plugins_from_layer_stack(
         &stack,
+        std::collections::HashMap::new(),
         &PluginStore::new(codex_home.path().to_path_buf()),
         Some(Product::Codex),
     )

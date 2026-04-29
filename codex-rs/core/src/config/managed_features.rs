@@ -27,6 +27,18 @@ pub struct ManagedFeatures {
     pinned_features: BTreeMap<Feature, bool>,
 }
 
+impl Default for ManagedFeatures {
+    fn default() -> Self {
+        Self {
+            value: ConstrainedWithSource::new(
+                Constrained::allow_any(Features::default()),
+                /*source*/ None,
+            ),
+            pinned_features: BTreeMap::new(),
+        }
+    }
+}
+
 impl ManagedFeatures {
     pub(crate) fn from_configured(
         configured_features: Features,
@@ -199,6 +211,11 @@ fn parse_feature_requirements(
 ) -> BTreeMap<Feature, bool> {
     let mut pinned_features = BTreeMap::new();
     for (key, enabled) in feature_requirements.entries {
+        if key == "auto_review" {
+            pinned_features.insert(Feature::GuardianApproval, enabled);
+            continue;
+        }
+
         if let Some(feature) = canonical_feature_for_key(&key) {
             pinned_features.insert(feature, enabled);
             continue;

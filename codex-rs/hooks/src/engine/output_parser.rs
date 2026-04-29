@@ -310,6 +310,11 @@ where
     serde_json::from_value(value).ok()
 }
 
+pub(crate) fn looks_like_json(stdout: &str) -> bool {
+    let trimmed = stdout.trim_start();
+    trimmed.starts_with('{') || trimmed.starts_with('[')
+}
+
 fn invalid_block_message(event_name: &str) -> String {
     format!("{event_name} hook returned decision:block without a non-empty reason")
 }
