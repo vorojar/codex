@@ -522,7 +522,7 @@ async fn lists_directory_entries() {
     assert_eq!(entries, expected);
 }
 
-#[cfg(unix)]
+#[cfg(target_os = "linux")]
 #[tokio::test]
 async fn recurses_into_non_utf8_local_directory_names() {
     use std::os::unix::ffi::OsStringExt;

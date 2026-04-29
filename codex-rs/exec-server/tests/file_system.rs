@@ -3,6 +3,7 @@
 mod common;
 
 use std::ffi::OsString;
+#[cfg(target_os = "linux")]
 use std::os::unix::ffi::OsStringExt;
 #[cfg(target_os = "linux")]
 use std::os::unix::fs::PermissionsExt;
@@ -409,8 +410,12 @@ async fn file_system_methods_cover_surface_area(use_remote: bool) -> Result<()> 
         source_dir.join("broken-link"),
     )?;
     symlink(source_dir.join("root.txt"), source_dir.join("root-link"))?;
-    let non_utf8_name = OsString::from_vec(b"non-utf8-\xFF.txt".to_vec());
-    std::fs::write(source_dir.join(&non_utf8_name), "non utf8 name")?;
+    #[cfg(target_os = "linux")]
+    let non_utf8_name = {
+        let name = OsString::from_vec(b"non-utf8-\xFF.txt".to_vec());
+        std::fs::write(source_dir.join(&name), "non utf8 name")?;
+        name
+    };
 
     let mut entries = file_system
         .read_directory(&absolute_path(source_dir), /*sandbox*/ None)
@@ -421,61 +426,62 @@ async fn file_system_methods_cover_surface_area(use_remote: bool) -> Result<()> 
         entry.metadata.created_at_ms = 0;
         entry.metadata.modified_at_ms = 0;
     }
-    assert_eq!(
-        entries,
-        vec![
-            ReadDirectoryEntry {
-                file_name: OsString::from("broken-link"),
-                metadata: FileMetadata {
-                    is_directory: false,
-                    is_file: false,
-                    is_symlink: true,
-                    created_at_ms: 0,
-                    modified_at_ms: 0,
-                },
+    let mut expected_entries = vec![
+        ReadDirectoryEntry {
+            file_name: OsString::from("broken-link"),
+            metadata: FileMetadata {
+                is_directory: false,
+                is_file: false,
+                is_symlink: true,
+                created_at_ms: 0,
+                modified_at_ms: 0,
             },
-            ReadDirectoryEntry {
-                file_name: OsString::from("nested"),
-                metadata: FileMetadata {
-                    is_directory: true,
-                    is_file: false,
-                    is_symlink: false,
-                    created_at_ms: 0,
-                    modified_at_ms: 0,
-                },
+        },
+        ReadDirectoryEntry {
+            file_name: OsString::from("nested"),
+            metadata: FileMetadata {
+                is_directory: true,
+                is_file: false,
+                is_symlink: false,
+                created_at_ms: 0,
+                modified_at_ms: 0,
             },
-            ReadDirectoryEntry {
-                file_name: non_utf8_name,
-                metadata: FileMetadata {
-                    is_directory: false,
-                    is_file: true,
-                    is_symlink: false,
-                    created_at_ms: 0,
-                    modified_at_ms: 0,
-                },
+        },
+    ];
+    #[cfg(target_os = "linux")]
+    expected_entries.push(ReadDirectoryEntry {
+        file_name: non_utf8_name,
+        metadata: FileMetadata {
+            is_directory: false,
+            is_file: true,
+            is_symlink: false,
+            created_at_ms: 0,
+            modified_at_ms: 0,
+        },
+    });
+    expected_entries.extend([
+        ReadDirectoryEntry {
+            file_name: OsString::from("root-link"),
+            metadata: FileMetadata {
+                is_directory: false,
+                is_file: true,
+                is_symlink: true,
+                created_at_ms: 0,
+                modified_at_ms: 0,
             },
-            ReadDirectoryEntry {
-                file_name: OsString::from("root-link"),
-                metadata: FileMetadata {
-                    is_directory: false,
-                    is_file: true,
-                    is_symlink: true,
-                    created_at_ms: 0,
-                    modified_at_ms: 0,
-                },
+        },
+        ReadDirectoryEntry {
+            file_name: OsString::from("root.txt"),
+            metadata: FileMetadata {
+                is_directory: false,
+                is_file: true,
+                is_symlink: false,
+                created_at_ms: 0,
+                modified_at_ms: 0,
             },
-            ReadDirectoryEntry {
-                file_name: OsString::from("root.txt"),
-                metadata: FileMetadata {
-                    is_directory: false,
-                    is_file: true,
-                    is_symlink: false,
-                    created_at_ms: 0,
-                    modified_at_ms: 0,
-                },
-            },
-        ]
-    );
+        },
+    ]);
+    assert_eq!(entries, expected_entries);
 
     file_system
         .remove(

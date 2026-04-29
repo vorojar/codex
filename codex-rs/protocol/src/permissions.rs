@@ -239,9 +239,22 @@ impl ReadDenyMatcher {
         // Exact roots are stored as all meaningful path spellings we can derive
         // cheaply. This lets direct tool checks catch both a symlink path and
         // its canonical target without changing the policy entries themselves.
+        let root = AbsolutePathBuf::from_absolute_path(cwd)
+            .ok()
+            .map(|cwd| absolute_root_path_for_cwd(&cwd));
+        let raw_denied_roots = file_system_sandbox_policy
+            .resolved_entries_with_cwd(cwd)
+            .into_iter()
+            .filter(|entry| entry.access == FileSystemAccessMode::None)
+            .filter(|entry| {
+                !file_system_sandbox_policy.can_read_path_with_cwd(entry.path.as_path(), cwd)
+            })
+            .filter(|entry| root.as_ref() != Some(&entry.path))
+            .map(|entry| entry.path);
         let denied_candidates = file_system_sandbox_policy
             .get_unreadable_roots_with_cwd(cwd)
             .into_iter()
+            .chain(raw_denied_roots)
             .map(|path| normalized_and_canonical_candidates(path.as_path()))
             .collect();
         // Pattern entries stay as policy-level globs. They are matched at read
