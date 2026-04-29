@@ -75,15 +75,18 @@ impl ToolArgumentDiffConsumer for ApplyPatchArgumentDiffConsumer {
             .map(EventMsg::PatchApplyUpdated)
     }
 
-    fn flush_on_complete(&mut self) -> Option<EventMsg> {
-        self.flush_update_on_complete()
-            .map(EventMsg::PatchApplyUpdated)
+    fn finish(&mut self) -> Result<Option<EventMsg>, FunctionCallError> {
+        self.finish_update_on_complete()
+            .map(|event| event.map(EventMsg::PatchApplyUpdated))
     }
 }
 
 impl ApplyPatchArgumentDiffConsumer {
     fn push_delta(&mut self, call_id: String, delta: &str) -> Option<PatchApplyUpdatedEvent> {
-        let hunks = self.parser.push_delta(delta).ok()??;
+        let hunks = self.parser.push_delta(delta).ok()?;
+        if hunks.is_empty() {
+            return None;
+        }
         let changes = convert_apply_patch_hunks_to_protocol(&hunks);
         let event = PatchApplyUpdatedEvent { call_id, changes };
         let now = Instant::now();
@@ -102,12 +105,18 @@ impl ApplyPatchArgumentDiffConsumer {
         }
     }
 
-    fn flush_update_on_complete(&mut self) -> Option<PatchApplyUpdatedEvent> {
+    fn finish_update_on_complete(
+        &mut self,
+    ) -> Result<Option<PatchApplyUpdatedEvent>, FunctionCallError> {
+        self.parser.finish().map_err(|err| {
+            FunctionCallError::RespondToModel(format!("failed to parse apply_patch: {err}"))
+        })?;
+
         let event = self.pending.take();
         if event.is_some() {
             self.last_sent_at = Some(Instant::now());
         }
-        event
+        Ok(event)
     }
 }
 

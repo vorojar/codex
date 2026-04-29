@@ -147,24 +147,16 @@ fn diff_consumer_streams_apply_patch_changes() {
             .push_delta("call-1".to_string(), "\n+world")
             .is_none()
     );
-
-    let event = consumer.flush_update_on_complete().expect("progress event");
-    assert_eq!(
-        (event.call_id, event.changes),
-        (
-            "call-1".to_string(),
-            HashMap::from([(
-                PathBuf::from("hello.txt"),
-                FileChange::Add {
-                    content: "hello\n".to_string(),
-                },
-            )]),
-        )
+    assert!(
+        consumer
+            .push_delta("call-1".to_string(), "\n*** End Patch")
+            .is_none()
     );
 
-    assert!(consumer.push_delta("call-1".to_string(), "\n").is_none());
-
-    let event = consumer.flush_update_on_complete().expect("progress event");
+    let event = consumer
+        .finish_update_on_complete()
+        .expect("finish parser")
+        .expect("progress event");
     assert_eq!(
         (event.call_id, event.changes),
         (
