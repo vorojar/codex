@@ -262,7 +262,6 @@ fn user_disablement_filters_non_managed_hooks_but_not_managed_hooks() {
         super::discovery::discover_handlers(Some(&config_layer_stack), Vec::new(), Vec::new());
     assert_eq!(discovered.hook_entries.len(), 2);
     assert_eq!(discovered.hook_entries[0].key, managed_disabled_key);
-    assert_eq!(discovered.hook_entries[0].config_key_path, None);
     assert_eq!(discovered.hook_entries[0].enabled, true);
     assert_eq!(discovered.hook_entries[1].key, user_disabled_key);
     assert_eq!(discovered.hook_entries[1].enabled, false);
@@ -314,7 +313,6 @@ fn user_disablement_does_not_filter_managed_layer_hooks() {
         super::discovery::discover_handlers(Some(&config_layer_stack), Vec::new(), Vec::new());
     assert_eq!(discovered.hook_entries.len(), 1);
     assert_eq!(discovered.hook_entries[0].key, managed_key);
-    assert_eq!(discovered.hook_entries[0].config_key_path, None);
     assert_eq!(discovered.hook_entries[0].enabled, true);
 }
 

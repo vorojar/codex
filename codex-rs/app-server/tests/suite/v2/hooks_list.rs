@@ -92,7 +92,6 @@ async fn hooks_list_shows_discovered_hook() -> Result<()> {
             cwd: cwd.path().to_path_buf(),
             hooks: vec![HookMetadata {
                 key: format!("{}:pre_tool_use:0:0", config_path.as_path().display()),
-                config_key_path: Some("hooks.state".to_string()),
                 event_name: HookEventName::PreToolUse,
                 handler_type: HookHandlerType::Command,
                 matcher: Some("Bash".to_string()),
@@ -162,7 +161,6 @@ async fn hooks_list_shows_discovered_plugin_hook() -> Result<()> {
             cwd: cwd.path().to_path_buf(),
             hooks: vec![HookMetadata {
                 key: "demo@test:hooks/hooks.json:pre_tool_use:0:0".to_string(),
-                config_key_path: Some("hooks.state".to_string()),
                 event_name: HookEventName::PreToolUse,
                 handler_type: HookHandlerType::Command,
                 matcher: Some("Bash".to_string()),
@@ -240,10 +238,7 @@ async fn config_batch_write_toggles_user_hook() -> Result<()> {
     let write_id = mcp
         .send_config_batch_write_request(ConfigBatchWriteParams {
             edits: vec![ConfigEdit {
-                key_path: hook
-                    .config_key_path
-                    .clone()
-                    .expect("non-managed hook should be configurable"),
+                key_path: "hooks.state".to_string(),
                 value: serde_json::json!({
                     hook.key.clone(): {
                         "enabled": false
@@ -281,10 +276,7 @@ async fn config_batch_write_toggles_user_hook() -> Result<()> {
     let write_id = mcp
         .send_config_batch_write_request(ConfigBatchWriteParams {
             edits: vec![ConfigEdit {
-                key_path: hook
-                    .config_key_path
-                    .clone()
-                    .expect("non-managed hook should be configurable"),
+                key_path: "hooks.state".to_string(),
                 value: serde_json::json!({
                     hook.key.clone(): {
                         "enabled": true

@@ -4511,9 +4511,6 @@ pub struct HooksListEntry {
 #[ts(export_to = "v2/")]
 pub struct HookMetadata {
     pub key: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    #[ts(optional)]
-    pub config_key_path: Option<String>,
     pub event_name: HookEventName,
     pub handler_type: HookHandlerType,
     pub matcher: Option<String>,
@@ -10859,27 +10856,5 @@ mod tests {
                 .contains("AbsolutePathBuf deserialized without a base path"),
             "unexpected error: {err}"
         );
-    }
-
-    #[test]
-    fn hook_metadata_omits_missing_config_key_path() {
-        let value = serde_json::to_value(HookMetadata {
-            key: "managed:/tmp/hooks.json:pre_tool_use:0:0".to_string(),
-            config_key_path: None,
-            event_name: HookEventName::PreToolUse,
-            handler_type: HookHandlerType::Command,
-            matcher: Some("Bash".to_string()),
-            command: Some("echo managed hook".to_string()),
-            timeout_sec: 5,
-            status_message: None,
-            source_path: test_absolute_path(),
-            source: HookSource::CloudRequirements,
-            plugin_id: None,
-            display_order: 0,
-            enabled: true,
-        })
-        .expect("hook metadata should serialize");
-
-        assert_eq!(value.get("configKeyPath"), None);
     }
 }

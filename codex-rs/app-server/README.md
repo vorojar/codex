@@ -1451,7 +1451,7 @@ To enable or disable a skill by name:
 }
 ```
 
-Use `hooks/list` to fetch the discovered hooks for one or more `cwds`. Disabled hooks are still returned with `"enabled": false` so clients can render and re-enable them. Non-managed hooks include a `configKeyPath` that clients can pass to `config/batchWrite` when upserting user-level hook state. Managed hooks omit `configKeyPath`, and user config entries for those keys are ignored during loading. Hook keys combine the source identity with a trailing event/group/handler selector that is currently positional.
+Use `hooks/list` to fetch the discovered hooks for one or more `cwds`. Disabled hooks are still returned with `"enabled": false` so clients can render and re-enable them. Hook state is stored under `hooks.state`; clients should treat hooks from managed sources as non-configurable, and user config entries for those keys are ignored during loading. Hook keys combine the source identity with a trailing event/group/handler selector that is currently positional.
 
 ```json
 {
@@ -1471,7 +1471,6 @@ Use `hooks/list` to fetch the discovered hooks for one or more `cwds`. Disabled 
       "cwd": "/Users/me/project",
       "hooks": [{
         "key": "/Users/me/.codex/config.toml:pre_tool_use:0:0",
-        "configKeyPath": "hooks.state",
         "eventName": "pre_tool_use",
         "handlerType": "command",
         "matcher": "Bash",
@@ -1491,7 +1490,7 @@ Use `hooks/list` to fetch the discovered hooks for one or more `cwds`. Disabled 
 }
 ```
 
-To disable a non-managed hook, upsert a state entry at the returned `configKeyPath` with `config/batchWrite`:
+To disable a non-managed hook, upsert a state entry at `hooks.state` with `config/batchWrite`:
 
 ```json
 {

@@ -8670,7 +8670,6 @@ fn hooks_to_info(hooks: &[codex_hooks::HookListEntry]) -> Vec<HookMetadata> {
         .iter()
         .map(|hook| HookMetadata {
             key: hook.key.clone(),
-            config_key_path: hook.config_key_path.clone(),
             event_name: hook.event_name.into(),
             handler_type: hook.handler_type.into(),
             matcher: hook.matcher.clone(),

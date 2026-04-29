@@ -9583,12 +9583,6 @@
               "null"
             ]
           },
-          "configKeyPath": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
           "displayOrder": {
             "format": "int64",
             "type": "integer"

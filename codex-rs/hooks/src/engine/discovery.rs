@@ -36,7 +36,6 @@ pub(crate) struct DiscoveryResult {
 struct HookHandlerSource<'a> {
     path: &'a AbsolutePathBuf,
     key_source: String,
-    is_managed: bool,
     source: HookSource,
     disabled_hook_keys: &'a HashSet<String>,
     env: HashMap<String, String>,
@@ -69,7 +68,6 @@ pub(crate) fn discover_handlers(
             /*include_disabled*/ false,
         ) {
             let hook_source = hook_source_for_config_layer_source(&layer.name);
-            let is_managed = hook_source_is_managed(hook_source);
             let json_hooks = load_hooks_json(layer.config_folder().as_deref(), &mut warnings);
             let toml_hooks = load_toml_hooks_from_layer(layer, &mut warnings);
 
@@ -94,7 +92,6 @@ pub(crate) fn discover_handlers(
                     HookHandlerSource {
                         path: &source_path,
                         key_source: source_path.display().to_string(),
-                        is_managed,
                         source: hook_source,
                         disabled_hook_keys: &disabled_hook_keys,
                         env: HashMap::new(),
@@ -146,7 +143,6 @@ fn append_managed_requirement_handlers(
         HookHandlerSource {
             path: &source_path,
             key_source: source_path.display().to_string(),
-            is_managed: true,
             source: hook_source_for_requirement_source(managed_hooks.source.as_ref()),
             disabled_hook_keys,
             env: HashMap::new(),
@@ -192,7 +188,6 @@ fn append_plugin_hook_sources(
             HookHandlerSource {
                 path: &source_path,
                 key_source: format!("{plugin_id}:{source_relative_path}"),
-                is_managed: false,
                 source: HookSource::Plugin,
                 disabled_hook_keys,
                 env,
@@ -415,11 +410,10 @@ fn append_matcher_groups(
                         group_index,
                         handler_index
                     );
-                    let enabled = source.is_managed || !source.disabled_hook_keys.contains(&key);
-                    let config_key_path = (!source.is_managed).then(|| "hooks.state".to_string());
+                    let enabled =
+                        source.source.is_managed() || !source.disabled_hook_keys.contains(&key);
                     hook_entries.push(HookListEntry {
                         key,
-                        config_key_path,
                         event_name,
                         handler_type: HookHandlerType::Command,
                         matcher: matcher.map(ToOwned::to_owned),
@@ -435,7 +429,7 @@ fn append_matcher_groups(
                     if enabled {
                         handlers.push(ConfiguredHandler {
                             event_name,
-                            is_managed: source.is_managed,
+                            is_managed: source.source.is_managed(),
                             matcher: matcher.map(ToOwned::to_owned),
                             command,
                             timeout_sec,
@@ -486,16 +480,6 @@ fn hook_source_for_config_layer_source(source: &ConfigLayerSource) -> HookSource
     }
 }
 
-fn hook_source_is_managed(source: HookSource) -> bool {
-    matches!(
-        source,
-        HookSource::System
-            | HookSource::Mdm
-            | HookSource::LegacyManagedConfigFile
-            | HookSource::LegacyManagedConfigMdm
-    )
-}
-
 fn hook_source_for_requirement_source(source: Option<&RequirementSource>) -> HookSource {
     match source {
         Some(RequirementSource::MdmManagedPreferences { .. }) => HookSource::Mdm,
@@ -544,7 +528,6 @@ mod tests {
         super::HookHandlerSource {
             path,
             key_source: path.display().to_string(),
-            is_managed: false,
             source: hook_source(),
             disabled_hook_keys,
             env: std::collections::HashMap::new(),
