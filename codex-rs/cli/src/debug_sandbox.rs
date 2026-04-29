@@ -43,6 +43,7 @@ pub async fn run_command_under_seatbelt(
 ) -> anyhow::Result<()> {
     let SeatbeltCommand {
         full_auto,
+        permissions_profile,
         allow_unix_sockets,
         log_denials,
         config_overrides,
@@ -50,12 +51,14 @@ pub async fn run_command_under_seatbelt(
     } = command;
     run_command_under_sandbox(
         full_auto,
+        permissions_profile,
         command,
         config_overrides,
         codex_linux_sandbox_exe,
-        SandboxType::Seatbelt,
-        log_denials,
-        &allow_unix_sockets,
+        SandboxType::Seatbelt {
+            allow_unix_sockets,
+            log_denials,
+        },
     )
     .await
 }
@@ -74,17 +77,17 @@ pub async fn run_command_under_landlock(
 ) -> anyhow::Result<()> {
     let LandlockCommand {
         full_auto,
+        permissions_profile,
         config_overrides,
         command,
     } = command;
     run_command_under_sandbox(
         full_auto,
+        permissions_profile,
         command,
         config_overrides,
         codex_linux_sandbox_exe,
         SandboxType::Landlock,
-        /*log_denials*/ false,
-        &[],
     )
     .await
 }
@@ -95,37 +98,38 @@ pub async fn run_command_under_windows(
 ) -> anyhow::Result<()> {
     let WindowsCommand {
         full_auto,
+        permissions_profile,
         config_overrides,
         command,
     } = command;
     run_command_under_sandbox(
         full_auto,
+        permissions_profile,
         command,
         config_overrides,
         codex_linux_sandbox_exe,
         SandboxType::Windows,
-        /*log_denials*/ false,
-        &[],
     )
     .await
 }
 
 enum SandboxType {
     #[cfg(target_os = "macos")]
-    Seatbelt,
+    Seatbelt {
+        allow_unix_sockets: Vec<AbsolutePathBuf>,
+        log_denials: bool,
+    },
     Landlock,
     Windows,
 }
 
 async fn run_command_under_sandbox(
     full_auto: bool,
+    permissions_profile: Option<String>,
     command: Vec<String>,
     config_overrides: CliConfigOverrides,
     codex_linux_sandbox_exe: Option<PathBuf>,
     sandbox_type: SandboxType,
-    log_denials: bool,
-    #[cfg_attr(not(target_os = "macos"), allow(unused_variables))]
-    allow_unix_sockets: &[AbsolutePathBuf],
 ) -> anyhow::Result<()> {
     let config = load_debug_sandbox_config(
         config_overrides
@@ -133,6 +137,7 @@ async fn run_command_under_sandbox(
             .map_err(anyhow::Error::msg)?,
         codex_linux_sandbox_exe,
         full_auto,
+        permissions_profile,
     )
     .await?;
 
@@ -162,9 +167,10 @@ async fn run_command_under_sandbox(
     }
 
     #[cfg(target_os = "macos")]
-    let mut denial_logger = log_denials.then(DenialLogger::new).flatten();
-    #[cfg(not(target_os = "macos"))]
-    let _ = log_denials;
+    let mut denial_logger = match &sandbox_type {
+        SandboxType::Seatbelt { log_denials, .. } => log_denials.then(DenialLogger::new).flatten(),
+        SandboxType::Landlock | SandboxType::Windows => None,
+    };
 
     let managed_network_requirements_enabled = config.managed_network_requirements_enabled();
 
@@ -189,7 +195,9 @@ async fn run_command_under_sandbox(
 
     let mut child = match sandbox_type {
         #[cfg(target_os = "macos")]
-        SandboxType::Seatbelt => {
+        SandboxType::Seatbelt {
+            allow_unix_sockets, ..
+        } => {
             let file_system_sandbox_policy = config.permissions.file_system_sandbox_policy();
             let network_sandbox_policy = config.permissions.network_sandbox_policy();
             let args = create_seatbelt_command_args(CreateSeatbeltCommandArgsParams {
@@ -199,7 +207,7 @@ async fn run_command_under_sandbox(
                 sandbox_policy_cwd: sandbox_policy_cwd.as_path(),
                 enforce_managed_network: false,
                 network: network.as_ref(),
-                extra_allow_unix_sockets: allow_unix_sockets,
+                extra_allow_unix_sockets: &allow_unix_sockets,
             });
             spawn_debug_sandbox_child(
                 PathBuf::from("/usr/bin/sandbox-exec"),
@@ -580,22 +588,32 @@ async fn load_debug_sandbox_config(
     cli_overrides: Vec<(String, TomlValue)>,
     codex_linux_sandbox_exe: Option<PathBuf>,
     full_auto: bool,
+    permissions_profile: Option<String>,
 ) -> anyhow::Result<Config> {
     load_debug_sandbox_config_with_codex_home(
         cli_overrides,
         codex_linux_sandbox_exe,
         full_auto,
+        permissions_profile,
         /*codex_home*/ None,
     )
     .await
 }
 
 async fn load_debug_sandbox_config_with_codex_home(
-    cli_overrides: Vec<(String, TomlValue)>,
+    mut cli_overrides: Vec<(String, TomlValue)>,
     codex_linux_sandbox_exe: Option<PathBuf>,
     full_auto: bool,
+    permissions_profile: Option<String>,
     codex_home: Option<PathBuf>,
 ) -> anyhow::Result<Config> {
+    if let Some(permissions_profile) = permissions_profile {
+        cli_overrides.push((
+            "default_permissions".to_string(),
+            TomlValue::String(permissions_profile),
+        ));
+    }
+
     let config = build_debug_sandbox_config(
         cli_overrides.clone(),
         ConfigOverrides {
@@ -712,6 +730,7 @@ mod tests {
             Vec::new(),
             /*codex_linux_sandbox_exe*/ None,
             /*full_auto*/ false,
+            /*permissions_profile*/ None,
             Some(codex_home_path),
         )
         .await?;
@@ -746,6 +765,7 @@ mod tests {
             Vec::new(),
             /*codex_linux_sandbox_exe*/ None,
             /*full_auto*/ true,
+            /*permissions_profile*/ None,
             Some(codex_home.path().to_path_buf()),
         )
         .await
@@ -754,6 +774,63 @@ mod tests {
         assert!(
             err.to_string().contains("--full-auto"),
             "unexpected error: {err}"
+        );
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn debug_sandbox_honors_explicit_builtin_permission_profile() -> anyhow::Result<()> {
+        let codex_home = TempDir::new()?;
+
+        let config = load_debug_sandbox_config_with_codex_home(
+            Vec::new(),
+            /*codex_linux_sandbox_exe*/ None,
+            /*full_auto*/ false,
+            Some(":workspace".to_string()),
+            Some(codex_home.path().to_path_buf()),
+        )
+        .await?;
+
+        assert_eq!(
+            config.permissions.file_system_sandbox_policy(),
+            codex_protocol::models::PermissionProfile::workspace_write()
+                .file_system_sandbox_policy()
+        );
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn debug_sandbox_honors_explicit_named_permission_profile() -> anyhow::Result<()> {
+        let codex_home = TempDir::new()?;
+        let sandbox_paths = TempDir::new()?;
+        let docs = sandbox_paths.path().join("docs");
+        let private = docs.join("private");
+        write_permissions_profile_config(&codex_home, &docs, &private)?;
+
+        let config = load_debug_sandbox_config_with_codex_home(
+            Vec::new(),
+            /*codex_linux_sandbox_exe*/ None,
+            /*full_auto*/ false,
+            Some("limited-read-test".to_string()),
+            Some(codex_home.path().to_path_buf()),
+        )
+        .await?;
+
+        let expected = build_debug_sandbox_config(
+            vec![(
+                "default_permissions".to_string(),
+                TomlValue::String("limited-read-test".to_string()),
+            )],
+            ConfigOverrides::default(),
+            Some(codex_home.path().to_path_buf()),
+        )
+        .await?;
+
+        assert_eq!(
+            config.permissions.file_system_sandbox_policy(),
+            expected.permissions.file_system_sandbox_policy()
         );
 
         Ok(())
