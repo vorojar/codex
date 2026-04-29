@@ -3,17 +3,17 @@ use crate::history_cell::HistoryCell;
 use crate::history_cell::PlainHistoryCell;
 use crate::history_cell::with_border_with_inner_width;
 use crate::legacy_core::config::Config;
+use crate::token_usage::TokenUsage;
+use crate::token_usage::TokenUsageInfo;
 use crate::version::CODEX_CLI_VERSION;
 use chrono::DateTime;
 use chrono::Local;
+use codex_app_server_protocol::AskForApproval;
 use codex_model_provider_info::WireApi;
 use codex_protocol::ThreadId;
 use codex_protocol::account::PlanType;
 use codex_protocol::models::PermissionProfile;
 use codex_protocol::openai_models::ReasoningEffort;
-use codex_protocol::protocol::AskForApproval;
-use codex_protocol::protocol::TokenUsage;
-use codex_protocol::protocol::TokenUsageInfo;
 use codex_utils_sandbox_summary::summarize_permission_profile;
 use ratatui::prelude::*;
 use ratatui::style::Stylize;
@@ -244,6 +244,8 @@ impl StatusHistoryCell {
         agents_summary: String,
         refreshing_rate_limits: bool,
     ) -> (Self, StatusHistoryHandle) {
+        let approval_policy = AskForApproval::from(config.permissions.approval_policy.value());
+        let permission_profile = config.permissions.permission_profile();
         let mut config_entries = vec![
             ("workdir", config.cwd.display().to_string()),
             ("model", model_name.to_string()),
@@ -254,10 +256,7 @@ impl StatusHistoryCell {
             ),
             (
                 "sandbox",
-                summarize_permission_profile(
-                    &config.permissions.permission_profile(),
-                    config.cwd.as_path(),
-                ),
+                summarize_permission_profile(&permission_profile, config.cwd.as_path()),
             ),
         ];
         if config.model_provider.wire_api == WireApi::Responses {
@@ -280,13 +279,12 @@ impl StatusHistoryCell {
             .find(|(k, _)| *k == "approval")
             .map(|(_, v)| v.clone())
             .unwrap_or_else(|| "<unknown>".to_string());
-        let permission_profile = config.permissions.permission_profile();
         let sandbox = status_permission_summary(&permission_profile, config.cwd.as_path());
-        let permissions = if config.permissions.approval_policy.value() == AskForApproval::OnRequest
+        let permissions = if approval_policy == AskForApproval::OnRequest
             && permission_profile == PermissionProfile::workspace_write()
         {
             "Default".to_string()
-        } else if config.permissions.approval_policy.value() == AskForApproval::Never
+        } else if approval_policy == AskForApproval::Never
             && permission_profile == PermissionProfile::Disabled
         {
             "Full Access".to_string()

@@ -1,9 +1,15 @@
+//! App-server session facade used by the TUI event loop.
+//!
+//! This module owns the typed JSON-RPC calls needed by the TUI and keeps
+//! request/response plumbing out of `App` and `ChatWidget`.
+
 use crate::bottom_pane::FeedbackAudience;
 #[cfg(test)]
 use crate::legacy_core::append_message_history_entry;
 use crate::legacy_core::config::Config;
 use crate::legacy_core::message_history_metadata;
 use crate::permission_compat::legacy_compatible_permission_profile;
+use crate::session_state::ThreadSessionState;
 use crate::status::StatusAccountDisplay;
 use crate::status::plan_type_display_name;
 use codex_app_server_client::AppServerClient;
@@ -11,6 +17,7 @@ use codex_app_server_client::AppServerEvent;
 use codex_app_server_client::AppServerRequestHandle;
 use codex_app_server_client::TypedRequestError;
 use codex_app_server_protocol::Account;
+use codex_app_server_protocol::AskForApproval;
 use codex_app_server_protocol::AuthMode;
 use codex_app_server_protocol::ClientRequest;
 use codex_app_server_protocol::ConfigBatchWriteParams;
@@ -29,10 +36,12 @@ use codex_app_server_protocol::MemoryResetResponse;
 use codex_app_server_protocol::Model as ApiModel;
 use codex_app_server_protocol::ModelListParams;
 use codex_app_server_protocol::ModelListResponse;
+use codex_app_server_protocol::RateLimitSnapshot;
 use codex_app_server_protocol::RequestId;
 use codex_app_server_protocol::ReviewDelivery;
 use codex_app_server_protocol::ReviewStartParams;
 use codex_app_server_protocol::ReviewStartResponse;
+use codex_app_server_protocol::ReviewTarget;
 use codex_app_server_protocol::SkillsListParams;
 use codex_app_server_protocol::SkillsListResponse;
 use codex_app_server_protocol::Thread;
@@ -64,8 +73,7 @@ use codex_app_server_protocol::ThreadReadParams;
 use codex_app_server_protocol::ThreadReadResponse;
 use codex_app_server_protocol::ThreadRealtimeAppendAudioParams;
 use codex_app_server_protocol::ThreadRealtimeAppendAudioResponse;
-use codex_app_server_protocol::ThreadRealtimeAppendTextParams;
-use codex_app_server_protocol::ThreadRealtimeAppendTextResponse;
+use codex_app_server_protocol::ThreadRealtimeAudioChunk;
 use codex_app_server_protocol::ThreadRealtimeStartParams;
 use codex_app_server_protocol::ThreadRealtimeStartResponse;
 use codex_app_server_protocol::ThreadRealtimeStartTransport;
@@ -91,26 +99,16 @@ use codex_app_server_protocol::TurnStartParams;
 use codex_app_server_protocol::TurnStartResponse;
 use codex_app_server_protocol::TurnSteerParams;
 use codex_app_server_protocol::TurnSteerResponse;
+use codex_app_server_protocol::UserInput;
 use codex_otel::TelemetryAuthMode;
 use codex_protocol::ThreadId;
+use codex_protocol::approvals::GuardianAssessmentEvent;
 use codex_protocol::models::PermissionProfile;
 use codex_protocol::models::ResponseItem;
 use codex_protocol::openai_models::ModelAvailabilityNux;
 use codex_protocol::openai_models::ModelPreset;
 use codex_protocol::openai_models::ModelUpgrade;
 use codex_protocol::openai_models::ReasoningEffortPreset;
-use codex_protocol::protocol::AskForApproval;
-use codex_protocol::protocol::ConversationAudioParams;
-use codex_protocol::protocol::ConversationStartParams;
-use codex_protocol::protocol::ConversationStartTransport;
-use codex_protocol::protocol::ConversationTextParams;
-use codex_protocol::protocol::CreditsSnapshot;
-use codex_protocol::protocol::GuardianAssessmentEvent;
-use codex_protocol::protocol::RateLimitSnapshot;
-use codex_protocol::protocol::RateLimitWindow;
-use codex_protocol::protocol::ReviewRequest;
-use codex_protocol::protocol::ReviewTarget as CoreReviewTarget;
-use codex_protocol::protocol::SessionNetworkProxyRuntime;
 use codex_utils_absolute_path::AbsolutePathBuf;
 use color_eyre::eyre::ContextCompat;
 use color_eyre::eyre::Result;
@@ -143,30 +141,6 @@ pub(crate) struct AppServerSession {
     client: AppServerClient,
     next_request_id: i64,
     remote_cwd_override: Option<PathBuf>,
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub(crate) struct ThreadSessionState {
-    pub(crate) thread_id: ThreadId,
-    pub(crate) forked_from_id: Option<ThreadId>,
-    pub(crate) fork_parent_title: Option<String>,
-    pub(crate) thread_name: Option<String>,
-    pub(crate) model: String,
-    pub(crate) model_provider_id: String,
-    pub(crate) service_tier: Option<codex_protocol::config_types::ServiceTier>,
-    pub(crate) approval_policy: AskForApproval,
-    pub(crate) approvals_reviewer: codex_protocol::config_types::ApprovalsReviewer,
-    /// Canonical active permissions for this session. Legacy app-server
-    /// responses are converted to a profile at ingestion time using the
-    /// response cwd so cached sessions do not reinterpret cwd-bound grants.
-    pub(crate) permission_profile: PermissionProfile,
-    pub(crate) cwd: AbsolutePathBuf,
-    pub(crate) instruction_source_paths: Vec<AbsolutePathBuf>,
-    pub(crate) reasoning_effort: Option<codex_protocol::openai_models::ReasoningEffort>,
-    pub(crate) history_log_id: u64,
-    pub(crate) history_entry_count: u64,
-    pub(crate) network_proxy: Option<SessionNetworkProxyRuntime>,
-    pub(crate) rollout_path: Option<PathBuf>,
 }
 
 #[derive(Clone, Copy)]
@@ -528,7 +502,7 @@ impl AppServerSession {
     pub(crate) async fn turn_start(
         &mut self,
         thread_id: ThreadId,
-        items: Vec<codex_protocol::user_input::UserInput>,
+        items: Vec<UserInput>,
         cwd: PathBuf,
         approval_policy: AskForApproval,
         approvals_reviewer: codex_protocol::config_types::ApprovalsReviewer,
@@ -567,11 +541,11 @@ impl AppServerSession {
                 request_id,
                 params: TurnStartParams {
                     thread_id: thread_id.to_string(),
-                    input: items.into_iter().map(Into::into).collect(),
+                    input: items,
                     responsesapi_client_metadata: None,
                     environments: None,
                     cwd: Some(cwd),
-                    approval_policy: Some(approval_policy.into()),
+                    approval_policy: Some(approval_policy),
                     approvals_reviewer: Some(approvals_reviewer.into()),
                     sandbox_policy,
                     permission_profile,
@@ -616,7 +590,7 @@ impl AppServerSession {
         &mut self,
         thread_id: ThreadId,
         turn_id: String,
-        items: Vec<codex_protocol::user_input::UserInput>,
+        items: Vec<UserInput>,
     ) -> std::result::Result<TurnSteerResponse, TypedRequestError> {
         let request_id = self.next_request_id();
         self.client
@@ -624,7 +598,7 @@ impl AppServerSession {
                 request_id,
                 params: TurnSteerParams {
                     thread_id: thread_id.to_string(),
-                    input: items.into_iter().map(Into::into).collect(),
+                    input: items,
                     responsesapi_client_metadata: None,
                     expected_turn_id: turn_id,
                 },
@@ -862,7 +836,7 @@ impl AppServerSession {
     pub(crate) async fn review_start(
         &mut self,
         thread_id: ThreadId,
-        review_request: ReviewRequest,
+        target: ReviewTarget,
     ) -> Result<ReviewStartResponse> {
         let request_id = self.next_request_id();
         self.client
@@ -870,7 +844,7 @@ impl AppServerSession {
                 request_id,
                 params: ReviewStartParams {
                     thread_id: thread_id.to_string(),
-                    target: review_target_to_app_server(review_request.target),
+                    target,
                     delivery: Some(ReviewDelivery::Inline),
                 },
             })
@@ -910,29 +884,14 @@ impl AppServerSession {
     pub(crate) async fn thread_realtime_start(
         &mut self,
         thread_id: ThreadId,
-        params: ConversationStartParams,
+        transport: Option<ThreadRealtimeStartTransport>,
+        voice: Option<serde_json::Value>,
     ) -> Result<()> {
         let request_id = self.next_request_id();
+        let params = thread_realtime_start_params(thread_id, transport, voice)?;
         let _: ThreadRealtimeStartResponse = self
             .client
-            .request_typed(ClientRequest::ThreadRealtimeStart {
-                request_id,
-                params: ThreadRealtimeStartParams {
-                    thread_id: thread_id.to_string(),
-                    output_modality: params.output_modality,
-                    prompt: params.prompt,
-                    session_id: params.session_id,
-                    voice: params.voice,
-                    transport: params.transport.map(|transport| match transport {
-                        ConversationStartTransport::Websocket => {
-                            ThreadRealtimeStartTransport::Websocket
-                        }
-                        ConversationStartTransport::Webrtc { sdp } => {
-                            ThreadRealtimeStartTransport::Webrtc { sdp }
-                        }
-                    }),
-                },
-            })
+            .request_typed(ClientRequest::ThreadRealtimeStart { request_id, params })
             .await
             .wrap_err("thread/realtime/start failed in TUI")?;
         Ok(())
@@ -941,7 +900,7 @@ impl AppServerSession {
     pub(crate) async fn thread_realtime_audio(
         &mut self,
         thread_id: ThreadId,
-        params: ConversationAudioParams,
+        frame: ThreadRealtimeAudioChunk,
     ) -> Result<()> {
         let request_id = self.next_request_id();
         let _: ThreadRealtimeAppendAudioResponse = self
@@ -950,31 +909,11 @@ impl AppServerSession {
                 request_id,
                 params: ThreadRealtimeAppendAudioParams {
                     thread_id: thread_id.to_string(),
-                    audio: params.frame.into(),
+                    audio: frame,
                 },
             })
             .await
             .wrap_err("thread/realtime/appendAudio failed in TUI")?;
-        Ok(())
-    }
-
-    pub(crate) async fn thread_realtime_text(
-        &mut self,
-        thread_id: ThreadId,
-        params: ConversationTextParams,
-    ) -> Result<()> {
-        let request_id = self.next_request_id();
-        let _: ThreadRealtimeAppendTextResponse = self
-            .client
-            .request_typed(ClientRequest::ThreadRealtimeAppendText {
-                request_id,
-                params: ThreadRealtimeAppendTextParams {
-                    thread_id: thread_id.to_string(),
-                    text: params.text,
-                },
-            })
-            .await
-            .wrap_err("thread/realtime/appendText failed in TUI")?;
         Ok(())
     }
 
@@ -1022,6 +961,34 @@ impl AppServerSession {
         self.next_request_id += 1;
         RequestId::Integer(request_id)
     }
+}
+
+fn thread_realtime_start_params(
+    thread_id: ThreadId,
+    transport: Option<ThreadRealtimeStartTransport>,
+    voice: Option<serde_json::Value>,
+) -> Result<ThreadRealtimeStartParams> {
+    let mut value = serde_json::Map::new();
+    value.insert(
+        "threadId".to_string(),
+        serde_json::Value::String(thread_id.to_string()),
+    );
+    value.insert(
+        "outputModality".to_string(),
+        serde_json::Value::String("audio".to_string()),
+    );
+    if let Some(transport) = transport {
+        value.insert(
+            "transport".to_string(),
+            serde_json::to_value(transport).wrap_err("serializing realtime transport")?,
+        );
+    }
+    if let Some(voice) = voice {
+        value.insert("voice".to_string(), voice);
+    }
+
+    serde_json::from_value(serde_json::Value::Object(value))
+        .wrap_err("mapping TUI realtime start params to app-server params")
 }
 
 pub(crate) fn status_account_display_from_auth_mode(
@@ -1299,7 +1266,7 @@ async fn thread_session_state_from_thread_start_response(
         response.model.clone(),
         response.model_provider.clone(),
         response.service_tier,
-        response.approval_policy.to_core(),
+        response.approval_policy,
         response.approvals_reviewer.to_core(),
         response
             .permission_profile
@@ -1331,7 +1298,7 @@ async fn thread_session_state_from_thread_resume_response(
         response.model.clone(),
         response.model_provider.clone(),
         response.service_tier,
-        response.approval_policy.to_core(),
+        response.approval_policy,
         response.approvals_reviewer.to_core(),
         response
             .permission_profile
@@ -1363,7 +1330,7 @@ async fn thread_session_state_from_thread_fork_response(
         response.model.clone(),
         response.model_provider.clone(),
         response.service_tier,
-        response.approval_policy.to_core(),
+        response.approval_policy,
         response.approvals_reviewer.to_core(),
         response
             .permission_profile
@@ -1381,25 +1348,6 @@ async fn thread_session_state_from_thread_fork_response(
         config,
     )
     .await
-}
-
-fn review_target_to_app_server(
-    target: CoreReviewTarget,
-) -> codex_app_server_protocol::ReviewTarget {
-    match target {
-        CoreReviewTarget::UncommittedChanges => {
-            codex_app_server_protocol::ReviewTarget::UncommittedChanges
-        }
-        CoreReviewTarget::BaseBranch { branch } => {
-            codex_app_server_protocol::ReviewTarget::BaseBranch { branch }
-        }
-        CoreReviewTarget::Commit { sha, title } => {
-            codex_app_server_protocol::ReviewTarget::Commit { sha, title }
-        }
-        CoreReviewTarget::Custom { instructions } => {
-            codex_app_server_protocol::ReviewTarget::Custom { instructions }
-        }
-    }
 }
 
 #[expect(
@@ -1452,68 +1400,31 @@ async fn thread_session_state_from_thread_response(
     })
 }
 
-pub(crate) fn app_server_rate_limit_snapshots_to_core(
+pub(crate) fn app_server_rate_limit_snapshots(
     response: GetAccountRateLimitsResponse,
 ) -> Vec<RateLimitSnapshot> {
     let mut snapshots = Vec::new();
-    snapshots.push(app_server_rate_limit_snapshot_to_core(response.rate_limits));
+    snapshots.push(response.rate_limits);
     if let Some(by_limit_id) = response.rate_limits_by_limit_id {
-        snapshots.extend(
-            by_limit_id
-                .into_values()
-                .map(app_server_rate_limit_snapshot_to_core),
-        );
+        snapshots.extend(by_limit_id.into_values());
     }
     snapshots
-}
-
-pub(crate) fn app_server_rate_limit_snapshot_to_core(
-    snapshot: codex_app_server_protocol::RateLimitSnapshot,
-) -> RateLimitSnapshot {
-    RateLimitSnapshot {
-        limit_id: snapshot.limit_id,
-        limit_name: snapshot.limit_name,
-        primary: snapshot.primary.map(app_server_rate_limit_window_to_core),
-        secondary: snapshot.secondary.map(app_server_rate_limit_window_to_core),
-        credits: snapshot.credits.map(app_server_credits_snapshot_to_core),
-        plan_type: snapshot.plan_type,
-        rate_limit_reached_type: snapshot.rate_limit_reached_type.map(Into::into),
-    }
-}
-
-fn app_server_rate_limit_window_to_core(
-    window: codex_app_server_protocol::RateLimitWindow,
-) -> RateLimitWindow {
-    RateLimitWindow {
-        used_percent: window.used_percent as f64,
-        window_minutes: window.window_duration_mins,
-        resets_at: window.resets_at,
-    }
-}
-
-fn app_server_credits_snapshot_to_core(
-    snapshot: codex_app_server_protocol::CreditsSnapshot,
-) -> CreditsSnapshot {
-    CreditsSnapshot {
-        has_credits: snapshot.has_credits,
-        unlimited: snapshot.unlimited,
-        balance: snapshot.balance,
-    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::legacy_core::config::ConfigBuilder;
+    use codex_app_server_protocol::FileSystemAccessMode;
+    use codex_app_server_protocol::FileSystemPath;
+    use codex_app_server_protocol::FileSystemSandboxEntry;
+    use codex_app_server_protocol::FileSystemSpecialPath;
+    use codex_app_server_protocol::PermissionProfile as AppServerPermissionProfile;
+    use codex_app_server_protocol::PermissionProfileFileSystemPermissions;
+    use codex_app_server_protocol::PermissionProfileNetworkPermissions;
     use codex_app_server_protocol::ThreadStatus;
     use codex_app_server_protocol::Turn;
     use codex_app_server_protocol::TurnStatus;
-    use codex_protocol::models::ManagedFileSystemPermissions;
-    use codex_protocol::permissions::FileSystemAccessMode;
-    use codex_protocol::permissions::FileSystemPath;
-    use codex_protocol::permissions::FileSystemSandboxEntry;
-    use codex_protocol::permissions::FileSystemSpecialPath;
-    use codex_protocol::permissions::NetworkSandboxPolicy;
     use codex_utils_absolute_path::test_support::PathBufExt;
     use codex_utils_absolute_path::test_support::test_path_buf;
     use pretty_assertions::assert_eq;
@@ -1610,8 +1521,9 @@ mod tests {
     fn sandbox_mode_does_not_project_non_cwd_write_roots_for_remote_sessions() {
         let cwd = test_path_buf("/workspace/project").abs();
         let extra_root = test_path_buf("/workspace/cache").abs();
-        let permission_profile = PermissionProfile::Managed {
-            file_system: ManagedFileSystemPermissions::Restricted {
+        let permission_profile: PermissionProfile = AppServerPermissionProfile::Managed {
+            network: PermissionProfileNetworkPermissions { enabled: false },
+            file_system: PermissionProfileFileSystemPermissions::Restricted {
                 entries: vec![
                     FileSystemSandboxEntry {
                         path: FileSystemPath::Special {
@@ -1626,8 +1538,8 @@ mod tests {
                 ],
                 glob_scan_max_depth: None,
             },
-            network: NetworkSandboxPolicy::Restricted,
-        };
+        }
+        .into();
 
         assert_eq!(
             sandbox_mode_from_permission_profile(&permission_profile, cwd.as_path()),
@@ -1638,8 +1550,9 @@ mod tests {
     #[test]
     fn sandbox_mode_projects_cwd_write_for_remote_sessions() {
         let cwd = test_path_buf("/workspace/project").abs();
-        let permission_profile = PermissionProfile::Managed {
-            file_system: ManagedFileSystemPermissions::Restricted {
+        let permission_profile: PermissionProfile = AppServerPermissionProfile::Managed {
+            network: PermissionProfileNetworkPermissions { enabled: false },
+            file_system: PermissionProfileFileSystemPermissions::Restricted {
                 entries: vec![
                     FileSystemSandboxEntry {
                         path: FileSystemPath::Special {
@@ -1656,8 +1569,8 @@ mod tests {
                 ],
                 glob_scan_max_depth: None,
             },
-            network: NetworkSandboxPolicy::Restricted,
-        };
+        }
+        .into();
 
         assert_eq!(
             sandbox_mode_from_permission_profile(&permission_profile, cwd.as_path()),
@@ -1751,7 +1664,7 @@ mod tests {
                 path: None,
                 cwd: test_path_buf("/tmp/project").abs(),
                 cli_version: "0.0.0".to_string(),
-                source: codex_protocol::protocol::SessionSource::Cli.into(),
+                source: codex_app_server_protocol::SessionSource::Cli,
                 agent_nickname: None,
                 agent_role: None,
                 git_info: None,
@@ -1785,7 +1698,7 @@ mod tests {
             service_tier: None,
             cwd: test_path_buf("/tmp/project").abs(),
             instruction_sources: vec![test_path_buf("/tmp/project/AGENTS.md").abs()],
-            approval_policy: codex_protocol::protocol::AskForApproval::Never.into(),
+            approval_policy: codex_app_server_protocol::AskForApproval::Never,
             approvals_reviewer: codex_app_server_protocol::ApprovalsReviewer::User,
             sandbox: read_only_profile
                 .to_legacy_sandbox_policy(test_path_buf("/tmp/project").as_path())
