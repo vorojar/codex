@@ -2004,6 +2004,7 @@ mod tests {
                     )
                     .into(),
                 ),
+                active_permission_profile: None,
                 reasoning_effort: None,
             },
         };
@@ -2049,6 +2050,7 @@ mod tests {
                     "permissionProfile": {
                         "type": "disabled"
                     },
+                    "activePermissionProfile": null,
                     "reasoningEffort": null
                 }
             }),

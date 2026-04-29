@@ -432,6 +432,7 @@ fn session_configured_from_thread_response_uses_review_policy_from_response() {
             )
             .into(),
         ),
+        active_permission_profile: None,
         reasoning_effort: None,
     };
 
