@@ -1844,6 +1844,9 @@ plugins = true
 
 [plugins."toolkit@debug"]
 enabled = true
+
+[hooks.state."toolkit@debug:hooks/hooks.json:pre_tool_use:0:0"]
+enabled = false
 "#,
     );
 
@@ -1886,10 +1889,10 @@ enabled = true
         outcome.plugin.hooks,
         vec![
             PluginHookSummary {
-                key: "hooks/hooks.json:PreToolUse:0:0".to_string(),
+                key: "toolkit@debug:hooks/hooks.json:pre_tool_use:0:0".to_string(),
                 event_name: HookEventName::PreToolUse,
                 matcher: None,
-                enabled: true,
+                enabled: false,
                 status_message: None,
                 definition: serde_json::json!({
                     "type": "command",
@@ -1901,7 +1904,7 @@ enabled = true
                 display_order: 0,
             },
             PluginHookSummary {
-                key: "hooks/hooks.json:PreToolUse:0:1".to_string(),
+                key: "toolkit@debug:hooks/hooks.json:pre_tool_use:0:1".to_string(),
                 event_name: HookEventName::PreToolUse,
                 matcher: None,
                 enabled: true,
@@ -1916,7 +1919,7 @@ enabled = true
                 display_order: 1,
             },
             PluginHookSummary {
-                key: "hooks/hooks.json:SessionStart:0:0".to_string(),
+                key: "toolkit@debug:hooks/hooks.json:session_start:0:0".to_string(),
                 event_name: HookEventName::SessionStart,
                 matcher: None,
                 enabled: true,

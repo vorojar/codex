@@ -51,6 +51,8 @@ use codex_core_plugins::store::PluginInstallResult as StorePluginInstallResult;
 use codex_core_plugins::store::PluginStore;
 use codex_core_plugins::store::PluginStoreError;
 use codex_features::Feature;
+use codex_hooks::disabled_hook_keys_from_stack;
+use codex_hooks::hook_key;
 use codex_login::AuthManager;
 use codex_login::CodexAuth;
 use codex_plugin::AppConnectorId;
@@ -1135,11 +1137,11 @@ impl PluginsManager {
             ),
         )
         .await;
-        let hooks = summarize_plugin_hooks(&load_plugin_hooks(
-            &source_path,
-            &plugin_id,
-            &manifest.paths,
-        ));
+        let plugin_data_root = self.store.plugin_data_root(&plugin_id);
+        let disabled_hook_keys = disabled_hook_keys_from_stack(Some(&config.config_layer_stack));
+        let (hook_sources, _hook_load_warnings) =
+            load_plugin_hooks(&source_path, &plugin_id, &plugin_data_root, &manifest.paths);
+        let hooks = summarize_plugin_hooks(&hook_sources, &disabled_hook_keys);
         let apps = load_plugin_apps(source_path.as_path()).await;
         let mut mcp_server_names = load_plugin_mcp_servers(source_path.as_path())
             .await
@@ -1511,26 +1513,28 @@ impl PluginsManager {
     }
 }
 
-fn summarize_plugin_hooks(hook_sources: &[PluginHookSource]) -> Vec<PluginHookSummary> {
+fn summarize_plugin_hooks(
+    hook_sources: &[PluginHookSource],
+    disabled_hook_keys: &HashSet<String>,
+) -> Vec<PluginHookSummary> {
     let mut hooks = Vec::new();
     let mut display_order = 0_i64;
 
     for source in hook_sources {
+        let key_source = format!(
+            "{}:{}",
+            source.plugin_id.as_key(),
+            source.source_relative_path
+        );
         for (event_name, groups) in source.hooks.matcher_groups() {
             for (group_index, group) in groups.iter().enumerate() {
                 for (handler_index, handler) in group.hooks.iter().enumerate() {
+                    let key = hook_key(&key_source, event_name, group_index, handler_index);
                     hooks.push(PluginHookSummary {
-                        key: plugin_hook_key(
-                            &source.source_relative_path,
-                            event_name,
-                            group_index,
-                            handler_index,
-                        ),
+                        enabled: !disabled_hook_keys.contains(&key),
+                        key,
                         event_name,
                         matcher: group.matcher.clone(),
-                        // Plugin hooks do not yet have handler-level config overrides in this
-                        // branch, so every bundled handler is currently enabled by default.
-                        enabled: true,
                         status_message: plugin_hook_status_message(handler),
                         definition: serde_json::to_value(handler).unwrap_or(JsonValue::Null),
                         display_order,
@@ -1542,32 +1546,6 @@ fn summarize_plugin_hooks(hook_sources: &[PluginHookSource]) -> Vec<PluginHookSu
     }
 
     hooks
-}
-
-fn plugin_hook_key(
-    source_relative_path: &str,
-    event_name: HookEventName,
-    group_index: usize,
-    handler_index: usize,
-) -> String {
-    format!(
-        "{}:{}:{}:{}",
-        source_relative_path,
-        plugin_hook_event_label(event_name),
-        group_index,
-        handler_index
-    )
-}
-
-fn plugin_hook_event_label(event_name: HookEventName) -> &'static str {
-    match event_name {
-        HookEventName::PreToolUse => "PreToolUse",
-        HookEventName::PermissionRequest => "PermissionRequest",
-        HookEventName::PostToolUse => "PostToolUse",
-        HookEventName::SessionStart => "SessionStart",
-        HookEventName::UserPromptSubmit => "UserPromptSubmit",
-        HookEventName::Stop => "Stop",
-    }
 }
 
 fn plugin_hook_status_message(handler: &codex_config::HookHandlerConfig) -> Option<String> {

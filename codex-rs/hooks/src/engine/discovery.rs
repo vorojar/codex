@@ -402,13 +402,8 @@ fn append_matcher_groups(
                     });
                     let timeout_sec = timeout_sec.unwrap_or(600).max(1);
                     // TODO(abhinav): replace this positional suffix with a durable hook id.
-                    let key = format!(
-                        "{}:{}:{}:{}",
-                        source.key_source,
-                        hook_event_key_label(event_name),
-                        group_index,
-                        handler_index
-                    );
+                    let key =
+                        crate::hook_key(&source.key_source, event_name, group_index, handler_index);
                     let enabled =
                         source.source.is_managed() || !source.disabled_hook_keys.contains(&key);
                     hook_entries.push(HookListEntry {
@@ -451,17 +446,6 @@ fn append_matcher_groups(
                 )),
             }
         }
-    }
-}
-
-fn hook_event_key_label(event_name: codex_protocol::protocol::HookEventName) -> &'static str {
-    match event_name {
-        codex_protocol::protocol::HookEventName::PreToolUse => "pre_tool_use",
-        codex_protocol::protocol::HookEventName::PermissionRequest => "permission_request",
-        codex_protocol::protocol::HookEventName::PostToolUse => "post_tool_use",
-        codex_protocol::protocol::HookEventName::SessionStart => "session_start",
-        codex_protocol::protocol::HookEventName::UserPromptSubmit => "user_prompt_submit",
-        codex_protocol::protocol::HookEventName::Stop => "stop",
     }
 }
 

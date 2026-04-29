@@ -635,6 +635,9 @@ enabled = false
 
 [plugins."demo-plugin@codex-curated"]
 enabled = true
+
+[hooks.state."demo-plugin@codex-curated:hooks/hooks.json:pre_tool_use:0:0"]
+enabled = false
 "#,
     )?;
     write_installed_plugin(&codex_home, "codex-curated", "demo-plugin")?;
@@ -721,10 +724,10 @@ enabled = true
         response.plugin.hooks,
         vec![
             codex_app_server_protocol::PluginHookSummary {
-                key: "hooks/hooks.json:PreToolUse:0:0".to_string(),
+                key: "demo-plugin@codex-curated:hooks/hooks.json:pre_tool_use:0:0".to_string(),
                 event_name: HookEventName::PreToolUse,
                 matcher: None,
-                enabled: true,
+                enabled: false,
                 status_message: None,
                 definition: json!({
                     "type": "command",
@@ -736,7 +739,7 @@ enabled = true
                 display_order: 0,
             },
             codex_app_server_protocol::PluginHookSummary {
-                key: "hooks/hooks.json:PreToolUse:0:1".to_string(),
+                key: "demo-plugin@codex-curated:hooks/hooks.json:pre_tool_use:0:1".to_string(),
                 event_name: HookEventName::PreToolUse,
                 matcher: None,
                 enabled: true,
@@ -751,7 +754,7 @@ enabled = true
                 display_order: 1,
             },
             codex_app_server_protocol::PluginHookSummary {
-                key: "hooks/hooks.json:SessionStart:0:0".to_string(),
+                key: "demo-plugin@codex-curated:hooks/hooks.json:session_start:0:0".to_string(),
                 event_name: HookEventName::SessionStart,
                 matcher: None,
                 enabled: true,
