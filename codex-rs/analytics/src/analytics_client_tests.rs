@@ -476,40 +476,6 @@ async fn ingest_initialize(reducer: &mut AnalyticsReducer, out: &mut Vec<TrackEv
         .await;
 }
 
-async fn ingest_thread_start_with_execution_environment(
-    reducer: &mut AnalyticsReducer,
-    out: &mut Vec<TrackEventRequest>,
-    execution_environment: Option<ThreadExecutionEnvironment>,
-) {
-    reducer
-        .ingest(
-            AnalyticsFact::ClientRequest {
-                connection_id: 7,
-                request_id: RequestId::Integer(1),
-                request: Box::new(ClientRequest::ThreadStart {
-                    request_id: RequestId::Integer(1),
-                    params: ThreadStartParams {
-                        execution_environment,
-                        ..Default::default()
-                    },
-                }),
-            },
-            out,
-        )
-        .await;
-    reducer
-        .ingest(
-            AnalyticsFact::ClientResponse {
-                connection_id: 7,
-                response: Box::new(sample_thread_start_response(
-                    "thread-2", /*ephemeral*/ false, "gpt-5",
-                )),
-            },
-            out,
-        )
-        .await;
-}
-
 async fn ingest_turn_prerequisites(
     reducer: &mut AnalyticsReducer,
     out: &mut Vec<TrackEventRequest>,
@@ -2191,12 +2157,33 @@ async fn thread_execution_environment_flows_to_thread_turn_and_steer_events() {
     let mut out = Vec::new();
 
     ingest_initialize(&mut reducer, &mut out).await;
-    ingest_thread_start_with_execution_environment(
-        &mut reducer,
-        &mut out,
-        Some(ThreadExecutionEnvironment::Remote),
-    )
-    .await;
+    reducer
+        .ingest(
+            AnalyticsFact::ClientRequest {
+                connection_id: 7,
+                request_id: RequestId::Integer(1),
+                request: Box::new(ClientRequest::ThreadStart {
+                    request_id: RequestId::Integer(1),
+                    params: ThreadStartParams {
+                        execution_environment: Some(ThreadExecutionEnvironment::Remote),
+                        ..Default::default()
+                    },
+                }),
+            },
+            &mut out,
+        )
+        .await;
+    reducer
+        .ingest(
+            AnalyticsFact::ClientResponse {
+                connection_id: 7,
+                response: Box::new(sample_thread_start_response(
+                    "thread-2", /*ephemeral*/ false, "gpt-5",
+                )),
+            },
+            &mut out,
+        )
+        .await;
 
     let thread_payload = serde_json::to_value(&out[0]).expect("serialize thread event");
     assert_eq!(

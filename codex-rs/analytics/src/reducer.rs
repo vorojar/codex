@@ -123,13 +123,11 @@ impl ThreadMetadataState {
 }
 
 enum RequestState {
-    ThreadInitialized(PendingThreadInitializedState),
+    ThreadInitialized {
+        execution_environment: Option<ThreadExecutionEnvironment>,
+    },
     TurnStart(PendingTurnStartState),
     TurnSteer(PendingTurnSteerState),
-}
-
-struct PendingThreadInitializedState {
-    execution_environment: Option<ThreadExecutionEnvironment>,
 }
 
 struct PendingTurnStartState {
@@ -331,25 +329,25 @@ impl AnalyticsReducer {
             ClientRequest::ThreadStart { params, .. } => {
                 self.requests.insert(
                     (connection_id, request_id),
-                    RequestState::ThreadInitialized(PendingThreadInitializedState {
+                    RequestState::ThreadInitialized {
                         execution_environment: params.execution_environment,
-                    }),
+                    },
                 );
             }
             ClientRequest::ThreadResume { params, .. } => {
                 self.requests.insert(
                     (connection_id, request_id),
-                    RequestState::ThreadInitialized(PendingThreadInitializedState {
+                    RequestState::ThreadInitialized {
                         execution_environment: params.execution_environment,
-                    }),
+                    },
                 );
             }
             ClientRequest::ThreadFork { params, .. } => {
                 self.requests.insert(
                     (connection_id, request_id),
-                    RequestState::ThreadInitialized(PendingThreadInitializedState {
+                    RequestState::ThreadInitialized {
                         execution_environment: params.execution_environment,
-                    }),
+                    },
                 );
             }
             ClientRequest::TurnStart { params, .. } => {
@@ -631,7 +629,7 @@ impl AnalyticsReducer {
         out: &mut Vec<TrackEventRequest>,
     ) {
         match request {
-            RequestState::ThreadInitialized(_) => {}
+            RequestState::ThreadInitialized { .. } => {}
             RequestState::TurnStart(_) => {}
             RequestState::TurnSteer(pending_request) => {
                 self.ingest_turn_steer_error_response(
@@ -769,10 +767,10 @@ impl AnalyticsReducer {
         request_id: RequestId,
     ) -> Option<ThreadExecutionEnvironment> {
         match self.requests.remove(&(connection_id, request_id)) {
-            Some(RequestState::ThreadInitialized(pending_request)) => {
-                pending_request.execution_environment
-            }
-            _ => None,
+            Some(RequestState::ThreadInitialized {
+                execution_environment,
+            }) => execution_environment,
+            Some(RequestState::TurnStart(_)) | Some(RequestState::TurnSteer(_)) | None => None,
         }
     }
 
