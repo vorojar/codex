@@ -1,10 +1,10 @@
-use std::collections::BTreeMap;
 use std::collections::HashSet;
 
 use codex_config::ConfigLayerSource;
 use codex_config::ConfigLayerStack;
 use codex_config::ConfigLayerStackOrdering;
 use codex_config::HookStateToml;
+use codex_config::TomlValue;
 
 /// Build hook enablement rules from config layers that are allowed to override
 /// user preferences.
@@ -39,14 +39,17 @@ pub(crate) fn disabled_hook_keys_from_stack(
         else {
             continue;
         };
-        let state_by_key: BTreeMap<String, HookStateToml> = match state_value.clone().try_into() {
-            Ok(state_by_key) => state_by_key,
-            Err(_) => {
-                continue;
-            }
+        let TomlValue::Table(state_by_key) = state_value else {
+            continue;
         };
 
-        for (key, state) in state_by_key {
+        for (key, state_value) in state_by_key {
+            let state: HookStateToml = match state_value.clone().try_into() {
+                Ok(state) => state,
+                Err(_) => {
+                    continue;
+                }
+            };
             let key = key.trim();
             if key.is_empty() {
                 continue;
@@ -116,6 +119,46 @@ mod tests {
             "SessionStart".to_string(),
             TomlValue::String("not a matcher list".to_string()),
         );
+        let stack = ConfigLayerStack::new(
+            vec![ConfigLayerEntry::new(
+                ConfigLayerSource::User {
+                    file: test_path_buf("/tmp/config.toml").abs(),
+                },
+                config,
+            )],
+            Default::default(),
+            Default::default(),
+        )
+        .expect("config layer stack");
+
+        assert_eq!(
+            disabled_hook_keys_from_stack(Some(&stack)),
+            HashSet::from([key.to_string()])
+        );
+    }
+
+    #[test]
+    fn disabled_hook_keys_from_stack_ignores_malformed_state_entries() {
+        let key = "file:/tmp/hooks.json:pre_tool_use:0:0";
+        let mut config = config_with_hook_override(key, Some(/*enabled*/ false));
+        let TomlValue::Table(config_entries) = &mut config else {
+            unreachable!("config root should be a table");
+        };
+        let Some(TomlValue::Table(hook_entries)) = config_entries.get_mut("hooks") else {
+            unreachable!("hooks should be a table");
+        };
+        let Some(TomlValue::Table(state_entries)) = hook_entries.get_mut("state") else {
+            unreachable!("state should be a table");
+        };
+        let mut malformed_state = TomlValue::Table(Default::default());
+        let TomlValue::Table(malformed_state_entries) = &mut malformed_state else {
+            unreachable!("malformed state should be a table");
+        };
+        malformed_state_entries.insert(
+            "enabled".to_string(),
+            TomlValue::String("not a bool".to_string()),
+        );
+        state_entries.insert("malformed".to_string(), malformed_state);
         let stack = ConfigLayerStack::new(
             vec![ConfigLayerEntry::new(
                 ConfigLayerSource::User {
