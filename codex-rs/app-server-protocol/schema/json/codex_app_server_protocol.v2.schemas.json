@@ -130,6 +130,26 @@
       "title": "AccountUpdatedNotification",
       "type": "object"
     },
+    "ActivePermissionProfile": {
+      "properties": {
+        "extends": {
+          "default": null,
+          "description": "Parent profile identifier once permissions profiles support inheritance. This is currently always `null`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "id": {
+          "description": "Identifier from `default_permissions` or the implicit built-in default, such as `:workspace` or a user-defined `[permissions.<id>]` profile.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id"
+      ],
+      "type": "object"
+    },
     "AddCreditsNudgeCreditType": {
       "enum": [
         "credits",
@@ -12604,7 +12624,7 @@
               "$ref": "#/definitions/SandboxPolicy"
             }
           ],
-          "description": "Legacy sandbox policy retained for compatibility. New clients should use `permissionProfile` when present as the canonical active permissions view."
+          "description": "Legacy sandbox policy retained for compatibility. Experimental clients should prefer `permissionProfile` when they need exact runtime permissions."
         },
         "serviceTier": {
           "anyOf": [
@@ -14115,7 +14135,7 @@
               "$ref": "#/definitions/SandboxPolicy"
             }
           ],
-          "description": "Legacy sandbox policy retained for compatibility. New clients should use `permissionProfile` when present as the canonical active permissions view."
+          "description": "Legacy sandbox policy retained for compatibility. Experimental clients should prefer `permissionProfile` when they need exact runtime permissions."
         },
         "serviceTier": {
           "anyOf": [
@@ -14419,7 +14439,7 @@
               "$ref": "#/definitions/SandboxPolicy"
             }
           ],
-          "description": "Legacy sandbox policy retained for compatibility. New clients should use `permissionProfile` when present as the canonical active permissions view."
+          "description": "Legacy sandbox policy retained for compatibility. Experimental clients should prefer `permissionProfile` when they need exact runtime permissions."
         },
         "serviceTier": {
           "anyOf": [
