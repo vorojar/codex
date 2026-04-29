@@ -12,6 +12,7 @@ use crate::config_api::ConfigApi;
 use crate::config_manager::ConfigManager;
 use crate::connection_rpc_gate::ConnectionRpcGate;
 use crate::device_key_api::DeviceKeyApi;
+use crate::error_code::internal_error;
 use crate::error_code::invalid_request;
 use crate::external_agent_config_api::ExternalAgentConfigApi;
 use crate::fs_api::FsApi;
@@ -61,9 +62,11 @@ use codex_app_server_protocol::JSONRPCResponse;
 use codex_app_server_protocol::ModelProviderCapabilitiesReadResponse;
 use codex_app_server_protocol::ServerNotification;
 use codex_app_server_protocol::ServerRequestPayload;
+use codex_app_server_protocol::WriteStatus;
 use codex_app_server_protocol::experimental_required_message;
 use codex_arg0::Arg0DispatchPaths;
 use codex_chatgpt::connectors;
+use codex_config::CONFIG_TOML_FILE;
 use codex_core::ThreadManager;
 use codex_core::config::Config;
 use codex_exec_server::EnvironmentManager;
@@ -85,6 +88,7 @@ use codex_protocol::ThreadId;
 use codex_protocol::protocol::SessionSource;
 use codex_protocol::protocol::W3cTraceContext;
 use codex_state::log_db::LogDbLayer;
+use codex_utils_absolute_path::AbsolutePathBuf;
 use futures::FutureExt;
 use serde_json::Value as JsonValue;
 use tokio::sync::broadcast;
@@ -166,6 +170,7 @@ pub(crate) struct MessageProcessor {
     outgoing: Arc<OutgoingMessageSender>,
     codex_message_processor: CodexMessageProcessor,
     thread_manager: Arc<ThreadManager>,
+    config_manager: ConfigManager,
     config_api: ConfigApi,
     device_key_api: DeviceKeyApi,
     external_agent_config_api: ExternalAgentConfigApi,
@@ -326,7 +331,7 @@ impl MessageProcessor {
                 .maybe_start_plugin_startup_tasks_for_config(&config, auth_manager.clone());
         }
         let config_api = ConfigApi::new(
-            config_manager,
+            config_manager.clone(),
             thread_manager.clone(),
             analytics_events_client.clone(),
         );
@@ -346,6 +351,7 @@ impl MessageProcessor {
             outgoing,
             codex_message_processor,
             thread_manager: Arc::clone(&thread_manager),
+            config_manager,
             config_api,
             device_key_api,
             external_agent_config_api,
@@ -994,8 +1000,8 @@ impl MessageProcessor {
         request_id: ConnectionRequestId,
         params: ConfigValueWriteParams,
     ) {
-        let result = if let Some(write) = remote_plugin_enabled_config_value_write(&params) {
-            self.write_remote_plugin_enabled_config_value(params, write)
+        let result = if is_remote_plugin_enable_or_disable_value_message(&params) {
+            self.remote_plugin_enable_or_disable_value_message(params)
                 .await
         } else {
             self.config_api.write_value(params).await
@@ -1008,83 +1014,73 @@ impl MessageProcessor {
         request_id: ConnectionRequestId,
         params: ConfigBatchWriteParams,
     ) {
-        let result = match remote_plugin_enabled_config_batch_write(&params) {
-            Ok(Some(write)) => {
-                self.write_remote_plugin_enabled_config_batch(params, write)
+        let result = async {
+            if is_remote_plugin_enable_or_disable_batch_message(&params)? {
+                self.remote_plugin_enable_or_disable_batch_message(params)
                     .await
+            } else {
+                self.config_api.batch_write(params).await
             }
-            Ok(None) => self.config_api.batch_write(params).await,
-            Err(err) => Err(err),
-        };
+        }
+        .await;
         self.handle_config_mutation_result(request_id, result).await;
     }
 
-    async fn write_remote_plugin_enabled_config_value(
+    async fn remote_plugin_enable_or_disable_value_message(
         &self,
         params: ConfigValueWriteParams,
-        write: RemotePluginEnabledConfigEdit,
     ) -> Result<ConfigWriteResponse, JSONRPCErrorError> {
-        let ConfigValueWriteParams {
-            file_path,
-            expected_version,
-            ..
-        } = params;
-
-        let response = self
-            .config_api
-            .batch_write(ConfigBatchWriteParams {
-                edits: Vec::new(),
-                file_path,
-                expected_version,
-                reload_user_config: false,
-            })
-            .await?;
+        let action = remote_plugin_enable_or_disable_edit(&params.key_path, &params.value)
+            .ok_or_else(|| invalid_request("invalid remote plugin enablement message"))?;
         self.codex_message_processor
-            .sync_remote_plugin_enabled_config_write(write.plugin_id, write.enabled)
+            .remote_plugin_enable_or_disable(action.plugin_id, action.enabled)
             .await?;
-        Ok(response)
+        self.remote_plugin_enable_or_disable_response().await
     }
 
-    async fn write_remote_plugin_enabled_config_batch(
+    async fn remote_plugin_enable_or_disable_batch_message(
         &self,
         params: ConfigBatchWriteParams,
-        write: RemotePluginEnabledConfigBatchWrite,
     ) -> Result<ConfigWriteResponse, JSONRPCErrorError> {
-        let ConfigBatchWriteParams {
-            file_path,
-            expected_version,
-            reload_user_config,
-            ..
-        } = params;
+        let batch = remote_plugin_enable_or_disable_batch(&params)?
+            .ok_or_else(|| invalid_request("invalid remote plugin enablement message"))?;
 
-        let response = self
-            .config_api
-            .batch_write(ConfigBatchWriteParams {
-                edits: Vec::new(),
-                file_path: file_path.clone(),
-                expected_version,
-                reload_user_config: false,
-            })
-            .await?;
-
-        for (plugin_id, enabled) in write.toggles {
+        for (plugin_id, enabled) in batch.actions {
             self.codex_message_processor
-                .sync_remote_plugin_enabled_config_write(plugin_id, enabled)
+                .remote_plugin_enable_or_disable(plugin_id, enabled)
                 .await?;
         }
 
-        if reload_user_config {
-            self.config_api
-                .batch_write(ConfigBatchWriteParams {
-                    edits: Vec::new(),
-                    file_path,
-                    expected_version: None,
-                    reload_user_config: true,
-                })
-                .await?;
-        }
+        self.remote_plugin_enable_or_disable_response().await
+    }
 
-        Ok(response)
+    async fn remote_plugin_enable_or_disable_response(
+        &self,
+    ) -> Result<ConfigWriteResponse, JSONRPCErrorError> {
+        let file_path = AbsolutePathBuf::resolve_path_against_base(
+            CONFIG_TOML_FILE,
+            self.config_manager.codex_home(),
+        );
+        let layers = self
+            .config_manager
+            .load_config_layers(/*cwd*/ None)
+            .await
+            .map_err(|err| {
+                internal_error(format!(
+                    "failed to read config metadata after remote plugin mutation: {err}"
+                ))
+            })?;
+        let version = layers
+            .get_user_layer()
+            .map(|layer| layer.version.clone())
+            .unwrap_or_default();
+
+        Ok(ConfigWriteResponse {
+            status: WriteStatus::Ok,
+            version,
+            file_path,
+            overridden_metadata: None,
+        })
     }
 
     async fn handle_experimental_feature_enablement_set(
@@ -1369,36 +1365,40 @@ fn migration_items_need_runtime_refresh(items: &[ExternalAgentConfigMigrationIte
     })
 }
 
-struct RemotePluginEnabledConfigEdit {
+struct RemotePluginEnableOrDisable {
     plugin_id: String,
     enabled: bool,
 }
 
-struct RemotePluginEnabledConfigBatchWrite {
-    toggles: BTreeMap<String, bool>,
+struct RemotePluginEnableOrDisableBatch {
+    actions: BTreeMap<String, bool>,
 }
 
-fn remote_plugin_enabled_config_value_write(
-    params: &ConfigValueWriteParams,
-) -> Option<RemotePluginEnabledConfigEdit> {
-    remote_plugin_enabled_config_edit(&params.key_path, &params.value)
+fn is_remote_plugin_enable_or_disable_value_message(params: &ConfigValueWriteParams) -> bool {
+    remote_plugin_enable_or_disable_edit(&params.key_path, &params.value).is_some()
 }
 
-fn remote_plugin_enabled_config_batch_write(
+fn is_remote_plugin_enable_or_disable_batch_message(
     params: &ConfigBatchWriteParams,
-) -> Result<Option<RemotePluginEnabledConfigBatchWrite>, JSONRPCErrorError> {
-    let mut toggles = BTreeMap::<String, bool>::new();
+) -> Result<bool, JSONRPCErrorError> {
+    Ok(remote_plugin_enable_or_disable_batch(params)?.is_some())
+}
+
+fn remote_plugin_enable_or_disable_batch(
+    params: &ConfigBatchWriteParams,
+) -> Result<Option<RemotePluginEnableOrDisableBatch>, JSONRPCErrorError> {
+    let mut actions = BTreeMap::<String, bool>::new();
     let mut has_local_edits = false;
 
     for edit in &params.edits {
-        if let Some(edit) = remote_plugin_enabled_config_edit(&edit.key_path, &edit.value) {
-            toggles.insert(edit.plugin_id, edit.enabled);
+        if let Some(action) = remote_plugin_enable_or_disable_edit(&edit.key_path, &edit.value) {
+            actions.insert(action.plugin_id, action.enabled);
         } else {
             has_local_edits = true;
         }
     }
 
-    if toggles.is_empty() {
+    if actions.is_empty() {
         return Ok(None);
     }
 
@@ -1408,13 +1408,13 @@ fn remote_plugin_enabled_config_batch_write(
         ));
     }
 
-    Ok(Some(RemotePluginEnabledConfigBatchWrite { toggles }))
+    Ok(Some(RemotePluginEnableOrDisableBatch { actions }))
 }
 
-fn remote_plugin_enabled_config_edit(
+fn remote_plugin_enable_or_disable_edit(
     key_path: &str,
     value: &JsonValue,
-) -> Option<RemotePluginEnabledConfigEdit> {
+) -> Option<RemotePluginEnableOrDisable> {
     let enabled = value.as_bool()?;
     let mut segments = key_path.split('.');
     let table = segments.next()?;
@@ -1425,7 +1425,7 @@ fn remote_plugin_enabled_config_edit(
         && segments.next().is_none()
         && is_remote_plugin_config_id(plugin_id)
     {
-        return Some(RemotePluginEnabledConfigEdit {
+        return Some(RemotePluginEnableOrDisable {
             plugin_id: plugin_id.to_string(),
             enabled,
         });

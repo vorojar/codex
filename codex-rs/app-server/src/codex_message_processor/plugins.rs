@@ -4,7 +4,7 @@ use crate::error_code::invalid_request;
 use codex_app_server_protocol::PluginInstallPolicy;
 
 impl CodexMessageProcessor {
-    pub(crate) async fn sync_remote_plugin_enabled_config_write(
+    pub(crate) async fn remote_plugin_enable_or_disable(
         &self,
         plugin_id: String,
         enabled: bool,
