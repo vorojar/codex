@@ -566,6 +566,7 @@ fn server_notification_thread_events(
                         msg: EventMsg::ItemStarted(ItemStartedEvent {
                             thread_id: ThreadId::from_string(&notification.thread_id).ok()?,
                             turn_id: notification.turn_id.clone(),
+                            started_at_ms: notification.started_at_ms,
                             item: thread_item_to_core(&notification.item)?,
                         }),
                     }])
@@ -581,6 +582,8 @@ fn server_notification_thread_events(
                         msg: EventMsg::ItemCompleted(ItemCompletedEvent {
                             thread_id: ThreadId::from_string(&notification.thread_id).ok()?,
                             turn_id: notification.turn_id.clone(),
+                            started_at_ms: notification.started_at_ms,
+                            completed_at_ms: notification.completed_at_ms,
                             item: thread_item_to_core(&notification.item)?,
                         }),
                     }])
@@ -750,6 +753,8 @@ fn turn_snapshot_events(
                     msg: EventMsg::ItemCompleted(ItemCompletedEvent {
                         thread_id,
                         turn_id: turn.id.clone(),
+                        started_at_ms: None,
+                        completed_at_ms: None,
                         item,
                     }),
                 });
@@ -1121,6 +1126,8 @@ mod tests {
                 },
                 thread_id: thread_id.clone(),
                 turn_id: turn_id.clone(),
+                started_at_ms: Some(100),
+                completed_at_ms: Some(200),
             }),
         )
         .expect("notification should bridge");
@@ -1141,6 +1148,8 @@ mod tests {
             ThreadId::from_string(&thread_id).expect("valid thread id")
         );
         assert_eq!(completed.turn_id, turn_id);
+        assert_eq!(completed.started_at_ms, Some(100));
+        assert_eq!(completed.completed_at_ms, Some(200));
         match &completed.item {
             TurnItem::AgentMessage(AgentMessageItem {
                 id, content, phase, ..
@@ -1218,6 +1227,7 @@ mod tests {
                 item,
                 thread_id: thread_id.clone(),
                 turn_id: turn_id.clone(),
+                started_at_ms: Some(100),
             }),
         )
         .expect("command execution start should bridge");
@@ -1273,6 +1283,8 @@ mod tests {
                 item: completed_item,
                 thread_id,
                 turn_id,
+                started_at_ms: Some(100),
+                completed_at_ms: Some(105),
             }),
         )
         .expect("command execution completion should bridge");

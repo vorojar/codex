@@ -184,6 +184,7 @@ async fn live_app_server_review_prompt_item_is_not_rendered() {
         ServerNotification::ItemStarted(ItemStartedNotification {
             thread_id: "thread-1".to_string(),
             turn_id: "turn-1".to_string(),
+            started_at_ms: None,
             item: review_mode_item.clone(),
         }),
         /*replay_kind*/ None,
@@ -196,6 +197,8 @@ async fn live_app_server_review_prompt_item_is_not_rendered() {
         ServerNotification::ItemCompleted(ItemCompletedNotification {
             thread_id: "thread-1".to_string(),
             turn_id: "turn-1".to_string(),
+            started_at_ms: None,
+            completed_at_ms: None,
             item: review_mode_item,
         }),
         /*replay_kind*/ None,
@@ -206,6 +209,8 @@ async fn live_app_server_review_prompt_item_is_not_rendered() {
         ServerNotification::ItemCompleted(ItemCompletedNotification {
             thread_id: "thread-1".to_string(),
             turn_id: "turn-1".to_string(),
+            started_at_ms: None,
+            completed_at_ms: None,
             item: AppServerThreadItem::UserMessage {
                 id: "review-prompt".to_string(),
                 content: vec![AppServerUserInput::Text {

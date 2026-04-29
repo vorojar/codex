@@ -580,6 +580,8 @@ pub(super) fn complete_assistant_message(
         msg: EventMsg::ItemCompleted(ItemCompletedEvent {
             thread_id: ThreadId::new(),
             turn_id: "turn-1".to_string(),
+            started_at_ms: None,
+            completed_at_ms: None,
             item: TurnItem::AgentMessage(AgentMessageItem {
                 id: item_id.to_string(),
                 content: vec![AgentMessageContent::Text {
@@ -624,6 +626,8 @@ pub(super) fn complete_user_message_for_inputs(
         msg: EventMsg::ItemCompleted(ItemCompletedEvent {
             thread_id: ThreadId::new(),
             turn_id: "turn-1".to_string(),
+            started_at_ms: None,
+            completed_at_ms: None,
             item: TurnItem::UserMessage(UserMessageItem {
                 id: item_id.to_string(),
                 content,

@@ -81,6 +81,8 @@ async fn thread_snapshot_replay_does_not_duplicate_agent_message_history() {
         msg: EventMsg::ItemCompleted(ItemCompletedEvent {
             thread_id: ThreadId::new(),
             turn_id: "turn-1".to_string(),
+            started_at_ms: None,
+            completed_at_ms: None,
             item: TurnItem::AgentMessage(AgentMessageItem {
                 id: "msg-1".to_string(),
                 content: vec![AgentMessageContent::Text {
@@ -881,6 +883,8 @@ async fn live_reasoning_summary_is_not_rendered_twice_when_item_completes() {
         ServerNotification::ItemCompleted(ItemCompletedNotification {
             thread_id: "thread-1".to_string(),
             turn_id: "turn-1".to_string(),
+            started_at_ms: None,
+            completed_at_ms: None,
             item: AppServerThreadItem::Reasoning {
                 id: "reasoning-1".to_string(),
                 summary: vec!["Summary only".to_string()],

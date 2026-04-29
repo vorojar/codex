@@ -1286,6 +1286,8 @@ async fn slash_copy_state_tracks_plan_item_completion() {
         msg: EventMsg::ItemCompleted(ItemCompletedEvent {
             thread_id: ThreadId::new(),
             turn_id: "turn-1".to_string(),
+            started_at_ms: None,
+            completed_at_ms: None,
             item: TurnItem::Plan(PlanItem {
                 id: "plan-1".to_string(),
                 text: plan_text.clone(),

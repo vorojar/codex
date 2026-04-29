@@ -111,6 +111,7 @@ async fn handle_message_submission(
             .await
             .map_err(|err| collab_agent_error(receiver_thread_id, err))?;
     }
+    let timing = ToolExecutionTiming::start();
     session
         .send_event(
             &turn,
@@ -119,6 +120,7 @@ async fn handle_message_submission(
                 sender_thread_id: session.conversation_id,
                 receiver_thread_id,
                 prompt: prompt.clone(),
+                started_at_ms: timing.started_at_ms(),
             }
             .into(),
         )
@@ -146,6 +148,7 @@ async fn handle_message_submission(
         .agent_control
         .get_status(receiver_thread_id)
         .await;
+    let (started_at_ms, completed_at_ms, duration_ms) = timing.finish();
     session
         .send_event(
             &turn,
@@ -157,6 +160,9 @@ async fn handle_message_submission(
                 receiver_agent_role: receiver_agent.agent_role,
                 prompt,
                 status,
+                started_at_ms,
+                completed_at_ms,
+                duration_ms,
             }
             .into(),
         )
