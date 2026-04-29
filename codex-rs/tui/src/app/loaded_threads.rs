@@ -171,21 +171,21 @@ mod tests {
 
         let mut child = test_thread(
             child_thread_id,
-            thread_spawn_source(primary_thread_id, 1, "Scout", "explorer"),
+            thread_spawn_source(primary_thread_id, /*depth*/ 1, "Scout", "explorer"),
         );
         child.agent_nickname = Some("Scout".to_string());
         child.agent_role = Some("explorer".to_string());
 
         let mut grandchild = test_thread(
             grandchild_thread_id,
-            thread_spawn_source(child_thread_id, 2, "Atlas", "worker"),
+            thread_spawn_source(child_thread_id, /*depth*/ 2, "Atlas", "worker"),
         );
         grandchild.agent_nickname = Some("Atlas".to_string());
         grandchild.agent_role = Some("worker".to_string());
 
         let unrelated_child = test_thread(
             unrelated_child_id,
-            thread_spawn_source(unrelated_parent_id, 1, "Other", "researcher"),
+            thread_spawn_source(unrelated_parent_id, /*depth*/ 1, "Other", "researcher"),
         );
 
         let loaded = find_loaded_subagent_threads_for_primary(

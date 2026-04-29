@@ -633,7 +633,7 @@ mod tests {
                 reasoning_effort: Some(ReasoningEffortConfig::High),
                 agents_states: HashMap::from([(
                     robie_id.to_string(),
-                    agent_state(CollabAgentStatus::PendingInit, None),
+                    agent_state(CollabAgentStatus::PendingInit, /*message*/ None),
                 )]),
             },
             /*cached_spawn_request*/ None,
@@ -653,7 +653,7 @@ mod tests {
                 reasoning_effort: None,
                 agents_states: HashMap::from([(
                     robie_id.to_string(),
-                    agent_state(CollabAgentStatus::Running, None),
+                    agent_state(CollabAgentStatus::Running, /*message*/ None),
                 )]),
             },
             /*cached_spawn_request*/ None,
@@ -800,7 +800,7 @@ mod tests {
                 reasoning_effort: Some(ReasoningEffortConfig::High),
                 agents_states: HashMap::from([(
                     robie_id.to_string(),
-                    agent_state(CollabAgentStatus::PendingInit, None),
+                    agent_state(CollabAgentStatus::PendingInit, /*message*/ None),
                 )]),
             },
             /*cached_spawn_request*/ None,
@@ -839,7 +839,7 @@ mod tests {
                 reasoning_effort: None,
                 agents_states: HashMap::from([(
                     robie_id.to_string(),
-                    agent_state(CollabAgentStatus::Interrupted, None),
+                    agent_state(CollabAgentStatus::Interrupted, /*message*/ None),
                 )]),
             },
             /*cached_spawn_request*/ None,
