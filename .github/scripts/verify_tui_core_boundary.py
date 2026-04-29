@@ -47,18 +47,6 @@ CRATE_ALIAS_PATTERNS = (
         rf"({IDENTIFIER}){TOKEN_SEPARATOR};"
     ),
 )
-GROUPED_USE_PATTERN = re.compile(
-    rf"\buse{REQUIRED_TOKEN_SEPARATOR}"
-    rf"(?:::{TOKEN_SEPARATOR})?({PATH_PREFIX}{IDENTIFIER})"
-    rf"{TOKEN_SEPARATOR}::{TOKEN_SEPARATOR}\{{([^;]*)\}}\s*;"
-)
-GROUPED_ITEM_ALIAS_PATTERN = re.compile(
-    rf"\b({PATH_PREFIX}{IDENTIFIER})"
-    rf"{REQUIRED_TOKEN_SEPARATOR}as{REQUIRED_TOKEN_SEPARATOR}"
-    rf"({IDENTIFIER})\b"
-)
-
-
 @dataclass(frozen=True)
 class UseStatement:
     start: int
@@ -392,16 +380,6 @@ def crate_alias_pairs(text: str) -> list[tuple[str, str]]:
                     normalize_identifier(match.group(2)),
                 )
             )
-    for match in GROUPED_USE_PATTERN.finditer(text):
-        group_source = normalize_path(match.group(1))
-        body = match.group(2)
-        for alias_match in GROUPED_ITEM_ALIAS_PATTERN.finditer(body):
-            source = normalize_path(alias_match.group(1))
-            if source == "self":
-                source = group_source
-            else:
-                source = join_paths(group_source, source)
-            pairs.append((source, normalize_identifier(alias_match.group(2))))
     for statement in use_statements(text):
         pairs.extend(use_tree_alias_pairs(statement.tree))
     return pairs
@@ -472,12 +450,13 @@ def use_tree_alias_pairs(tree: str) -> list[tuple[str, str]]:
     pairs = []
     for item, _offset in split_root_items(body):
         source, alias = item_alias(item)
-        if alias is None:
+        if alias is not None:
+            if source == "self":
+                pairs.append((group_source, alias))
+            else:
+                pairs.append((join_paths(group_source, source), alias))
             continue
-        if source == "self":
-            pairs.append((group_source, alias))
-        else:
-            pairs.append((join_paths(group_source, source), alias))
+        pairs.extend(use_tree_alias_pairs(join_paths(group_source, item)))
     return pairs
 
 
@@ -643,9 +622,9 @@ def use_path_matches_alias(path: str, aliases: set[str]) -> bool:
 
 def strip_root_qualifier(path: str) -> str:
     parts = path.split("::")
-    if parts and parts[0] in ("self", "crate"):
-        return "::".join(parts[1:])
-    return path
+    while parts and parts[0] in ("self", "crate", "super"):
+        parts = parts[1:]
+    return "::".join(parts)
 
 
 def item_without_alias(item: str) -> str:
