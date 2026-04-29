@@ -53,6 +53,7 @@ use codex_app_server_protocol::CodexErrorInfo;
 use codex_app_server_protocol::InitializeParams;
 use codex_app_server_protocol::RequestId;
 use codex_app_server_protocol::ServerNotification;
+use codex_app_server_protocol::TurnExecutionEnvironment;
 use codex_app_server_protocol::TurnSteerResponse;
 use codex_app_server_protocol::UserInput;
 use codex_git_utils::collect_git_info;
@@ -126,12 +127,14 @@ enum RequestState {
 struct PendingTurnStartState {
     thread_id: String,
     num_input_images: usize,
+    execution_environment: Option<TurnExecutionEnvironment>,
 }
 
 struct PendingTurnSteerState {
     thread_id: String,
     expected_turn_id: String,
     num_input_images: usize,
+    execution_environment: Option<TurnExecutionEnvironment>,
     created_at: u64,
 }
 
@@ -148,6 +151,7 @@ struct TurnState {
     thread_id: Option<String>,
     num_input_images: Option<usize>,
     resolved_config: Option<TurnResolvedConfigFact>,
+    execution_environment: Option<TurnExecutionEnvironment>,
     started_at: Option<u64>,
     token_usage: Option<TokenUsage>,
     completed: Option<CompletedTurnState>,
@@ -325,6 +329,7 @@ impl AnalyticsReducer {
                     RequestState::TurnStart(PendingTurnStartState {
                         thread_id: params.thread_id,
                         num_input_images: num_input_images(&params.input),
+                        execution_environment: params.execution_environment,
                     }),
                 );
             }
@@ -335,6 +340,7 @@ impl AnalyticsReducer {
                         thread_id: params.thread_id,
                         expected_turn_id: params.expected_turn_id,
                         num_input_images: num_input_images(&params.input),
+                        execution_environment: params.execution_environment,
                         created_at: now_unix_seconds(),
                     }),
                 );
@@ -356,6 +362,7 @@ impl AnalyticsReducer {
             thread_id: None,
             num_input_images: None,
             resolved_config: None,
+            execution_environment: None,
             started_at: None,
             token_usage: None,
             completed: None,
@@ -378,6 +385,7 @@ impl AnalyticsReducer {
             thread_id: None,
             num_input_images: None,
             resolved_config: None,
+            execution_environment: None,
             started_at: None,
             token_usage: None,
             completed: None,
@@ -539,6 +547,7 @@ impl AnalyticsReducer {
                     thread_id: None,
                     num_input_images: None,
                     resolved_config: None,
+                    execution_environment: None,
                     started_at: None,
                     token_usage: None,
                     completed: None,
@@ -547,6 +556,7 @@ impl AnalyticsReducer {
                 turn_state.connection_id = Some(connection_id);
                 turn_state.thread_id = Some(pending_request.thread_id);
                 turn_state.num_input_images = Some(pending_request.num_input_images);
+                turn_state.execution_environment = pending_request.execution_environment;
                 self.maybe_emit_turn_event(&turn_id, out);
             }
             ClientResponse::TurnSteer {
@@ -621,6 +631,7 @@ impl AnalyticsReducer {
                     thread_id: None,
                     num_input_images: None,
                     resolved_config: None,
+                    execution_environment: None,
                     started_at: None,
                     token_usage: None,
                     completed: None,
@@ -640,6 +651,7 @@ impl AnalyticsReducer {
                             thread_id: None,
                             num_input_images: None,
                             resolved_config: None,
+                            execution_environment: None,
                             started_at: None,
                             token_usage: None,
                             completed: None,
@@ -760,6 +772,9 @@ impl AnalyticsReducer {
             return;
         };
         if let Some(turn_state) = self.turns.get_mut(&response.turn_id) {
+            if pending_request.execution_environment.is_some() {
+                turn_state.execution_environment = pending_request.execution_environment;
+            }
             turn_state.steer_count += 1;
         }
         self.emit_turn_steer_event(
@@ -916,6 +931,7 @@ fn codex_turn_event_params(
         initialization_mode: thread_metadata.initialization_mode,
         subagent_source: thread_metadata.subagent_source.clone(),
         parent_thread_id: thread_metadata.parent_thread_id.clone(),
+        execution_environment: turn_state.execution_environment,
         model: Some(model),
         model_provider,
         sandbox_policy: Some(sandbox_policy_mode(

@@ -758,6 +758,7 @@ async fn turn_start_jsonrpc_span_parents_core_turn_spans() -> Result<()> {
                         text_elements: Vec::new(),
                     }],
                     responsesapi_client_metadata: None,
+                    execution_environment: None,
                     cwd: None,
                     approval_policy: None,
                     sandbox_policy: None,

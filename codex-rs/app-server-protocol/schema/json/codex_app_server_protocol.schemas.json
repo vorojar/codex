@@ -17088,6 +17088,12 @@
         ],
         "type": "object"
       },
+      "TurnExecutionEnvironment": {
+        "enum": [
+          "remote"
+        ],
+        "type": "string"
+      },
       "TurnInterruptParams": {
         "$schema": "http://json-schema.org/draft-07/schema#",
         "properties": {

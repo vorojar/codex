@@ -4091,6 +4091,12 @@
       ],
       "type": "object"
     },
+    "TurnExecutionEnvironment": {
+      "enum": [
+        "remote"
+      ],
+      "type": "string"
+    },
     "TurnInterruptParams": {
       "properties": {
         "threadId": {
