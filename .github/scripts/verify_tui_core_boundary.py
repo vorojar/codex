@@ -473,7 +473,7 @@ def use_tree_alias_pairs(tree: str) -> list[tuple[str, str]]:
         if source == "self":
             pairs.append((group_source, alias))
         else:
-            pairs.append((f"{group_source}::{source}", alias))
+            pairs.append((join_paths(group_source, source), alias))
     return pairs
 
 
@@ -539,6 +539,8 @@ def grouped_use_tree(tree: str) -> tuple[str, str, int] | None:
 
 def root_braced_body(tree: str) -> tuple[str, int] | None:
     tree = tree.strip()
+    if tree.startswith("::"):
+        tree = tree[2:].strip()
     if not tree.startswith("{"):
         return None
     close_index = matching_brace_index(tree, 0)
@@ -608,6 +610,14 @@ def item_alias(item: str) -> tuple[str, str | None]:
     if match is None:
         return "", None
     return normalize_path(match.group(1)), normalize_identifier(match.group(2))
+
+
+def join_paths(prefix: str, suffix: str) -> str:
+    if not prefix:
+        return suffix
+    if not suffix:
+        return prefix
+    return f"{prefix}::{suffix}"
 
 
 def item_without_alias(item: str) -> str:
