@@ -4,8 +4,6 @@
 //! snapshot-based so that layout regressions and status/header changes show up as stable,
 //! reviewable diffs.
 
-pub(super) use super::interrupts::ExecCommandBeginEvent;
-pub(super) use super::interrupts::ExecCommandEndEvent;
 pub(super) use super::*;
 pub(super) use crate::app_command::AppCommand as Op;
 pub(super) use crate::app_event::AppEvent;
@@ -108,6 +106,9 @@ pub(super) use codex_app_server_protocol::ThreadClosedNotification;
 pub(super) use codex_app_server_protocol::ThreadItem as AppServerThreadItem;
 pub(super) use codex_app_server_protocol::ThreadRealtimeClosedNotification;
 pub(super) use codex_app_server_protocol::ThreadRealtimeErrorNotification;
+pub(super) use codex_app_server_protocol::ToolRequestUserInputOption;
+pub(super) use codex_app_server_protocol::ToolRequestUserInputParams;
+pub(super) use codex_app_server_protocol::ToolRequestUserInputQuestion;
 pub(super) use codex_app_server_protocol::Turn as AppServerTurn;
 pub(super) use codex_app_server_protocol::TurnCompletedNotification;
 pub(super) use codex_app_server_protocol::TurnError as AppServerTurnError;
@@ -162,9 +163,6 @@ pub(super) use codex_protocol::plan_tool::PlanItemArg;
 pub(super) use codex_protocol::plan_tool::StepStatus;
 pub(super) use codex_protocol::plan_tool::UpdatePlanArgs;
 pub(super) use codex_protocol::request_permissions::RequestPermissionProfile;
-pub(super) use codex_protocol::request_user_input::RequestUserInputEvent;
-pub(super) use codex_protocol::request_user_input::RequestUserInputQuestion;
-pub(super) use codex_protocol::request_user_input::RequestUserInputQuestionOption;
 pub(super) use codex_protocol::user_input::TextElement;
 pub(super) use codex_terminal_detection::Multiplexer;
 pub(super) use codex_terminal_detection::TerminalInfo;

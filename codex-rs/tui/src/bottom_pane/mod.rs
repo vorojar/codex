@@ -31,11 +31,11 @@ use crate::render::renderable::RenderableItem;
 use crate::tui::FrameRequester;
 pub(crate) use bottom_pane_view::BottomPaneView;
 use bottom_pane_view::ViewCompletion;
+use codex_app_server_protocol::ToolRequestUserInputParams;
 use codex_core_skills::model::SkillMetadata;
 use codex_features::Features;
 use codex_file_search::FileMatch;
 use codex_plugin::PluginCapabilitySummary;
-use codex_protocol::request_user_input::RequestUserInputEvent;
 use codex_protocol::user_input::TextElement;
 use crossterm::event::KeyCode;
 use crossterm::event::KeyEvent;
@@ -1205,7 +1205,7 @@ impl BottomPane {
     }
 
     /// Called when the agent requests user input.
-    pub fn push_user_input_request(&mut self, request: RequestUserInputEvent) {
+    pub fn push_user_input_request(&mut self, request: ToolRequestUserInputParams) {
         let request = if let Some(view) = self.view_stack.last_mut() {
             match view.try_consume_user_input_request(request) {
                 Some(request) => request,

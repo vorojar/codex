@@ -106,7 +106,6 @@ use codex_app_server_protocol::PluginReadResponse;
 use codex_app_server_protocol::PluginUninstallParams;
 use codex_app_server_protocol::PluginUninstallResponse;
 use codex_app_server_protocol::RateLimitSnapshot;
-use codex_app_server_protocol::RequestId;
 use codex_app_server_protocol::SendAddCreditsNudgeEmailParams;
 use codex_app_server_protocol::ServerNotification;
 use codex_app_server_protocol::ServerRequest;
@@ -215,19 +214,6 @@ const THREAD_EVENT_CHANNEL_CAPACITY: usize = 32768;
 enum ThreadInteractiveRequest {
     Approval(ApprovalRequest),
     McpServerElicitation(McpServerElicitationFormRequest),
-}
-
-fn app_server_request_id_to_mcp_request_id(
-    request_id: &codex_app_server_protocol::RequestId,
-) -> codex_protocol::mcp::RequestId {
-    match request_id {
-        codex_app_server_protocol::RequestId::String(value) => {
-            codex_protocol::mcp::RequestId::String(value.clone())
-        }
-        codex_app_server_protocol::RequestId::Integer(value) => {
-            codex_protocol::mcp::RequestId::Integer(*value)
-        }
-    }
 }
 
 /// Extracts `receiver_thread_ids` from collab agent tool-call notifications.

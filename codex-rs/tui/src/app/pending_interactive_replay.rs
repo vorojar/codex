@@ -9,11 +9,11 @@ use std::collections::HashSet;
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 struct ElicitationRequestKey {
     server_name: String,
-    request_id: codex_protocol::mcp::RequestId,
+    request_id: AppServerRequestId,
 }
 
 impl ElicitationRequestKey {
-    fn new(server_name: String, request_id: codex_protocol::mcp::RequestId) -> Self {
+    fn new(server_name: String, request_id: AppServerRequestId) -> Self {
         Self {
             server_name,
             request_id,
@@ -207,10 +207,8 @@ impl PendingInteractiveReplayState {
                 );
             }
             ServerRequest::McpServerElicitationRequest { request_id, params } => {
-                let key = ElicitationRequestKey::new(
-                    params.server_name.clone(),
-                    app_server_request_id_to_mcp_request_id(request_id),
-                );
+                let key =
+                    ElicitationRequestKey::new(params.server_name.clone(), request_id.clone());
                 self.elicitation_requests.insert(key.clone());
                 self.pending_requests_by_request_id.insert(
                     request_id.clone(),
@@ -310,7 +308,7 @@ impl PendingInteractiveReplayState {
                 self.elicitation_requests
                     .remove(&ElicitationRequestKey::new(
                         params.server_name.clone(),
-                        app_server_request_id_to_mcp_request_id(request_id),
+                        request_id.clone(),
                     ));
             }
             ServerRequest::ToolRequestUserInput { params, .. } => {
@@ -365,7 +363,7 @@ impl PendingInteractiveReplayState {
                 .elicitation_requests
                 .contains(&ElicitationRequestKey::new(
                     params.server_name.clone(),
-                    app_server_request_id_to_mcp_request_id(request_id),
+                    request_id.clone(),
                 )),
             ServerRequest::ToolRequestUserInput { params, .. } => {
                 self.request_user_input_call_ids.contains(&params.item_id)
@@ -548,10 +546,7 @@ impl PendingInteractiveReplayState {
             (
                 PendingInteractiveRequest::Elicitation(key),
                 ServerRequest::McpServerElicitationRequest { request_id, params },
-            ) => {
-                key.server_name == params.server_name
-                    && key.request_id == app_server_request_id_to_mcp_request_id(request_id)
-            }
+            ) => key.server_name == params.server_name && key.request_id == *request_id,
             (
                 PendingInteractiveRequest::RequestPermissions { turn_id, item_id },
                 ServerRequest::PermissionsRequestApproval { params, .. },
@@ -565,15 +560,6 @@ impl PendingInteractiveReplayState {
     }
 }
 
-fn app_server_request_id_to_mcp_request_id(
-    request_id: &AppServerRequestId,
-) -> codex_protocol::mcp::RequestId {
-    match request_id {
-        AppServerRequestId::String(value) => codex_protocol::mcp::RequestId::String(value.clone()),
-        AppServerRequestId::Integer(value) => codex_protocol::mcp::RequestId::Integer(*value),
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::super::ThreadBufferedEvent;
@@ -584,6 +570,7 @@ mod tests {
     use codex_app_server_protocol::FileChangeRequestApprovalParams;
     use codex_app_server_protocol::McpElicitationObjectType;
     use codex_app_server_protocol::McpElicitationSchema;
+    use codex_app_server_protocol::McpServerElicitationAction;
     use codex_app_server_protocol::McpServerElicitationRequest;
     use codex_app_server_protocol::McpServerElicitationRequestParams;
     use codex_app_server_protocol::RequestId as AppServerRequestId;
@@ -592,6 +579,7 @@ mod tests {
     use codex_app_server_protocol::ServerRequestResolvedNotification;
     use codex_app_server_protocol::ThreadClosedNotification;
     use codex_app_server_protocol::ToolRequestUserInputParams;
+    use codex_app_server_protocol::ToolRequestUserInputResponse;
     use codex_app_server_protocol::Turn;
     use codex_app_server_protocol::TurnCompletedNotification;
     use codex_app_server_protocol::TurnStatus;
@@ -723,7 +711,7 @@ mod tests {
 
         store.note_outbound_op(&Op::UserInputAnswer {
             id: "turn-1".to_string(),
-            response: codex_protocol::request_user_input::RequestUserInputResponse {
+            response: ToolRequestUserInputResponse {
                 answers: HashMap::new(),
             },
         });
@@ -808,7 +796,7 @@ mod tests {
 
         store.note_outbound_op(&Op::UserInputAnswer {
             id: "turn-1".to_string(),
-            response: codex_protocol::request_user_input::RequestUserInputResponse {
+            response: ToolRequestUserInputResponse {
                 answers: HashMap::new(),
             },
         });
@@ -832,7 +820,7 @@ mod tests {
 
         store.note_outbound_op(&Op::UserInputAnswer {
             id: "turn-1".to_string(),
-            response: codex_protocol::request_user_input::RequestUserInputResponse {
+            response: ToolRequestUserInputResponse {
                 answers: HashMap::new(),
             },
         });
@@ -887,13 +875,13 @@ mod tests {
     #[test]
     fn thread_event_snapshot_drops_resolved_elicitation_after_outbound_resolution() {
         let mut store = ThreadEventStore::new(/*capacity*/ 8);
-        let request_id = codex_protocol::mcp::RequestId::String("request-1".to_string());
+        let request_id = AppServerRequestId::String("request-1".to_string());
         store.push_request(elicitation_request("server-1", "request-1", "turn-1"));
 
         store.note_outbound_op(&Op::ResolveElicitation {
             server_name: "server-1".to_string(),
             request_id,
-            decision: codex_protocol::approvals::ElicitationAction::Accept,
+            decision: McpServerElicitationAction::Accept,
             content: None,
             meta: None,
         });

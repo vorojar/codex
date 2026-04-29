@@ -21,7 +21,6 @@ use crate::exec_cell::spinner;
 use crate::exec_command::relativize_to_home;
 use crate::exec_command::strip_bash_lc_and_escape;
 use crate::legacy_core::config::Config;
-use crate::legacy_core::web_search_detail;
 use crate::live_wrap::take_prefix_by_width;
 use crate::markdown::append_markdown;
 use crate::render::line_utils::line_to_static;
@@ -52,6 +51,9 @@ use codex_app_server_protocol::McpServerStatusDetail;
 use codex_app_server_protocol::PermissionProfile as AppServerPermissionProfile;
 use codex_app_server_protocol::PermissionProfileFileSystemPermissions;
 use codex_app_server_protocol::PermissionProfileNetworkPermissions;
+use codex_app_server_protocol::ToolRequestUserInputAnswer;
+use codex_app_server_protocol::ToolRequestUserInputQuestion;
+use codex_app_server_protocol::WebSearchAction;
 use codex_config::types::McpServerTransportConfig;
 #[cfg(test)]
 use codex_mcp::qualified_mcp_tool_name_prefix;
@@ -64,14 +66,11 @@ use codex_protocol::mcp::Resource;
 #[cfg(test)]
 use codex_protocol::mcp::ResourceTemplate;
 use codex_protocol::models::PermissionProfile;
-use codex_protocol::models::WebSearchAction;
 use codex_protocol::models::local_image_label_text;
 use codex_protocol::openai_models::ReasoningEffort as ReasoningEffortConfig;
 use codex_protocol::plan_tool::PlanItemArg;
 use codex_protocol::plan_tool::StepStatus;
 use codex_protocol::plan_tool::UpdatePlanArgs;
-use codex_protocol::request_user_input::RequestUserInputAnswer;
-use codex_protocol::request_user_input::RequestUserInputQuestion;
 use codex_protocol::user_input::TextElement;
 use codex_utils_absolute_path::AbsolutePathBuf;
 use codex_utils_cli::format_env_display;
@@ -1777,6 +1776,42 @@ fn web_search_header(completed: bool) -> &'static str {
     }
 }
 
+fn web_search_action_detail(action: &WebSearchAction) -> String {
+    match action {
+        WebSearchAction::Search { query, queries } => {
+            query.clone().filter(|q| !q.is_empty()).unwrap_or_else(|| {
+                let items = queries.as_ref();
+                let first = items
+                    .and_then(|queries| queries.first())
+                    .cloned()
+                    .unwrap_or_default();
+                if items.is_some_and(|queries| queries.len() > 1) && !first.is_empty() {
+                    format!("{first} ...")
+                } else {
+                    first
+                }
+            })
+        }
+        WebSearchAction::OpenPage { url } => url.clone().unwrap_or_default(),
+        WebSearchAction::FindInPage { url, pattern } => match (pattern, url) {
+            (Some(pattern), Some(url)) => format!("'{pattern}' in {url}"),
+            (Some(pattern), None) => format!("'{pattern}'"),
+            (None, Some(url)) => url.clone(),
+            (None, None) => String::new(),
+        },
+        WebSearchAction::Other => String::new(),
+    }
+}
+
+fn web_search_detail(action: Option<&WebSearchAction>, query: &str) -> String {
+    let detail = action.map(web_search_action_detail).unwrap_or_default();
+    if detail.is_empty() {
+        query.to_string()
+    } else {
+        detail
+    }
+}
+
 #[derive(Debug)]
 pub(crate) struct WebSearchCell {
     call_id: String,
@@ -2458,8 +2493,8 @@ pub(crate) fn new_mcp_inventory_loading(animations_enabled: bool) -> McpInventor
 /// Renders a completed (or interrupted) request_user_input exchange in history.
 #[derive(Debug)]
 pub(crate) struct RequestUserInputResultCell {
-    pub(crate) questions: Vec<RequestUserInputQuestion>,
-    pub(crate) answers: HashMap<String, RequestUserInputAnswer>,
+    pub(crate) questions: Vec<ToolRequestUserInputQuestion>,
+    pub(crate) answers: HashMap<String, ToolRequestUserInputAnswer>,
     pub(crate) interrupted: bool,
 }
 
@@ -2583,7 +2618,7 @@ fn wrap_with_prefix(
 /// Split a request_user_input answer into option labels and an optional freeform note.
 /// Notes are encoded as "user_note: <text>" entries in the answers list.
 fn split_request_user_input_answer(
-    answer: &RequestUserInputAnswer,
+    answer: &ToolRequestUserInputAnswer,
 ) -> (Vec<String>, Option<String>) {
     let mut options = Vec::new();
     let mut note = None;
@@ -3045,7 +3080,6 @@ mod tests {
     use codex_otel::RuntimeMetricsSummary;
     use codex_protocol::ThreadId;
     use codex_protocol::account::PlanType;
-    use codex_protocol::models::WebSearchAction;
     use codex_protocol::parse_command::ParsedCommand;
     use dirs::home_dir;
     use pretty_assertions::assert_eq;

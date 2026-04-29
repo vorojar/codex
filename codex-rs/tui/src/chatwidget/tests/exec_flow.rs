@@ -347,20 +347,24 @@ async fn exec_end_without_begin_uses_event_command() {
         "-lc".to_string(),
         "echo orphaned".to_string(),
     ];
-    let parsed_cmd = codex_shell_command::parse_command::parse_command(&command);
+    let command_actions = codex_shell_command::parse_command::parse_command(&command)
+        .into_iter()
+        .map(|parsed| AppServerCommandAction::from_core_with_cwd(parsed, &chat.config.cwd))
+        .collect();
+    let cwd = chat.config.cwd.clone();
     handle_exec_end(
         &mut chat,
-        ExecCommandEndEvent {
-            call_id: "call-orphan".to_string(),
+        AppServerThreadItem::CommandExecution {
+            id: "call-orphan".to_string(),
+            command: codex_shell_command::parse_command::shlex_join(&command),
+            cwd,
             process_id: None,
-            command,
-            parsed_cmd,
             source: ExecCommandSource::Agent,
-            interaction_input: None,
-            aggregated_output: "done".to_string(),
-            exit_code: 0,
-            duration: std::time::Duration::from_millis(5),
-            formatted_output: "done".to_string(),
+            status: AppServerCommandExecutionStatus::Completed,
+            command_actions,
+            aggregated_output: Some("done".to_string()),
+            exit_code: Some(0),
+            duration_ms: Some(5),
         },
     );
 

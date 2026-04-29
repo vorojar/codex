@@ -100,10 +100,13 @@ use codex_app_server_protocol::FileChangeRequestApprovalParams;
 use codex_app_server_protocol::GuardianApprovalReviewAction;
 use codex_app_server_protocol::ItemCompletedNotification;
 use codex_app_server_protocol::ItemStartedNotification;
+use codex_app_server_protocol::McpServerElicitationRequest;
+use codex_app_server_protocol::McpServerElicitationRequestParams;
 use codex_app_server_protocol::McpServerStatusDetail;
 use codex_app_server_protocol::ModelVerification as AppServerModelVerification;
 use codex_app_server_protocol::RateLimitReachedType;
 use codex_app_server_protocol::RateLimitSnapshot;
+use codex_app_server_protocol::RequestId as AppServerRequestId;
 use codex_app_server_protocol::ReviewTarget;
 use codex_app_server_protocol::ServerNotification;
 use codex_app_server_protocol::ServerRequest;
@@ -139,7 +142,6 @@ use codex_otel::SessionTelemetry;
 use codex_plugin::PluginCapabilitySummary;
 use codex_protocol::ThreadId;
 use codex_protocol::account::PlanType;
-use codex_protocol::approvals::ElicitationRequestEvent;
 use codex_protocol::approvals::GuardianAssessmentAction;
 use codex_protocol::approvals::GuardianAssessmentDecisionSource;
 use codex_protocol::approvals::GuardianAssessmentEvent;
@@ -160,8 +162,6 @@ use codex_protocol::parse_command::ParsedCommand;
 use codex_protocol::plan_tool::PlanItemArg as UpdatePlanItemArg;
 use codex_protocol::plan_tool::StepStatus as UpdatePlanItemStatus;
 use codex_protocol::request_permissions::RequestPermissionsEvent;
-use codex_protocol::request_user_input::RequestUserInputEvent;
-use codex_protocol::request_user_input::RequestUserInputQuestionOption;
 use codex_protocol::user_input::ByteRange;
 use codex_protocol::user_input::TextElement;
 use codex_terminal_detection::Multiplexer;
@@ -321,12 +321,7 @@ use self::goal_status::GoalStatusState;
 use self::goal_status::goal_status_indicator_from_app_goal;
 mod goal_menu;
 mod interrupts;
-use self::interrupts::ExecCommandBeginEvent;
-use self::interrupts::ExecCommandEndEvent;
 use self::interrupts::InterruptManager;
-use self::interrupts::McpToolCallBeginEvent;
-use self::interrupts::McpToolCallEndEvent;
-use self::interrupts::PatchApplyEndEvent;
 mod keymap_picker;
 mod mcp_startup;
 use self::mcp_startup::McpStartupStatus;
@@ -437,6 +432,20 @@ fn is_standard_tool_call(parsed_cmd: &[ParsedCommand]) -> bool {
         && parsed_cmd
             .iter()
             .all(|parsed| !matches!(parsed, ParsedCommand::Unknown { .. }))
+}
+
+fn command_execution_command_and_parsed(
+    command: &str,
+    command_actions: &[codex_app_server_protocol::CommandAction],
+) -> (Vec<String>, Vec<ParsedCommand>) {
+    (
+        split_command_string(command),
+        command_actions
+            .iter()
+            .cloned()
+            .map(codex_app_server_protocol::CommandAction::into_core)
+            .collect(),
+    )
 }
 
 const RATE_LIMIT_WARNING_THRESHOLDS: [f64; 3] = [75.0, 90.0, 95.0];
@@ -1557,19 +1566,6 @@ impl ThreadItemRenderSource {
     }
 }
 
-fn app_server_request_id_to_mcp_request_id(
-    request_id: &codex_app_server_protocol::RequestId,
-) -> codex_protocol::mcp::RequestId {
-    match request_id {
-        codex_app_server_protocol::RequestId::String(value) => {
-            codex_protocol::mcp::RequestId::String(value.clone())
-        }
-        codex_app_server_protocol::RequestId::Integer(value) => {
-            codex_protocol::mcp::RequestId::Integer(*value)
-        }
-    }
-}
-
 fn exec_approval_request_from_params(
     params: CommandExecutionRequestApprovalParams,
     fallback_cwd: &AbsolutePathBuf,
@@ -1617,35 +1613,6 @@ fn request_permissions_from_params(
     }
 }
 
-fn request_user_input_from_params(params: ToolRequestUserInputParams) -> RequestUserInputEvent {
-    RequestUserInputEvent {
-        turn_id: params.turn_id,
-        call_id: params.item_id,
-        questions: params
-            .questions
-            .into_iter()
-            .map(
-                |question| codex_protocol::request_user_input::RequestUserInputQuestion {
-                    id: question.id,
-                    header: question.header,
-                    question: question.question,
-                    is_other: question.is_other,
-                    is_secret: question.is_secret,
-                    options: question.options.map(|options| {
-                        options
-                            .into_iter()
-                            .map(|option| RequestUserInputQuestionOption {
-                                label: option.label,
-                                description: option.description,
-                            })
-                            .collect()
-                    }),
-                },
-            )
-            .collect(),
-    }
-}
-
 fn token_usage_info_from_app_server(token_usage: ThreadTokenUsage) -> TokenUsageInfo {
     TokenUsageInfo {
         total_token_usage: TokenUsage {
@@ -1663,25 +1630,6 @@ fn token_usage_info_from_app_server(token_usage: ThreadTokenUsage) -> TokenUsage
             reasoning_output_tokens: token_usage.last.reasoning_output_tokens,
         },
         model_context_window: token_usage.model_context_window,
-    }
-}
-
-fn web_search_action_to_core(
-    action: codex_app_server_protocol::WebSearchAction,
-) -> codex_protocol::models::WebSearchAction {
-    match action {
-        codex_app_server_protocol::WebSearchAction::Search { query, queries } => {
-            codex_protocol::models::WebSearchAction::Search { query, queries }
-        }
-        codex_app_server_protocol::WebSearchAction::OpenPage { url } => {
-            codex_protocol::models::WebSearchAction::OpenPage { url }
-        }
-        codex_app_server_protocol::WebSearchAction::FindInPage { url, pattern } => {
-            codex_protocol::models::WebSearchAction::FindInPage { url, pattern }
-        }
-        codex_app_server_protocol::WebSearchAction::Other => {
-            codex_protocol::models::WebSearchAction::Other
-        }
     }
 }
 
@@ -3631,15 +3579,20 @@ impl ChatWidget {
         self.request_redraw();
     }
 
-    fn on_elicitation_request(&mut self, ev: ElicitationRequestEvent) {
-        let ev2 = ev.clone();
+    fn on_elicitation_request(
+        &mut self,
+        request_id: AppServerRequestId,
+        params: McpServerElicitationRequestParams,
+    ) {
+        let request_id2 = request_id.clone();
+        let params2 = params.clone();
         self.defer_or_handle(
-            |q| q.push_elicitation(ev),
-            |s| s.handle_elicitation_request_now(ev2),
+            |q| q.push_elicitation(request_id, params),
+            |s| s.handle_elicitation_request_now(request_id2, params2),
         );
     }
 
-    fn on_request_user_input(&mut self, ev: RequestUserInputEvent) {
+    fn on_request_user_input(&mut self, ev: ToolRequestUserInputParams) {
         let ev2 = ev.clone();
         self.defer_or_handle(
             |q| q.push_user_input(ev),
@@ -3655,21 +3608,38 @@ impl ChatWidget {
         );
     }
 
-    fn on_exec_command_begin(&mut self, ev: ExecCommandBeginEvent) {
+    fn on_command_execution_started(&mut self, item: ThreadItem) {
+        let ThreadItem::CommandExecution {
+            id,
+            command,
+            process_id,
+            source,
+            command_actions,
+            ..
+        } = &item
+        else {
+            return;
+        };
+        let (_command, parsed_cmd) = command_execution_command_and_parsed(command, command_actions);
         self.flush_answer_stream_with_separator();
-        if is_unified_exec_source(ev.source) {
-            self.track_unified_exec_process_begin(&ev);
+        if is_unified_exec_source(*source) {
+            if *source == ExecCommandSource::UnifiedExecStartup {
+                self.track_unified_exec_process_begin(id, process_id.as_deref(), command);
+            }
             if !self.bottom_pane.is_task_running() {
                 return;
             }
             // Unified exec may be parsed as Unknown; keep the working indicator visible regardless.
             self.bottom_pane.ensure_status_indicator();
-            if !is_standard_tool_call(&ev.parsed_cmd) {
+            if !is_standard_tool_call(&parsed_cmd) {
                 return;
             }
         }
-        let ev2 = ev.clone();
-        self.defer_or_handle(|q| q.push_exec_begin(ev), |s| s.handle_exec_begin_now(ev2));
+        let item2 = item.clone();
+        self.defer_or_handle(
+            |q| q.push_item_started(item),
+            |s| s.handle_command_execution_started_now(item2),
+        );
     }
 
     fn on_exec_command_output_delta(&mut self, call_id: &str, delta: &str) {
@@ -3778,17 +3748,26 @@ impl ChatWidget {
         self.request_redraw();
     }
 
-    fn on_patch_apply_end(&mut self, event: PatchApplyEndEvent) {
-        let ev2 = event.clone();
+    fn on_file_change_completed(&mut self, item: ThreadItem) {
+        let item2 = item.clone();
         self.defer_or_handle(
-            |q| q.push_patch_end(event),
-            |s| s.handle_patch_apply_end_now(ev2),
+            |q| q.push_item_completed(item),
+            |s| s.handle_file_change_completed_now(item2),
         );
     }
 
-    fn on_exec_command_end(&mut self, ev: ExecCommandEndEvent) {
-        if is_unified_exec_source(ev.source) {
-            if let Some(process_id) = ev.process_id.as_deref()
+    fn on_command_execution_completed(&mut self, item: ThreadItem) {
+        let ThreadItem::CommandExecution {
+            id,
+            process_id,
+            source,
+            ..
+        } = &item
+        else {
+            return;
+        };
+        if is_unified_exec_source(*source) {
+            if let Some(process_id) = process_id.as_deref()
                 && self
                     .unified_exec_wait_streak
                     .as_ref()
@@ -3796,33 +3775,39 @@ impl ChatWidget {
             {
                 self.flush_unified_exec_wait_streak();
             }
-            self.track_unified_exec_process_end(&ev);
+            self.track_unified_exec_process_end(id, process_id.as_deref());
             if !self.bottom_pane.is_task_running() {
                 return;
             }
         }
-        let ev2 = ev.clone();
-        self.defer_or_handle(|q| q.push_exec_end(ev), |s| s.handle_exec_end_now(ev2));
+        let item2 = item.clone();
+        self.defer_or_handle(
+            |q| q.push_item_completed(item),
+            |s| s.handle_command_execution_completed_now(item2),
+        );
     }
 
-    fn track_unified_exec_process_begin(&mut self, ev: &ExecCommandBeginEvent) {
-        if ev.source != ExecCommandSource::UnifiedExecStartup {
-            return;
-        }
-        let key = ev.process_id.clone().unwrap_or(ev.call_id.to_string());
-        let command_display = strip_bash_lc_and_escape(&ev.command);
+    fn track_unified_exec_process_begin(
+        &mut self,
+        call_id: &str,
+        process_id: Option<&str>,
+        command: &str,
+    ) {
+        let key = process_id.unwrap_or(call_id).to_string();
+        let command = split_command_string(command);
+        let command_display = strip_bash_lc_and_escape(&command);
         if let Some(existing) = self
             .unified_exec_processes
             .iter_mut()
             .find(|process| process.key == key)
         {
-            existing.call_id = ev.call_id.clone();
+            existing.call_id = call_id.to_string();
             existing.command_display = command_display;
             existing.recent_chunks.clear();
         } else {
             self.unified_exec_processes.push(UnifiedExecProcessSummary {
                 key,
-                call_id: ev.call_id.clone(),
+                call_id: call_id.to_string(),
                 command_display,
                 recent_chunks: Vec::new(),
             });
@@ -3830,8 +3815,8 @@ impl ChatWidget {
         self.sync_unified_exec_footer();
     }
 
-    fn track_unified_exec_process_end(&mut self, ev: &ExecCommandEndEvent) {
-        let key = ev.process_id.clone().unwrap_or(ev.call_id.to_string());
+    fn track_unified_exec_process_end(&mut self, call_id: &str, process_id: Option<&str>) {
+        let key = process_id.unwrap_or(call_id);
         let before = self.unified_exec_processes.len();
         self.unified_exec_processes
             .retain(|process| process.key != key);
@@ -3875,14 +3860,20 @@ impl ChatWidget {
         }
     }
 
-    fn on_mcp_tool_call_begin(&mut self, ev: McpToolCallBeginEvent) {
-        let ev2 = ev.clone();
-        self.defer_or_handle(|q| q.push_mcp_begin(ev), |s| s.handle_mcp_begin_now(ev2));
+    fn on_mcp_tool_call_started(&mut self, item: ThreadItem) {
+        let item2 = item.clone();
+        self.defer_or_handle(
+            |q| q.push_item_started(item),
+            |s| s.handle_mcp_tool_call_started_now(item2),
+        );
     }
 
-    fn on_mcp_tool_call_end(&mut self, ev: McpToolCallEndEvent) {
-        let ev2 = ev.clone();
-        self.defer_or_handle(|q| q.push_mcp_end(ev), |s| s.handle_mcp_end_now(ev2));
+    fn on_mcp_tool_call_completed(&mut self, item: ThreadItem) {
+        let item2 = item.clone();
+        self.defer_or_handle(
+            |q| q.push_item_completed(item),
+            |s| s.handle_mcp_tool_call_completed_now(item2),
+        );
     }
 
     fn on_web_search_begin(&mut self, call_id: String) {
@@ -3901,7 +3892,7 @@ impl ChatWidget {
         &mut self,
         call_id: String,
         query: String,
-        action: codex_protocol::models::WebSearchAction,
+        action: codex_app_server_protocol::WebSearchAction,
     ) {
         self.flush_answer_stream_with_separator();
         let mut handled = false;
@@ -4287,7 +4278,7 @@ impl ChatWidget {
     /// standalone history entry instead of replacing or flushing the unrelated active exploring
     /// cell. If this method treated every unknown end as "complete the active cell", the UI could
     /// merge unrelated commands and hide still-running exploring work.
-    pub(crate) fn handle_exec_end_now(&mut self, ev: ExecCommandEndEvent) {
+    pub(crate) fn handle_command_execution_completed_now(&mut self, item: ThreadItem) {
         enum ExecEndTarget {
             // Normal case: the active exec cell already tracks this call id.
             ActiveTracked,
@@ -4298,13 +4289,36 @@ impl ChatWidget {
             NewCell,
         }
 
-        let running = self.running_commands.remove(&ev.call_id);
-        if self.suppressed_exec_calls.remove(&ev.call_id) {
+        let ThreadItem::CommandExecution {
+            id,
+            command,
+            process_id: _,
+            source,
+            command_actions,
+            aggregated_output,
+            exit_code,
+            duration_ms,
+            ..
+        } = item
+        else {
+            return;
+        };
+        let event_command = split_command_string(&command);
+        let event_parsed = command_actions
+            .into_iter()
+            .map(codex_app_server_protocol::CommandAction::into_core)
+            .collect();
+        let duration = Duration::from_millis(duration_ms.unwrap_or_default().max(0) as u64);
+        let exit_code = exit_code.unwrap_or_default();
+        let aggregated_output = aggregated_output.unwrap_or_default();
+
+        let running = self.running_commands.remove(&id);
+        if self.suppressed_exec_calls.remove(&id) {
             return;
         }
         let (command, parsed, source) = match running {
             Some(rc) => (rc.command, rc.parsed_cmd, rc.source),
-            None => (ev.command.clone(), ev.parsed_cmd.clone(), ev.source),
+            None => (event_command, event_parsed, source),
         };
         let parsed = self.annotate_skill_reads_in_parsed_cmd(parsed);
         let is_unified_exec_interaction =
@@ -4312,11 +4326,7 @@ impl ChatWidget {
         let is_user_shell = source == ExecCommandSource::UserShell;
         let end_target = match self.active_cell.as_ref() {
             Some(cell) => match cell.as_any().downcast_ref::<ExecCell>() {
-                Some(exec_cell)
-                    if exec_cell
-                        .iter_calls()
-                        .any(|call| call.call_id == ev.call_id) =>
-                {
+                Some(exec_cell) if exec_cell.iter_calls().any(|call| call.call_id == id) => {
                     ExecEndTarget::ActiveTracked
                 }
                 Some(exec_cell) if exec_cell.is_active() => {
@@ -4331,15 +4341,15 @@ impl ChatWidget {
         // instead render the interaction-specific content elsewhere in the UI.
         let output = if is_unified_exec_interaction {
             CommandOutput {
-                exit_code: ev.exit_code,
+                exit_code,
                 formatted_output: String::new(),
                 aggregated_output: String::new(),
             }
         } else {
             CommandOutput {
-                exit_code: ev.exit_code,
-                formatted_output: ev.formatted_output.clone(),
-                aggregated_output: ev.aggregated_output.clone(),
+                exit_code,
+                formatted_output: aggregated_output.clone(),
+                aggregated_output,
             }
         };
 
@@ -4350,8 +4360,8 @@ impl ChatWidget {
                     .as_mut()
                     .and_then(|c| c.as_any_mut().downcast_mut::<ExecCell>())
                 {
-                    let completed = cell.complete_call(&ev.call_id, output, ev.duration);
-                    debug_assert!(completed, "active exec cell should contain {}", ev.call_id);
+                    let completed = cell.complete_call(&id, output, duration);
+                    debug_assert!(completed, "active exec cell should contain {id}");
                     if cell.should_flush() {
                         self.flush_active_cell();
                     } else {
@@ -4362,19 +4372,15 @@ impl ChatWidget {
             }
             ExecEndTarget::OrphanHistoryWhileActiveExec => {
                 let mut orphan = new_active_exec_command(
-                    ev.call_id.clone(),
+                    id.clone(),
                     command,
                     parsed,
                     source,
-                    ev.interaction_input.clone(),
+                    None,
                     self.config.animations,
                 );
-                let completed = orphan.complete_call(&ev.call_id, output, ev.duration);
-                debug_assert!(
-                    completed,
-                    "new orphan exec cell should contain {}",
-                    ev.call_id
-                );
+                let completed = orphan.complete_call(&id, output, duration);
+                debug_assert!(completed, "new orphan exec cell should contain {id}");
                 self.needs_final_message_separator = true;
                 self.app_event_tx
                     .send(AppEvent::InsertHistoryCell(Box::new(orphan)));
@@ -4383,15 +4389,15 @@ impl ChatWidget {
             ExecEndTarget::NewCell => {
                 self.flush_active_cell();
                 let mut cell = new_active_exec_command(
-                    ev.call_id.clone(),
+                    id.clone(),
                     command,
                     parsed,
                     source,
-                    ev.interaction_input.clone(),
+                    None,
                     self.config.animations,
                 );
-                let completed = cell.complete_call(&ev.call_id, output, ev.duration);
-                debug_assert!(completed, "new exec cell should contain {}", ev.call_id);
+                let completed = cell.complete_call(&id, output, duration);
+                debug_assert!(completed, "new exec cell should contain {id}");
                 if cell.should_flush() {
                     self.add_to_history(cell);
                 } else {
@@ -4408,11 +4414,14 @@ impl ChatWidget {
         }
     }
 
-    pub(crate) fn handle_patch_apply_end_now(&mut self, event: PatchApplyEndEvent) {
+    pub(crate) fn handle_file_change_completed_now(&mut self, item: ThreadItem) {
+        let ThreadItem::FileChange { status, .. } = item else {
+            return;
+        };
         // If the patch was successful, just let the "Edited" block stand.
         // Otherwise, add a failure block.
-        if !event.success {
-            self.add_to_history(history_cell::new_patch_apply_failure(event.stderr));
+        if matches!(status, codex_app_server_protocol::PatchApplyStatus::Failed) {
+            self.add_to_history(history_cell::new_patch_apply_failure(String::new()));
         }
         // Mark that actual work was done (patch applied)
         self.had_work_activity = true;
@@ -4460,24 +4469,35 @@ impl ChatWidget {
         });
     }
 
-    pub(crate) fn handle_elicitation_request_now(&mut self, ev: ElicitationRequestEvent) {
+    pub(crate) fn handle_elicitation_request_now(
+        &mut self,
+        request_id: AppServerRequestId,
+        params: McpServerElicitationRequestParams,
+    ) {
         self.flush_answer_stream_with_separator();
 
         self.notify(Notification::ElicitationRequested {
-            server_name: ev.server_name.clone(),
+            server_name: params.server_name.clone(),
         });
 
         let thread_id = self.thread_id.unwrap_or_default();
-        if let Some(request) = McpServerElicitationFormRequest::from_event(thread_id, ev.clone()) {
+        if let Some(request) = McpServerElicitationFormRequest::from_app_server_request(
+            thread_id,
+            request_id.clone(),
+            params.clone(),
+        ) {
             self.bottom_pane
                 .push_mcp_server_elicitation_request(request);
         } else {
             let request = ApprovalRequest::McpElicitation {
                 thread_id,
                 thread_label: None,
-                server_name: ev.server_name,
-                request_id: ev.id,
-                message: ev.request.message().to_string(),
+                server_name: params.server_name,
+                request_id,
+                message: match params.request {
+                    McpServerElicitationRequest::Form { message, .. }
+                    | McpServerElicitationRequest::Url { message, .. } => message,
+                },
             };
             self.bottom_pane
                 .push_approval_request(request, &self.config.features);
@@ -4500,7 +4520,7 @@ impl ChatWidget {
         self.request_redraw();
     }
 
-    pub(crate) fn handle_request_user_input_now(&mut self, ev: RequestUserInputEvent) {
+    pub(crate) fn handle_request_user_input_now(&mut self, ev: ToolRequestUserInputParams) {
         self.flush_answer_stream_with_separator();
         let question_count = ev.questions.len();
         let summary = Notification::user_input_request_summary(&ev.questions);
@@ -4528,25 +4548,32 @@ impl ChatWidget {
         self.request_redraw();
     }
 
-    pub(crate) fn handle_exec_begin_now(&mut self, ev: ExecCommandBeginEvent) {
+    pub(crate) fn handle_command_execution_started_now(&mut self, item: ThreadItem) {
+        let ThreadItem::CommandExecution {
+            id,
+            command,
+            source,
+            command_actions,
+            ..
+        } = item
+        else {
+            return;
+        };
+        let (command, parsed_cmd) =
+            command_execution_command_and_parsed(&command, &command_actions);
         // Ensure the status indicator is visible while the command runs.
         self.bottom_pane.ensure_status_indicator();
-        let parsed_cmd = self.annotate_skill_reads_in_parsed_cmd(ev.parsed_cmd.clone());
+        let parsed_cmd = self.annotate_skill_reads_in_parsed_cmd(parsed_cmd);
         self.running_commands.insert(
-            ev.call_id.clone(),
+            id.clone(),
             RunningCommand {
-                command: ev.command.clone(),
+                command: command.clone(),
                 parsed_cmd: parsed_cmd.clone(),
-                source: ev.source,
+                source,
             },
         );
-        let is_wait_interaction = matches!(ev.source, ExecCommandSource::UnifiedExecInteraction)
-            && ev
-                .interaction_input
-                .as_deref()
-                .map(str::is_empty)
-                .unwrap_or(true);
-        let command_display = ev.command.join(" ");
+        let is_wait_interaction = matches!(source, ExecCommandSource::UnifiedExecInteraction);
+        let command_display = command.join(" ");
         let should_suppress_unified_wait = is_wait_interaction
             && self
                 .last_unified_wait
@@ -4558,20 +4585,19 @@ impl ChatWidget {
             self.last_unified_wait = None;
         }
         if should_suppress_unified_wait {
-            self.suppressed_exec_calls.insert(ev.call_id);
+            self.suppressed_exec_calls.insert(id);
             return;
         }
-        let interaction_input = ev.interaction_input.clone();
         if let Some(cell) = self
             .active_cell
             .as_mut()
             .and_then(|c| c.as_any_mut().downcast_mut::<ExecCell>())
             && let Some(new_exec) = cell.with_added_call(
-                ev.call_id.clone(),
-                ev.command.clone(),
+                id.clone(),
+                command.clone(),
                 parsed_cmd.clone(),
-                ev.source,
-                interaction_input.clone(),
+                source,
+                None,
             )
         {
             *cell = new_exec;
@@ -4580,11 +4606,11 @@ impl ChatWidget {
             self.flush_active_cell();
 
             self.active_cell = Some(Box::new(new_active_exec_command(
-                ev.call_id.clone(),
-                ev.command.clone(),
+                id,
+                command,
                 parsed_cmd,
-                ev.source,
-                interaction_input,
+                source,
+                None,
                 self.config.animations,
             )));
             self.bump_active_cell_revision();
@@ -4593,40 +4619,78 @@ impl ChatWidget {
         self.request_redraw();
     }
 
-    pub(crate) fn handle_mcp_begin_now(&mut self, ev: McpToolCallBeginEvent) {
+    pub(crate) fn handle_mcp_tool_call_started_now(&mut self, item: ThreadItem) {
+        let ThreadItem::McpToolCall {
+            id,
+            server,
+            tool,
+            arguments,
+            ..
+        } = item
+        else {
+            return;
+        };
         self.flush_answer_stream_with_separator();
         self.flush_active_cell();
         self.active_cell = Some(Box::new(history_cell::new_active_mcp_tool_call(
-            ev.call_id,
-            ev.invocation,
+            id,
+            McpInvocation {
+                server,
+                tool,
+                arguments: Some(arguments),
+            },
             self.config.animations,
         )));
         self.bump_active_cell_revision();
         self.request_redraw();
     }
-    pub(crate) fn handle_mcp_end_now(&mut self, ev: McpToolCallEndEvent) {
+
+    pub(crate) fn handle_mcp_tool_call_completed_now(&mut self, item: ThreadItem) {
         self.flush_answer_stream_with_separator();
 
-        let McpToolCallEndEvent {
-            call_id,
-            invocation,
-            duration,
+        let ThreadItem::McpToolCall {
+            id,
+            server,
+            tool,
+            arguments,
             result,
-        } = ev;
+            error,
+            duration_ms,
+            ..
+        } = item
+        else {
+            return;
+        };
+        let invocation = McpInvocation {
+            server,
+            tool,
+            arguments: Some(arguments),
+        };
+        let duration = Duration::from_millis(duration_ms.unwrap_or_default().max(0) as u64);
+        let result = match (result, error) {
+            (_, Some(error)) => Err(error.message),
+            (Some(result), None) => {
+                let result = *result;
+                Ok(codex_protocol::mcp::CallToolResult {
+                    content: result.content,
+                    structured_content: result.structured_content,
+                    is_error: Some(false),
+                    meta: None,
+                })
+            }
+            (None, None) => Err("MCP tool call completed without a result".to_string()),
+        };
 
         let extra_cell = match self
             .active_cell
             .as_mut()
             .and_then(|cell| cell.as_any_mut().downcast_mut::<McpToolCallCell>())
         {
-            Some(cell) if cell.call_id() == call_id => cell.complete(duration, result),
+            Some(cell) if cell.call_id() == id => cell.complete(duration, result),
             _ => {
                 self.flush_active_cell();
-                let mut cell = history_cell::new_active_mcp_tool_call(
-                    call_id,
-                    invocation,
-                    self.config.animations,
-                );
+                let mut cell =
+                    history_cell::new_active_mcp_tool_call(id, invocation, self.config.animations);
                 let extra_cell = cell.complete(duration, result);
                 self.active_cell = Some(Box::new(cell));
                 extra_cell
@@ -4639,6 +4703,29 @@ impl ChatWidget {
         }
         // Mark that actual work was done (MCP tool call)
         self.had_work_activity = true;
+    }
+
+    pub(crate) fn handle_queued_item_started_now(&mut self, item: ThreadItem) {
+        match item {
+            item @ ThreadItem::CommandExecution { .. } => {
+                self.handle_command_execution_started_now(item);
+            }
+            item @ ThreadItem::McpToolCall { .. } => {
+                self.handle_mcp_tool_call_started_now(item);
+            }
+            _ => {}
+        }
+    }
+
+    pub(crate) fn handle_queued_item_completed_now(&mut self, item: ThreadItem) {
+        match item {
+            item @ ThreadItem::CommandExecution { .. } => {
+                self.handle_command_execution_completed_now(item);
+            }
+            item @ ThreadItem::FileChange { .. } => self.handle_file_change_completed_now(item),
+            item @ ThreadItem::McpToolCall { .. } => self.handle_mcp_tool_call_completed_now(item),
+            _ => {}
+        }
     }
 
     pub(crate) fn new_with_app_event(common: ChatWidgetInit) -> Self {
@@ -5922,113 +6009,23 @@ impl ChatWidget {
                 }
                 self.on_agent_reasoning_final();
             }
-            ThreadItem::CommandExecution {
-                id,
-                command,
-                cwd: _,
-                process_id,
-                source,
-                status,
-                command_actions,
-                aggregated_output,
-                exit_code,
-                duration_ms,
-            } => {
-                if matches!(
-                    status,
-                    codex_app_server_protocol::CommandExecutionStatus::InProgress
-                ) {
-                    self.on_exec_command_begin(ExecCommandBeginEvent {
-                        call_id: id,
-                        process_id,
-                        command: split_command_string(&command),
-                        parsed_cmd: command_actions
-                            .into_iter()
-                            .map(codex_app_server_protocol::CommandAction::into_core)
-                            .collect(),
-                        source,
-                        interaction_input: None,
-                    });
-                } else {
-                    let aggregated_output = aggregated_output.unwrap_or_default();
-                    self.on_exec_command_end(ExecCommandEndEvent {
-                        call_id: id,
-                        process_id,
-                        command: split_command_string(&command),
-                        parsed_cmd: command_actions
-                            .into_iter()
-                            .map(codex_app_server_protocol::CommandAction::into_core)
-                            .collect(),
-                        source,
-                        interaction_input: None,
-                        aggregated_output: aggregated_output.clone(),
-                        exit_code: exit_code.unwrap_or_default(),
-                        duration: Duration::from_millis(
-                            duration_ms.unwrap_or_default().max(0) as u64
-                        ),
-                        formatted_output: aggregated_output,
-                    });
-                }
-            }
-            ThreadItem::FileChange {
-                id: _,
-                changes: _,
-                status,
-            } => {
-                if !matches!(
-                    status,
-                    codex_app_server_protocol::PatchApplyStatus::InProgress
-                ) {
-                    self.on_patch_apply_end(PatchApplyEndEvent {
-                        stderr: String::new(),
-                        success: !matches!(
-                            status,
-                            codex_app_server_protocol::PatchApplyStatus::Failed
-                        ),
-                    });
-                }
-            }
-            ThreadItem::McpToolCall {
-                id,
-                server,
-                tool,
-                arguments,
-                result,
-                error,
-                duration_ms,
+            item @ ThreadItem::CommandExecution {
+                status: codex_app_server_protocol::CommandExecutionStatus::InProgress,
                 ..
-            } => {
-                self.on_mcp_tool_call_end(McpToolCallEndEvent {
-                    call_id: id,
-                    invocation: McpInvocation {
-                        server,
-                        tool,
-                        arguments: Some(arguments),
-                    },
-                    duration: Duration::from_millis(duration_ms.unwrap_or_default().max(0) as u64),
-                    result: match (result, error) {
-                        (_, Some(error)) => Err(error.message),
-                        (Some(result), None) => {
-                            let result = *result;
-                            Ok(codex_protocol::mcp::CallToolResult {
-                                content: result.content,
-                                structured_content: result.structured_content,
-                                is_error: Some(false),
-                                meta: None,
-                            })
-                        }
-                        (None, None) => Err("MCP tool call completed without a result".to_string()),
-                    },
-                });
-            }
+            } => self.on_command_execution_started(item),
+            item @ ThreadItem::CommandExecution { .. } => self.on_command_execution_completed(item),
+            ThreadItem::FileChange {
+                status: codex_app_server_protocol::PatchApplyStatus::InProgress,
+                ..
+            } => {}
+            item @ ThreadItem::FileChange { .. } => self.on_file_change_completed(item),
+            item @ ThreadItem::McpToolCall { .. } => self.on_mcp_tool_call_completed(item),
             ThreadItem::WebSearch { id, query, action } => {
                 self.on_web_search_begin(id.clone());
                 self.on_web_search_end(
                     id,
                     query,
-                    action
-                        .map(web_search_action_to_core)
-                        .unwrap_or(codex_protocol::models::WebSearchAction::Other),
+                    action.unwrap_or(codex_app_server_protocol::WebSearchAction::Other),
                 );
             }
             ThreadItem::ImageView { id: _, path } => {
@@ -6104,16 +6101,13 @@ impl ChatWidget {
                 );
             }
             ServerRequest::McpServerElicitationRequest { request_id, params } => {
-                self.on_mcp_server_elicitation_request(
-                    app_server_request_id_to_mcp_request_id(&request_id),
-                    params,
-                );
+                self.on_elicitation_request(request_id, params);
             }
             ServerRequest::PermissionsRequestApproval { params, .. } => {
                 self.on_request_permissions(request_permissions_from_params(params));
             }
             ServerRequest::ToolRequestUserInput { params, .. } => {
-                self.on_request_user_input(request_user_input_from_params(params));
+                self.on_request_user_input(params);
             }
             ServerRequest::DynamicToolCall { .. }
             | ServerRequest::ChatgptAuthTokensRefresh { .. }
@@ -6364,42 +6358,6 @@ impl ChatWidget {
         self.on_list_skills(response);
     }
 
-    fn on_mcp_server_elicitation_request(
-        &mut self,
-        request_id: codex_protocol::mcp::RequestId,
-        params: codex_app_server_protocol::McpServerElicitationRequestParams,
-    ) {
-        let request = codex_protocol::approvals::ElicitationRequestEvent {
-            turn_id: params.turn_id,
-            server_name: params.server_name,
-            id: request_id,
-            request: match params.request {
-                codex_app_server_protocol::McpServerElicitationRequest::Form {
-                    meta,
-                    message,
-                    requested_schema,
-                } => codex_protocol::approvals::ElicitationRequest::Form {
-                    meta,
-                    message,
-                    requested_schema: serde_json::to_value(requested_schema)
-                        .unwrap_or(serde_json::Value::Null),
-                },
-                codex_app_server_protocol::McpServerElicitationRequest::Url {
-                    meta,
-                    message,
-                    url,
-                    elicitation_id,
-                } => codex_protocol::approvals::ElicitationRequest::Url {
-                    meta,
-                    message,
-                    url,
-                    elicitation_id,
-                },
-            },
-        };
-        self.on_elicitation_request(request);
-    }
-
     fn handle_turn_completed_notification(
         &mut self,
         notification: TurnCompletedNotification,
@@ -6452,46 +6410,11 @@ impl ChatWidget {
         from_replay: bool,
     ) {
         match notification.item {
-            ThreadItem::CommandExecution {
-                id,
-                command,
-                cwd: _,
-                process_id,
-                source,
-                command_actions,
-                ..
-            } => {
-                self.on_exec_command_begin(ExecCommandBeginEvent {
-                    call_id: id,
-                    process_id,
-                    command: split_command_string(&command),
-                    parsed_cmd: command_actions
-                        .into_iter()
-                        .map(codex_app_server_protocol::CommandAction::into_core)
-                        .collect(),
-                    source,
-                    interaction_input: None,
-                });
-            }
+            item @ ThreadItem::CommandExecution { .. } => self.on_command_execution_started(item),
             ThreadItem::FileChange { id: _, changes, .. } => {
                 self.on_patch_apply_begin(file_update_changes_to_display(changes));
             }
-            ThreadItem::McpToolCall {
-                id,
-                server,
-                tool,
-                arguments,
-                ..
-            } => {
-                self.on_mcp_tool_call_begin(McpToolCallBeginEvent {
-                    call_id: id,
-                    invocation: McpInvocation {
-                        server,
-                        tool,
-                        arguments: Some(arguments),
-                    },
-                });
-            }
+            item @ ThreadItem::McpToolCall { .. } => self.on_mcp_tool_call_started(item),
             ThreadItem::WebSearch { id, .. } => {
                 self.on_web_search_begin(id);
             }
@@ -10981,7 +10904,7 @@ impl Notification {
     }
 
     fn user_input_request_summary(
-        questions: &[codex_protocol::request_user_input::RequestUserInputQuestion],
+        questions: &[codex_app_server_protocol::ToolRequestUserInputQuestion],
     ) -> Option<String> {
         let first_question = questions.first()?;
         let summary = if first_question.header.trim().is_empty() {

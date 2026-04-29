@@ -45,12 +45,12 @@ use codex_app_server_protocol::FileSystemAccessMode;
 use codex_app_server_protocol::FileSystemPath;
 use codex_app_server_protocol::FileSystemSandboxEntry;
 use codex_app_server_protocol::FileSystemSpecialPath;
+use codex_app_server_protocol::McpServerElicitationAction;
 use codex_app_server_protocol::NetworkApprovalContext;
 use codex_app_server_protocol::NetworkPolicyRuleAction;
+use codex_app_server_protocol::RequestId;
 use codex_features::Features;
 use codex_protocol::ThreadId;
-use codex_protocol::approvals::ElicitationAction;
-use codex_protocol::mcp::RequestId;
 use codex_protocol::request_permissions::PermissionGrantScope;
 use codex_protocol::request_permissions::RequestPermissionProfile;
 use codex_utils_absolute_path::AbsolutePathBuf;
@@ -432,7 +432,7 @@ impl ApprovalOverlay {
         &self,
         server_name: &str,
         request_id: &RequestId,
-        decision: ElicitationAction,
+        decision: McpServerElicitationAction,
     ) {
         let Some(thread_id) = self
             .current_request
@@ -496,7 +496,7 @@ impl ApprovalOverlay {
                     self.handle_elicitation_decision(
                         server_name,
                         request_id,
-                        ElicitationAction::Cancel,
+                        McpServerElicitationAction::Cancel,
                     );
                 }
             }
@@ -748,7 +748,7 @@ enum ApprovalDecision {
     Command(CommandExecutionApprovalDecision),
     FileChange(FileChangeApprovalDecision),
     Permissions(PermissionsDecision),
-    McpElicitation(ElicitationAction),
+    McpElicitation(McpServerElicitationAction),
 }
 
 #[derive(Clone, Copy)]
@@ -1049,17 +1049,17 @@ fn elicitation_options(keymap: &ApprovalKeymap) -> Vec<ApprovalOption> {
     vec![
         ApprovalOption {
             label: "Yes, provide the requested info".to_string(),
-            decision: ApprovalDecision::McpElicitation(ElicitationAction::Accept),
+            decision: ApprovalDecision::McpElicitation(McpServerElicitationAction::Accept),
             shortcuts: keymap.approve.clone(),
         },
         ApprovalOption {
             label: "No, but continue without it".to_string(),
-            decision: ApprovalDecision::McpElicitation(ElicitationAction::Decline),
+            decision: ApprovalDecision::McpElicitation(McpServerElicitationAction::Decline),
             shortcuts: decline_shortcuts,
         },
         ApprovalOption {
             label: "Cancel this request".to_string(),
-            decision: ApprovalDecision::McpElicitation(ElicitationAction::Cancel),
+            decision: ApprovalDecision::McpElicitation(McpServerElicitationAction::Cancel),
             shortcuts: cancel_shortcuts,
         },
     ]
@@ -1258,7 +1258,7 @@ mod tests {
                 break;
             }
         }
-        assert_eq!(decision, Some(ElicitationAction::Cancel));
+        assert_eq!(decision, Some(McpServerElicitationAction::Cancel));
     }
 
     #[test]
@@ -2128,7 +2128,7 @@ mod tests {
                 break;
             }
         }
-        assert_eq!(decision, Some(ElicitationAction::Cancel));
+        assert_eq!(decision, Some(McpServerElicitationAction::Cancel));
     }
 
     #[test]
@@ -2162,7 +2162,7 @@ mod tests {
                 break;
             }
         }
-        assert_eq!(esc_decision, Some(ElicitationAction::Cancel));
+        assert_eq!(esc_decision, Some(McpServerElicitationAction::Cancel));
 
         let (tx_raw, mut rx) = unbounded_channel::<AppEvent>();
         let tx = AppEventSender::new(tx_raw);
@@ -2192,7 +2192,7 @@ mod tests {
                 break;
             }
         }
-        assert_eq!(n_decision, Some(ElicitationAction::Decline));
+        assert_eq!(n_decision, Some(McpServerElicitationAction::Decline));
     }
 
     #[test]

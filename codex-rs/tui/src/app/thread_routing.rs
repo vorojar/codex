@@ -264,7 +264,7 @@ impl App {
             ServerRequest::McpServerElicitationRequest { request_id, params } => {
                 if let Some(request) = McpServerElicitationFormRequest::from_app_server_request(
                     thread_id,
-                    app_server_request_id_to_mcp_request_id(request_id),
+                    request_id.clone(),
                     params.clone(),
                 ) {
                     Some(ThreadInteractiveRequest::McpServerElicitation(request))
@@ -274,7 +274,7 @@ impl App {
                             thread_id,
                             thread_label,
                             server_name: params.server_name.clone(),
-                            request_id: app_server_request_id_to_mcp_request_id(request_id),
+                            request_id: request_id.clone(),
                             message: match &params.request {
                                 codex_app_server_protocol::McpServerElicitationRequest::Form {
                                     message,

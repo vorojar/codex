@@ -2659,7 +2659,7 @@ async fn chatwidget_exec_and_status_layout_vt100_snapshot() {
     );
 
     let command = vec!["bash".into(), "-lc".into(), "rg \"Change Approved\"".into()];
-    let parsed_cmd = vec![
+    let parsed_cmd = [
         ParsedCommand::Search {
             query: Some("Change Approved".into()),
             path: None,
@@ -2671,30 +2671,40 @@ async fn chatwidget_exec_and_status_layout_vt100_snapshot() {
             path: "diff_render.rs".into(),
         },
     ];
+    let command_actions = parsed_cmd
+        .iter()
+        .cloned()
+        .map(|parsed| AppServerCommandAction::from_core_with_cwd(parsed, &chat.config.cwd))
+        .collect::<Vec<_>>();
+    let cwd = chat.config.cwd.clone();
     handle_exec_begin(
         &mut chat,
-        ExecCommandBeginEvent {
-            call_id: "c1".into(),
+        AppServerThreadItem::CommandExecution {
+            id: "c1".into(),
+            command: codex_shell_command::parse_command::shlex_join(&command),
+            cwd: cwd.clone(),
             process_id: None,
-            command: command.clone(),
-            parsed_cmd: parsed_cmd.clone(),
             source: ExecCommandSource::Agent,
-            interaction_input: None,
+            status: AppServerCommandExecutionStatus::InProgress,
+            command_actions: command_actions.clone(),
+            aggregated_output: None,
+            exit_code: None,
+            duration_ms: None,
         },
     );
     handle_exec_end(
         &mut chat,
-        ExecCommandEndEvent {
-            call_id: "c1".into(),
+        AppServerThreadItem::CommandExecution {
+            id: "c1".into(),
+            command: codex_shell_command::parse_command::shlex_join(&command),
+            cwd,
             process_id: None,
-            command,
-            parsed_cmd,
             source: ExecCommandSource::Agent,
-            interaction_input: None,
-            aggregated_output: String::new(),
-            exit_code: 0,
-            duration: std::time::Duration::from_millis(16000),
-            formatted_output: String::new(),
+            status: AppServerCommandExecutionStatus::Completed,
+            command_actions,
+            aggregated_output: None,
+            exit_code: Some(0),
+            duration_ms: Some(16000),
         },
     );
     handle_turn_started(&mut chat, "turn-1");

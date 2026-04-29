@@ -8,13 +8,10 @@ use crate::app_server_session::AppServerSession;
 use codex_app_server_protocol::CommandExecutionRequestApprovalResponse;
 use codex_app_server_protocol::FileChangeRequestApprovalResponse;
 use codex_app_server_protocol::JSONRPCErrorError;
-use codex_app_server_protocol::McpServerElicitationAction;
 use codex_app_server_protocol::McpServerElicitationRequestResponse;
 use codex_app_server_protocol::PermissionsRequestApprovalResponse;
 use codex_app_server_protocol::RequestId as AppServerRequestId;
 use codex_app_server_protocol::ServerRequest;
-use codex_app_server_protocol::ToolRequestUserInputResponse;
-use codex_protocol::mcp::RequestId as McpRequestId;
 
 impl App {
     pub(super) async fn reject_app_server_request(
@@ -65,7 +62,7 @@ pub(crate) enum ResolvedAppServerRequest {
     },
     McpElicitation {
         server_name: String,
-        request_id: McpRequestId,
+        request_id: AppServerRequestId,
     },
 }
 
@@ -75,7 +72,7 @@ pub(super) struct PendingAppServerRequests {
     file_change_approvals: HashMap<String, AppServerRequestId>,
     permissions_approvals: HashMap<String, AppServerRequestId>,
     user_inputs: HashMap<String, VecDeque<PendingUserInputRequest>>,
-    mcp_requests: HashMap<McpLegacyRequestKey, AppServerRequestId>,
+    mcp_requests: HashMap<McpRequestKey, AppServerRequestId>,
 }
 
 impl PendingAppServerRequests {
@@ -122,9 +119,9 @@ impl PendingAppServerRequests {
             }
             ServerRequest::McpServerElicitationRequest { request_id, params } => {
                 self.mcp_requests.insert(
-                    McpLegacyRequestKey {
+                    McpRequestKey {
                         server_name: params.server_name.clone(),
-                        request_id: app_server_request_id_to_mcp_request_id(request_id),
+                        request_id: request_id.clone(),
                     },
                     request_id.clone(),
                 );
@@ -173,7 +170,9 @@ impl PendingAppServerRequests {
                             decision: decision.clone(),
                         })
                         .map_err(|err| {
-                            format!("failed to serialize command execution approval response: {err}")
+                            format!(
+                                "failed to serialize command execution approval response: {err}"
+                            )
                         })?,
                     })
                 })
@@ -217,19 +216,7 @@ impl PendingAppServerRequests {
                 .map(|pending| {
                     Ok::<AppServerRequestResolution, String>(AppServerRequestResolution {
                         request_id: pending.request_id,
-                        result: serde_json::to_value(
-                            serde_json::from_value::<ToolRequestUserInputResponse>(
-                                serde_json::to_value(response).map_err(|err| {
-                                    format!("failed to encode request_user_input response: {err}")
-                                })?,
-                            )
-                            .map_err(|err| {
-                                format!(
-                                    "failed to decode request_user_input response for app-server: {err}"
-                                )
-                            })?,
-                        )
-                        .map_err(|err| {
+                        result: serde_json::to_value(response).map_err(|err| {
                             format!("failed to serialize request_user_input response: {err}")
                         })?,
                     })
@@ -243,7 +230,7 @@ impl PendingAppServerRequests {
                 meta,
             } => self
                 .mcp_requests
-                .remove(&McpLegacyRequestKey {
+                .remove(&McpRequestKey {
                     server_name: server_name.to_string(),
                     request_id: request_id.clone(),
                 })
@@ -251,17 +238,7 @@ impl PendingAppServerRequests {
                     Ok::<AppServerRequestResolution, String>(AppServerRequestResolution {
                         request_id,
                         result: serde_json::to_value(McpServerElicitationRequestResponse {
-                            action: match decision {
-                                codex_protocol::approvals::ElicitationAction::Accept => {
-                                    McpServerElicitationAction::Accept
-                                }
-                                codex_protocol::approvals::ElicitationAction::Decline => {
-                                    McpServerElicitationAction::Decline
-                                }
-                                codex_protocol::approvals::ElicitationAction::Cancel => {
-                                    McpServerElicitationAction::Cancel
-                                }
-                            },
+                            action: *decision,
                             content: content.clone(),
                             meta: meta.clone(),
                         })
@@ -404,16 +381,9 @@ struct PendingUserInputRequest {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
-struct McpLegacyRequestKey {
+struct McpRequestKey {
     server_name: String,
-    request_id: McpRequestId,
-}
-
-fn app_server_request_id_to_mcp_request_id(request_id: &AppServerRequestId) -> McpRequestId {
-    match request_id {
-        AppServerRequestId::String(value) => McpRequestId::String(value.clone()),
-        AppServerRequestId::Integer(value) => McpRequestId::Integer(*value),
-    }
+    request_id: AppServerRequestId,
 }
 
 #[cfg(test)]
@@ -429,6 +399,7 @@ mod tests {
     use codex_app_server_protocol::FileChangeRequestApprovalParams;
     use codex_app_server_protocol::McpElicitationObjectType;
     use codex_app_server_protocol::McpElicitationSchema;
+    use codex_app_server_protocol::McpServerElicitationAction;
     use codex_app_server_protocol::McpServerElicitationRequest;
     use codex_app_server_protocol::McpServerElicitationRequestParams;
     use codex_app_server_protocol::PermissionGrantScope;
@@ -439,8 +410,6 @@ mod tests {
     use codex_app_server_protocol::ToolRequestUserInputAnswer;
     use codex_app_server_protocol::ToolRequestUserInputParams;
     use codex_app_server_protocol::ToolRequestUserInputResponse;
-    use codex_protocol::approvals::ElicitationAction;
-    use codex_protocol::mcp::RequestId as McpRequestId;
     use codex_protocol::models::FileSystemPermissions;
     use codex_protocol::models::NetworkPermissions;
     use codex_protocol::request_permissions::RequestPermissionProfile;
@@ -591,10 +560,10 @@ mod tests {
         let user_input = pending
             .take_resolution(&Op::UserInputAnswer {
                 id: "turn-2".to_string(),
-                response: codex_protocol::request_user_input::RequestUserInputResponse {
+                response: ToolRequestUserInputResponse {
                     answers: std::iter::once((
                         "question".to_string(),
-                        codex_protocol::request_user_input::RequestUserInputAnswer {
+                        ToolRequestUserInputAnswer {
                             answers: vec!["yes".to_string()],
                         },
                     ))
@@ -648,8 +617,8 @@ mod tests {
         let resolution = pending
             .take_resolution(&Op::ResolveElicitation {
                 server_name: "example".to_string(),
-                request_id: McpRequestId::Integer(12),
-                decision: ElicitationAction::Accept,
+                request_id: AppServerRequestId::Integer(12),
+                decision: McpServerElicitationAction::Accept,
                 content: Some(json!({ "answer": "yes" })),
                 meta: Some(json!({ "source": "tui" })),
             })
@@ -802,7 +771,7 @@ mod tests {
             pending.resolve_notification(&AppServerRequestId::Integer(12)),
             Some(ResolvedAppServerRequest::McpElicitation {
                 server_name: "example".to_string(),
-                request_id: McpRequestId::Integer(12),
+                request_id: AppServerRequestId::Integer(12),
             })
         );
     }
@@ -843,7 +812,7 @@ mod tests {
             });
         }
 
-        let response = codex_protocol::request_user_input::RequestUserInputResponse {
+        let response = ToolRequestUserInputResponse {
             answers: HashMap::new(),
         };
         let first_response = pending

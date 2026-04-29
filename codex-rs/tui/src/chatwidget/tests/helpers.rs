@@ -922,23 +922,28 @@ pub(super) fn begin_exec_with_source(
     call_id: &str,
     raw_cmd: &str,
     source: ExecCommandSource,
-) -> ExecCommandBeginEvent {
+) -> AppServerThreadItem {
     // Build the full command vec and parse it using core's parser,
     // then convert to protocol variants for the event payload.
     let command = vec!["bash".to_string(), "-lc".to_string(), raw_cmd.to_string()];
-    let parsed_cmd: Vec<ParsedCommand> =
-        codex_shell_command::parse_command::parse_command(&command);
-    let interaction_input = None;
-    let event = ExecCommandBeginEvent {
-        call_id: call_id.to_string(),
+    let command_actions = codex_shell_command::parse_command::parse_command(&command)
+        .into_iter()
+        .map(|parsed| AppServerCommandAction::from_core_with_cwd(parsed, &chat.config.cwd))
+        .collect();
+    let item = AppServerThreadItem::CommandExecution {
+        id: call_id.to_string(),
+        command: codex_shell_command::parse_command::shlex_join(&command),
+        cwd: chat.config.cwd.clone(),
         process_id: None,
-        command,
-        parsed_cmd,
         source,
-        interaction_input,
+        status: AppServerCommandExecutionStatus::InProgress,
+        command_actions,
+        aggregated_output: None,
+        exit_code: None,
+        duration_ms: None,
     };
-    handle_exec_begin(chat, event.clone());
-    event
+    handle_exec_begin(chat, item.clone());
+    item
 }
 
 pub(super) fn begin_unified_exec_startup(
@@ -946,28 +951,25 @@ pub(super) fn begin_unified_exec_startup(
     call_id: &str,
     process_id: &str,
     raw_cmd: &str,
-) -> ExecCommandBeginEvent {
+) -> AppServerThreadItem {
     let command = vec!["bash".to_string(), "-lc".to_string(), raw_cmd.to_string()];
-    let event = ExecCommandBeginEvent {
-        call_id: call_id.to_string(),
+    let item = AppServerThreadItem::CommandExecution {
+        id: call_id.to_string(),
+        command: codex_shell_command::parse_command::shlex_join(&command),
+        cwd: chat.config.cwd.clone(),
         process_id: Some(process_id.to_string()),
-        command,
-        parsed_cmd: Vec::new(),
         source: ExecCommandSource::UnifiedExecStartup,
-        interaction_input: None,
+        status: AppServerCommandExecutionStatus::InProgress,
+        command_actions: Vec::new(),
+        aggregated_output: None,
+        exit_code: None,
+        duration_ms: None,
     };
-    handle_exec_begin(chat, event.clone());
-    event
+    handle_exec_begin(chat, item.clone());
+    item
 }
 
-pub(super) fn handle_exec_begin(chat: &mut ChatWidget, event: ExecCommandBeginEvent) {
-    let cwd = chat.config.cwd.clone();
-    let command_actions = event
-        .parsed_cmd
-        .iter()
-        .cloned()
-        .map(|parsed| AppServerCommandAction::from_core_with_cwd(parsed, &cwd))
-        .collect();
+pub(super) fn handle_exec_begin(chat: &mut ChatWidget, item: AppServerThreadItem) {
     chat.handle_server_notification(
         ServerNotification::ItemStarted(ItemStartedNotification {
             thread_id: thread_id(chat),
@@ -975,18 +977,7 @@ pub(super) fn handle_exec_begin(chat: &mut ChatWidget, event: ExecCommandBeginEv
                 .last_turn_id
                 .clone()
                 .unwrap_or_else(|| "turn-1".to_string()),
-            item: AppServerThreadItem::CommandExecution {
-                id: event.call_id,
-                command: codex_shell_command::parse_command::shlex_join(&event.command),
-                cwd,
-                process_id: event.process_id,
-                source: event.source,
-                status: AppServerCommandExecutionStatus::InProgress,
-                command_actions,
-                aggregated_output: None,
-                exit_code: None,
-                duration_ms: None,
-            },
+            item,
         }),
         /*replay_kind*/ None,
     );
@@ -1151,13 +1142,13 @@ pub(super) fn begin_exec(
     chat: &mut ChatWidget,
     call_id: &str,
     raw_cmd: &str,
-) -> ExecCommandBeginEvent {
+) -> AppServerThreadItem {
     begin_exec_with_source(chat, call_id, raw_cmd, ExecCommandSource::Agent)
 }
 
 pub(super) fn end_exec(
     chat: &mut ChatWidget,
-    begin_event: ExecCommandBeginEvent,
+    begin_item: AppServerThreadItem,
     stdout: &str,
     stderr: &str,
     exit_code: i32,
@@ -1167,45 +1158,40 @@ pub(super) fn end_exec(
     } else {
         format!("{stdout}{stderr}")
     };
-    let ExecCommandBeginEvent {
-        call_id,
+    let AppServerThreadItem::CommandExecution {
+        id,
         command,
-        parsed_cmd,
-        source,
-        interaction_input,
+        cwd,
         process_id,
-    } = begin_event;
+        source,
+        command_actions,
+        ..
+    } = begin_item
+    else {
+        panic!("expected command execution item");
+    };
     handle_exec_end(
         chat,
-        ExecCommandEndEvent {
-            call_id,
-            process_id,
+        AppServerThreadItem::CommandExecution {
+            id,
             command,
-            parsed_cmd,
+            cwd,
+            process_id,
             source,
-            interaction_input,
-            aggregated_output: aggregated.clone(),
-            exit_code,
-            duration: std::time::Duration::from_millis(5),
-            formatted_output: aggregated,
+            status: if exit_code == 0 {
+                AppServerCommandExecutionStatus::Completed
+            } else {
+                AppServerCommandExecutionStatus::Failed
+            },
+            command_actions,
+            aggregated_output: (!aggregated.is_empty()).then_some(aggregated),
+            exit_code: Some(exit_code),
+            duration_ms: Some(5),
         },
     );
 }
 
-pub(super) fn handle_exec_end(chat: &mut ChatWidget, event: ExecCommandEndEvent) {
-    let cwd = chat.config.cwd.clone();
-    let duration_ms = i64::try_from(event.duration.as_millis()).unwrap_or(i64::MAX);
-    let command_actions = event
-        .parsed_cmd
-        .iter()
-        .cloned()
-        .map(|parsed| AppServerCommandAction::from_core_with_cwd(parsed, &cwd))
-        .collect();
-    let status = if event.exit_code == 0 {
-        AppServerCommandExecutionStatus::Completed
-    } else {
-        AppServerCommandExecutionStatus::Failed
-    };
+pub(super) fn handle_exec_end(chat: &mut ChatWidget, item: AppServerThreadItem) {
     chat.handle_server_notification(
         ServerNotification::ItemCompleted(ItemCompletedNotification {
             thread_id: thread_id(chat),
@@ -1213,19 +1199,7 @@ pub(super) fn handle_exec_end(chat: &mut ChatWidget, event: ExecCommandEndEvent)
                 .last_turn_id
                 .clone()
                 .unwrap_or_else(|| "turn-1".to_string()),
-            item: AppServerThreadItem::CommandExecution {
-                id: event.call_id,
-                command: codex_shell_command::parse_command::shlex_join(&event.command),
-                cwd,
-                process_id: event.process_id,
-                source: event.source,
-                status,
-                command_actions,
-                aggregated_output: (!event.aggregated_output.is_empty())
-                    .then_some(event.aggregated_output),
-                exit_code: Some(event.exit_code),
-                duration_ms: Some(duration_ms),
-            },
+            item,
         }),
         /*replay_kind*/ None,
     );

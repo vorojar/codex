@@ -8,13 +8,13 @@ use std::path::PathBuf;
 use crate::app_command::AppCommand;
 use codex_app_server_protocol::CommandExecutionApprovalDecision;
 use codex_app_server_protocol::FileChangeApprovalDecision;
+use codex_app_server_protocol::McpServerElicitationAction;
+use codex_app_server_protocol::RequestId as AppServerRequestId;
 use codex_app_server_protocol::ReviewTarget;
 use codex_app_server_protocol::ThreadRealtimeAudioChunk;
+use codex_app_server_protocol::ToolRequestUserInputResponse;
 use codex_protocol::ThreadId;
-use codex_protocol::approvals::ElicitationAction;
-use codex_protocol::mcp::RequestId as McpRequestId;
 use codex_protocol::request_permissions::RequestPermissionsResponse;
-use codex_protocol::request_user_input::RequestUserInputResponse;
 use tokio::sync::mpsc::UnboundedSender;
 
 use crate::app_event::AppEvent;
@@ -73,7 +73,7 @@ impl AppEventSender {
         )));
     }
 
-    pub(crate) fn user_input_answer(&self, id: String, response: RequestUserInputResponse) {
+    pub(crate) fn user_input_answer(&self, id: String, response: ToolRequestUserInputResponse) {
         self.send(AppEvent::CodexOp(AppCommand::user_input_answer(
             id, response,
         )));
@@ -119,8 +119,8 @@ impl AppEventSender {
         &self,
         thread_id: ThreadId,
         server_name: String,
-        request_id: McpRequestId,
-        decision: ElicitationAction,
+        request_id: AppServerRequestId,
+        decision: McpServerElicitationAction,
         content: Option<serde_json::Value>,
         meta: Option<serde_json::Value>,
     ) {

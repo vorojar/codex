@@ -3,23 +3,23 @@ use std::path::PathBuf;
 use codex_app_server_protocol::AskForApproval;
 use codex_app_server_protocol::CommandExecutionApprovalDecision;
 use codex_app_server_protocol::FileChangeApprovalDecision;
+use codex_app_server_protocol::McpServerElicitationAction;
+use codex_app_server_protocol::RequestId as AppServerRequestId;
 use codex_app_server_protocol::ReviewTarget;
 use codex_app_server_protocol::ThreadRealtimeAudioChunk;
 use codex_app_server_protocol::ThreadRealtimeStartTransport;
+use codex_app_server_protocol::ToolRequestUserInputResponse;
 use codex_app_server_protocol::UserInput;
 use codex_config::types::ApprovalsReviewer;
-use codex_protocol::approvals::ElicitationAction;
 use codex_protocol::approvals::GuardianAssessmentEvent;
 use codex_protocol::config_types::CollaborationMode;
 use codex_protocol::config_types::Personality;
 use codex_protocol::config_types::ReasoningSummary as ReasoningSummaryConfig;
 use codex_protocol::config_types::ServiceTier;
 use codex_protocol::config_types::WindowsSandboxLevel;
-use codex_protocol::mcp::RequestId as McpRequestId;
 use codex_protocol::models::PermissionProfile;
 use codex_protocol::openai_models::ReasoningEffort as ReasoningEffortConfig;
 use codex_protocol::request_permissions::RequestPermissionsResponse;
-use codex_protocol::request_user_input::RequestUserInputResponse;
 use serde::Serialize;
 use serde_json::Value;
 
@@ -75,14 +75,14 @@ pub(crate) enum AppCommand {
     },
     ResolveElicitation {
         server_name: String,
-        request_id: McpRequestId,
-        decision: ElicitationAction,
+        request_id: AppServerRequestId,
+        decision: McpServerElicitationAction,
         content: Option<Value>,
         meta: Option<Value>,
     },
     UserInputAnswer {
         id: String,
-        response: RequestUserInputResponse,
+        response: ToolRequestUserInputResponse,
     },
     RequestPermissionsResponse {
         id: String,
@@ -222,8 +222,8 @@ impl AppCommand {
 
     pub(crate) fn resolve_elicitation(
         server_name: String,
-        request_id: McpRequestId,
-        decision: ElicitationAction,
+        request_id: AppServerRequestId,
+        decision: McpServerElicitationAction,
         content: Option<Value>,
         meta: Option<Value>,
     ) -> Self {
@@ -236,7 +236,7 @@ impl AppCommand {
         }
     }
 
-    pub(crate) fn user_input_answer(id: String, response: RequestUserInputResponse) -> Self {
+    pub(crate) fn user_input_answer(id: String, response: ToolRequestUserInputResponse) -> Self {
         Self::UserInputAnswer { id, response }
     }
 
