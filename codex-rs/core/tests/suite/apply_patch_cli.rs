@@ -361,7 +361,9 @@ async fn apply_patch_cli_move_without_content_change_has_no_turn_diff(
     let call_id = "apply-move-no-change";
     mount_apply_patch(&harness, call_id, patch, "ok", model_output).await;
 
-    harness.submit("rename without content change").await?;
+    harness
+        .submit_without_wait("rename without content change")
+        .await?;
 
     let mut saw_turn_diff = false;
     wait_for_event(&codex, |event| match event {
@@ -969,7 +971,7 @@ async fn apply_patch_custom_tool_streaming_emits_updated_changes() -> Result<()>
     )
     .await;
 
-    harness.submit("create streamed file").await?;
+    harness.submit_without_wait("create streamed file").await?;
 
     let mut updates = Vec::new();
     wait_for_event(&codex, |event| match event {
@@ -1047,7 +1049,9 @@ async fn apply_patch_shell_command_heredoc_with_cd_emits_turn_diff() -> Result<(
     ];
     mount_sse_sequence(harness.server(), bodies).await;
 
-    harness.submit("apply via shell heredoc with cd").await?;
+    harness
+        .submit_without_wait("apply via shell heredoc with cd")
+        .await?;
 
     let mut saw_turn_diff = None;
     let mut saw_patch_begin = false;
@@ -1112,7 +1116,7 @@ async fn apply_patch_shell_command_failure_propagates_error_and_skips_diff() -> 
     ];
     mount_sse_sequence(harness.server(), bodies).await;
 
-    harness.submit("apply patch via shell").await?;
+    harness.submit_without_wait("apply patch via shell").await?;
 
     let mut saw_turn_diff = false;
     wait_for_event(&codex, |event| match event {
@@ -1248,7 +1252,7 @@ async fn apply_patch_emits_turn_diff_event_with_unified_diff(
     let patch = format!("*** Begin Patch\n*** Add File: {file}\n+hello\n*** End Patch\n");
     mount_apply_patch(&harness, call_id, patch.as_str(), "ok", model_output).await;
 
-    harness.submit("emit diff").await?;
+    harness.submit_without_wait("emit diff").await?;
 
     let mut saw_turn_diff = None;
     wait_for_event(&codex, |event| match event {
@@ -1296,7 +1300,7 @@ async fn apply_patch_turn_diff_for_rename_with_content_change(
     let patch = "*** Begin Patch\n*** Update File: old.txt\n*** Move to: new.txt\n@@\n-old\n+new\n*** End Patch";
     mount_apply_patch(&harness, call_id, patch, "ok", model_output).await;
 
-    harness.submit("rename with change").await?;
+    harness.submit_without_wait("rename with change").await?;
 
     let mut last_diff: Option<String> = None;
     wait_for_event(&codex, |event| match event {
@@ -1353,7 +1357,7 @@ async fn apply_patch_aggregates_diff_across_multiple_tool_calls() -> Result<()> 
     ]);
     mount_sse_sequence(harness.server(), vec![s1, s2, s3]).await;
 
-    harness.submit("aggregate diffs").await?;
+    harness.submit_without_wait("aggregate diffs").await?;
 
     let mut last_diff: Option<String> = None;
     wait_for_event(&codex, |event| match event {
@@ -1410,7 +1414,9 @@ async fn apply_patch_aggregates_diff_preserves_success_after_failure() -> Result
     ];
     mount_sse_sequence(harness.server(), responses).await;
 
-    harness.submit("apply patch twice with failure").await?;
+    harness
+        .submit_without_wait("apply patch twice with failure")
+        .await?;
 
     let mut last_diff: Option<String> = None;
     wait_for_event_with_timeout(

@@ -608,12 +608,30 @@ impl TestCodex {
             .await
     }
 
+    pub async fn submit_turn_without_wait(&self, prompt: &str) -> Result<()> {
+        self.submit_turn_without_wait_with_permission_profile(prompt, PermissionProfile::Disabled)
+            .await
+    }
+
     pub async fn submit_turn_with_permission_profile(
         &self,
         prompt: &str,
         permission_profile: PermissionProfile,
     ) -> Result<()> {
         self.submit_turn_with_approval_and_permission_profile(
+            prompt,
+            AskForApproval::Never,
+            permission_profile,
+        )
+        .await
+    }
+
+    pub async fn submit_turn_without_wait_with_permission_profile(
+        &self,
+        prompt: &str,
+        permission_profile: PermissionProfile,
+    ) -> Result<()> {
+        self.submit_turn_without_wait_with_approval_and_permission_profile(
             prompt,
             AskForApproval::Never,
             permission_profile,
@@ -681,6 +699,22 @@ impl TestCodex {
         .await
     }
 
+    pub async fn submit_turn_without_wait_with_approval_and_permission_profile(
+        &self,
+        prompt: &str,
+        approval_policy: AskForApproval,
+        permission_profile: PermissionProfile,
+    ) -> Result<()> {
+        self.submit_turn_without_wait_with_permission_profile_context(
+            prompt,
+            approval_policy,
+            permission_profile,
+            /*service_tier*/ None,
+            /*environments*/ None,
+        )
+        .await
+    }
+
     pub async fn submit_turn_with_environments(
         &self,
         prompt: &str,
@@ -691,6 +725,24 @@ impl TestCodex {
             AskForApproval::Never,
             PermissionProfile::Disabled,
             /*service_tier*/ None,
+            environments,
+        )
+        .await
+    }
+
+    async fn submit_turn_without_wait_with_permission_profile_context(
+        &self,
+        prompt: &str,
+        approval_policy: AskForApproval,
+        permission_profile: PermissionProfile,
+        service_tier: Option<Option<ServiceTier>>,
+        environments: Option<Vec<TurnEnvironmentSelection>>,
+    ) -> Result<()> {
+        self.submit_turn_op_with_context(
+            prompt,
+            approval_policy,
+            permission_profile,
+            service_tier,
             environments,
         )
         .await
@@ -722,6 +774,40 @@ impl TestCodex {
         service_tier: Option<Option<ServiceTier>>,
         environments: Option<Vec<TurnEnvironmentSelection>>,
     ) -> Result<()> {
+        self.submit_turn_op_with_context(
+            prompt,
+            approval_policy,
+            permission_profile,
+            service_tier,
+            environments,
+        )
+        .await?;
+
+        let turn_id = wait_for_event_match(&self.codex, |event| match event {
+            EventMsg::TurnStarted(event) => Some(event.turn_id.clone()),
+            _ => None,
+        })
+        .await;
+        wait_for_event_with_timeout(
+            &self.codex,
+            |event| match event {
+                EventMsg::TurnComplete(event) => event.turn_id == turn_id,
+                _ => false,
+            },
+            SUBMIT_TURN_COMPLETE_TIMEOUT,
+        )
+        .await;
+        Ok(())
+    }
+
+    async fn submit_turn_op_with_context(
+        &self,
+        prompt: &str,
+        approval_policy: AskForApproval,
+        permission_profile: PermissionProfile,
+        service_tier: Option<Option<ServiceTier>>,
+        environments: Option<Vec<TurnEnvironmentSelection>>,
+    ) -> Result<()> {
         let (sandbox_policy, permission_profile) =
             turn_permission_fields(permission_profile, self.config.cwd.as_path());
         let session_model = self.session_configured.model.clone();
@@ -746,21 +832,6 @@ impl TestCodex {
                 personality: None,
             })
             .await?;
-
-        let turn_id = wait_for_event_match(&self.codex, |event| match event {
-            EventMsg::TurnStarted(event) => Some(event.turn_id.clone()),
-            _ => None,
-        })
-        .await;
-        wait_for_event_with_timeout(
-            &self.codex,
-            |event| match event {
-                EventMsg::TurnComplete(event) => event.turn_id == turn_id,
-                _ => false,
-            },
-            SUBMIT_TURN_COMPLETE_TIMEOUT,
-        )
-        .await;
         Ok(())
     }
 }
@@ -885,6 +956,10 @@ impl TestCodexHarness {
         // Box the submit-and-wait path so callers do not inline the full turn
         // future into their own async state.
         Box::pin(self.test.submit_turn(prompt)).await
+    }
+
+    pub async fn submit_without_wait(&self, prompt: &str) -> Result<()> {
+        Box::pin(self.test.submit_turn_without_wait(prompt)).await
     }
 
     pub async fn submit_with_policy(
