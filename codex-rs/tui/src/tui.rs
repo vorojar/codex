@@ -630,7 +630,16 @@ impl Tui {
         }
 
         if area != terminal.viewport_area {
-            let clear_position = Position::new(/*x*/ 0, previous_area.y.min(area.y));
+            let terminal_resized = size != terminal.last_known_screen_size;
+            // Terminal emulators can natively reflow visible scrollback before Codex gets the
+            // resize event. When that happens, ratatui's diff buffer has no record of the glyphs
+            // now sitting under blank cells, so repaint from a fully-cleared visible screen.
+            let clear_y = if terminal_resized {
+                0
+            } else {
+                previous_area.y.min(area.y)
+            };
+            let clear_position = Position::new(/*x*/ 0, clear_y);
             terminal.set_viewport_area(area);
             terminal.clear_after_position(clear_position)?;
             needs_full_repaint = true;
