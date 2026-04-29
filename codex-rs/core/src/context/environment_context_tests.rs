@@ -1,8 +1,8 @@
 use crate::shell::ShellType;
 
 use super::*;
+use codex_protocol::config_types::ReasoningSummary as ReasoningSummaryConfig;
 use codex_protocol::protocol::AskForApproval;
-use codex_protocol::protocol::ReasoningSummaryConfig;
 use codex_protocol::protocol::SandboxPolicy;
 use codex_protocol::protocol::TurnEnvironmentSelection;
 use codex_utils_absolute_path::AbsolutePathBuf;
