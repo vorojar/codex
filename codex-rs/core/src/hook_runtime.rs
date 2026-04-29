@@ -263,7 +263,6 @@ pub(crate) async fn run_pre_compact_hooks(
         cwd: turn_context.cwd.clone(),
         transcript_path: sess.hook_transcript_path().await,
         model: turn_context.model_info.slug.clone(),
-        permission_mode: hook_permission_mode(turn_context),
         trigger: compaction_trigger_label(trigger).to_string(),
         custom_instructions,
     };
@@ -272,7 +271,11 @@ pub(crate) async fn run_pre_compact_hooks(
 
     let outcome = sess.hooks().run_pre_compact(request).await;
     emit_hook_completed_events(sess, turn_context, outcome.hook_events).await;
-    if outcome.should_block {
+    if outcome.should_stop {
+        PreCompactHookOutcome::Stopped {
+            reason: outcome.stop_reason,
+        }
+    } else if outcome.should_block {
         PreCompactHookOutcome::Blocked {
             reason: outcome
                 .block_reason
@@ -285,7 +288,13 @@ pub(crate) async fn run_pre_compact_hooks(
 
 pub(crate) enum PreCompactHookOutcome {
     Continue,
+    Stopped { reason: Option<String> },
     Blocked { reason: String },
+}
+
+pub(crate) enum PostCompactHookOutcome {
+    Continue,
+    Stopped,
 }
 
 pub(crate) async fn run_post_compact_hooks(
@@ -293,14 +302,13 @@ pub(crate) async fn run_post_compact_hooks(
     turn_context: &Arc<TurnContext>,
     trigger: CompactionTrigger,
     compact_summary: String,
-) {
+) -> PostCompactHookOutcome {
     let request = codex_hooks::PostCompactRequest {
         session_id: sess.conversation_id,
         turn_id: turn_context.sub_id.clone(),
         cwd: turn_context.cwd.clone(),
         transcript_path: sess.hook_transcript_path().await,
         model: turn_context.model_info.slug.clone(),
-        permission_mode: hook_permission_mode(turn_context),
         trigger: compaction_trigger_label(trigger).to_string(),
         compact_summary,
     };
@@ -309,6 +317,11 @@ pub(crate) async fn run_post_compact_hooks(
 
     let outcome = sess.hooks().run_post_compact(request).await;
     emit_hook_completed_events(sess, turn_context, outcome.hook_events).await;
+    if outcome.should_stop {
+        PostCompactHookOutcome::Stopped
+    } else {
+        PostCompactHookOutcome::Continue
+    }
 }
 
 pub(crate) async fn run_user_prompt_submit_hooks(

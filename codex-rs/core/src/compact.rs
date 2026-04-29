@@ -4,6 +4,7 @@ use std::time::Instant;
 use crate::Prompt;
 use crate::client::ModelClientSession;
 use crate::client_common::ResponseEvent;
+use crate::hook_runtime::PostCompactHookOutcome;
 use crate::hook_runtime::PreCompactHookOutcome;
 use crate::hook_runtime::run_post_compact_hooks;
 use crate::hook_runtime::run_pre_compact_hooks;
@@ -137,22 +138,32 @@ async fn run_compact_task_inner(
     .await;
     let pre_compact_outcome =
         run_pre_compact_hooks(&sess, &turn_context, trigger, String::new()).await;
-    if let PreCompactHookOutcome::Blocked { reason } = pre_compact_outcome {
-        let error = format!("Compaction blocked by PreCompact hook: {reason}");
-        if matches!(trigger, CompactionTrigger::Manual) {
-            sess.send_event(
-                &turn_context,
-                EventMsg::Error(ErrorEvent {
-                    message: error.clone(),
-                    codex_error_info: None,
-                }),
-            )
-            .await;
+    match pre_compact_outcome {
+        PreCompactHookOutcome::Continue => {}
+        PreCompactHookOutcome::Stopped { reason } => {
+            let error = reason.unwrap_or_else(|| "PreCompact hook stopped execution".to_string());
+            attempt
+                .track(sess.as_ref(), CompactionStatus::Interrupted, Some(error))
+                .await;
+            return Err(CodexErr::TurnAborted);
         }
-        attempt
-            .track(sess.as_ref(), CompactionStatus::Interrupted, Some(error))
-            .await;
-        return Ok(false);
+        PreCompactHookOutcome::Blocked { reason } => {
+            let error = format!("Compaction blocked by PreCompact hook: {reason}");
+            if matches!(trigger, CompactionTrigger::Manual) {
+                sess.send_event(
+                    &turn_context,
+                    EventMsg::Error(ErrorEvent {
+                        message: error.clone(),
+                        codex_error_info: None,
+                    }),
+                )
+                .await;
+            }
+            attempt
+                .track(sess.as_ref(), CompactionStatus::Interrupted, Some(error))
+                .await;
+            return Ok(false);
+        }
     }
     let result = run_compact_task_inner_impl(
         Arc::clone(&sess),
@@ -164,7 +175,12 @@ async fn run_compact_task_inner(
     let status = compaction_status_from_result(&result);
     let error = result.as_ref().err().map(ToString::to_string);
     if let Ok(compact_summary) = &result {
-        run_post_compact_hooks(&sess, &turn_context, trigger, compact_summary.clone()).await;
+        let post_compact_outcome =
+            run_post_compact_hooks(&sess, &turn_context, trigger, compact_summary.clone()).await;
+        if let PostCompactHookOutcome::Stopped = post_compact_outcome {
+            attempt.track(sess.as_ref(), status, error).await;
+            return Err(CodexErr::TurnAborted);
+        }
     }
     attempt.track(sess.as_ref(), status, error).await;
     result.map(|_| true)

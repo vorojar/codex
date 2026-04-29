@@ -311,8 +311,6 @@ pub(crate) struct PreCompactCommandInput {
     #[schemars(schema_with = "pre_compact_hook_event_name_schema")]
     pub hook_event_name: String,
     pub model: String,
-    #[schemars(schema_with = "permission_mode_schema")]
-    pub permission_mode: String,
     #[schemars(schema_with = "compaction_trigger_schema")]
     pub trigger: String,
     pub custom_instructions: String,
@@ -330,8 +328,6 @@ pub(crate) struct PostCompactCommandInput {
     #[schemars(schema_with = "post_compact_hook_event_name_schema")]
     pub hook_event_name: String,
     pub model: String,
-    #[schemars(schema_with = "permission_mode_schema")]
-    pub permission_mode: String,
     #[schemars(schema_with = "compaction_trigger_schema")]
     pub trigger: String,
     pub compact_summary: String,

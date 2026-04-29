@@ -11,6 +11,7 @@ use crate::context_manager::ContextManager;
 use crate::context_manager::TotalTokenUsageBreakdown;
 use crate::context_manager::estimate_response_item_model_visible_bytes;
 use crate::context_manager::is_codex_generated_item;
+use crate::hook_runtime::PostCompactHookOutcome;
 use crate::hook_runtime::PreCompactHookOutcome;
 use crate::hook_runtime::run_post_compact_hooks;
 use crate::hook_runtime::run_pre_compact_hooks;
@@ -98,33 +99,52 @@ async fn run_remote_compact_task_inner(
     .await;
     let pre_compact_outcome =
         run_pre_compact_hooks(sess, turn_context, trigger, String::new()).await;
-    if let PreCompactHookOutcome::Blocked { reason } = pre_compact_outcome {
-        let error = format!("Compaction blocked by PreCompact hook: {reason}");
-        if matches!(trigger, CompactionTrigger::Manual) {
-            sess.send_event(
-                turn_context,
-                EventMsg::Error(ErrorEvent {
-                    message: error.clone(),
-                    codex_error_info: None,
-                }),
-            )
-            .await;
+    match pre_compact_outcome {
+        PreCompactHookOutcome::Continue => {}
+        PreCompactHookOutcome::Stopped { reason } => {
+            let error = reason.unwrap_or_else(|| "PreCompact hook stopped execution".to_string());
+            attempt
+                .track(
+                    sess.as_ref(),
+                    codex_analytics::CompactionStatus::Interrupted,
+                    Some(error),
+                )
+                .await;
+            return Err(CodexErr::TurnAborted);
         }
-        attempt
-            .track(
-                sess.as_ref(),
-                codex_analytics::CompactionStatus::Interrupted,
-                Some(error),
-            )
-            .await;
-        return Ok(false);
+        PreCompactHookOutcome::Blocked { reason } => {
+            let error = format!("Compaction blocked by PreCompact hook: {reason}");
+            if matches!(trigger, CompactionTrigger::Manual) {
+                sess.send_event(
+                    turn_context,
+                    EventMsg::Error(ErrorEvent {
+                        message: error.clone(),
+                        codex_error_info: None,
+                    }),
+                )
+                .await;
+            }
+            attempt
+                .track(
+                    sess.as_ref(),
+                    codex_analytics::CompactionStatus::Interrupted,
+                    Some(error),
+                )
+                .await;
+            return Ok(false);
+        }
     }
     let result =
         run_remote_compact_task_inner_impl(sess, turn_context, initial_context_injection).await;
     let status = compaction_status_from_result(&result);
     let error = result.as_ref().err().map(ToString::to_string);
     if let Ok(compact_summary) = &result {
-        run_post_compact_hooks(sess, turn_context, trigger, compact_summary.clone()).await;
+        let post_compact_outcome =
+            run_post_compact_hooks(sess, turn_context, trigger, compact_summary.clone()).await;
+        if let PostCompactHookOutcome::Stopped = post_compact_outcome {
+            attempt.track(sess.as_ref(), status, error).await;
+            return Err(CodexErr::TurnAborted);
+        }
     }
     attempt.track(sess.as_ref(), status, error.clone()).await;
     if let Err(err) = result {
@@ -253,9 +273,6 @@ fn compact_summary_from_history(items: &[ResponseItem]) -> String {
         .iter()
         .rev()
         .find_map(|item| match item {
-            ResponseItem::Compaction { encrypted_content } => {
-                Some(strip_summary_prefix(encrypted_content).to_string())
-            }
             ResponseItem::Message { content, .. } => content_items_to_text(content)
                 .map(|summary| strip_summary_prefix(&summary).to_string()),
             _ => None,
@@ -290,6 +307,45 @@ pub(crate) async fn process_compacted_history(
 
     compacted_history.retain(should_keep_compacted_history_item);
     insert_initial_context_before_last_real_user_or_summary(compacted_history, initial_context)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use codex_protocol::models::ContentItem;
+    use pretty_assertions::assert_eq;
+
+    #[test]
+    fn compact_summary_from_history_uses_plaintext_message_not_encrypted_marker() {
+        let items = vec![
+            ResponseItem::Message {
+                id: None,
+                role: "assistant".to_string(),
+                content: vec![ContentItem::OutputText {
+                    text: format!("{}\nplain compact summary", crate::compact::SUMMARY_PREFIX),
+                }],
+                phase: None,
+            },
+            ResponseItem::Compaction {
+                encrypted_content: "gAAAAABencrypted".to_string(),
+            },
+        ];
+
+        let summary = compact_summary_from_history(&items);
+
+        assert_eq!("plain compact summary", summary);
+    }
+
+    #[test]
+    fn compact_summary_from_history_ignores_encrypted_marker_without_plaintext() {
+        let items = vec![ResponseItem::Compaction {
+            encrypted_content: "gAAAAABencrypted".to_string(),
+        }];
+
+        let summary = compact_summary_from_history(&items);
+
+        assert_eq!("", summary);
+    }
 }
 
 /// Returns whether an item from remote compaction output should be preserved.

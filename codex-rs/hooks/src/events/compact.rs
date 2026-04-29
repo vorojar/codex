@@ -25,7 +25,6 @@ pub struct PreCompactRequest {
     pub cwd: AbsolutePathBuf,
     pub transcript_path: Option<PathBuf>,
     pub model: String,
-    pub permission_mode: String,
     pub trigger: String,
     pub custom_instructions: String,
 }
@@ -37,7 +36,6 @@ pub struct PostCompactRequest {
     pub cwd: AbsolutePathBuf,
     pub transcript_path: Option<PathBuf>,
     pub model: String,
-    pub permission_mode: String,
     pub trigger: String,
     pub compact_summary: String,
 }
@@ -45,6 +43,8 @@ pub struct PostCompactRequest {
 #[derive(Debug)]
 pub struct StatelessHookOutcome {
     pub hook_events: Vec<HookCompletedEvent>,
+    pub should_stop: bool,
+    pub stop_reason: Option<String>,
 }
 
 #[derive(Debug)]
@@ -52,6 +52,8 @@ pub struct PreCompactOutcome {
     pub hook_events: Vec<HookCompletedEvent>,
     pub should_block: bool,
     pub block_reason: Option<String>,
+    pub should_stop: bool,
+    pub stop_reason: Option<String>,
 }
 
 pub(crate) fn preview_pre(
@@ -83,6 +85,8 @@ pub(crate) async fn run_pre(
             hook_events: Vec::new(),
             should_block: false,
             block_reason: None,
+            should_stop: false,
+            stop_reason: None,
         };
     }
 
@@ -97,6 +101,8 @@ pub(crate) async fn run_pre(
                 ),
                 should_block: false,
                 block_reason: None,
+                should_stop: false,
+                stop_reason: None,
             };
         }
     };
@@ -114,10 +120,16 @@ pub(crate) async fn run_pre(
     let block_reason = results
         .iter()
         .find_map(|result| result.data.block_reason.clone());
+    let should_stop = results.iter().any(|result| result.data.should_stop);
+    let stop_reason = results
+        .iter()
+        .find_map(|result| result.data.stop_reason.clone());
     PreCompactOutcome {
         hook_events: results.into_iter().map(|result| result.completed).collect(),
         should_block,
         block_reason,
+        should_stop,
+        stop_reason,
     }
 }
 
@@ -129,7 +141,6 @@ fn pre_command_input_json(request: &PreCompactRequest) -> Result<String, serde_j
         cwd: request.cwd.display().to_string(),
         hook_event_name: "PreCompact".to_string(),
         model: request.model.clone(),
-        permission_mode: request.permission_mode.clone(),
         trigger: request.trigger.clone(),
         custom_instructions: request.custom_instructions.clone(),
     })
@@ -162,6 +173,8 @@ pub(crate) async fn run_post(
     if matched.is_empty() {
         return StatelessHookOutcome {
             hook_events: Vec::new(),
+            should_stop: false,
+            stop_reason: None,
         };
     }
 
@@ -174,6 +187,8 @@ pub(crate) async fn run_post(
                     Some(request.turn_id),
                     format!("failed to serialize post compact hook input: {error}"),
                 ),
+                should_stop: false,
+                stop_reason: None,
             };
         }
     };
@@ -187,8 +202,14 @@ pub(crate) async fn run_post(
         parse_post_completed,
     )
     .await;
+    let should_stop = results.iter().any(|result| result.data.should_stop);
+    let stop_reason = results
+        .iter()
+        .find_map(|result| result.data.stop_reason.clone());
     StatelessHookOutcome {
         hook_events: results.into_iter().map(|result| result.completed).collect(),
+        should_stop,
+        stop_reason,
     }
 }
 
@@ -200,7 +221,6 @@ fn post_command_input_json(request: &PostCompactRequest) -> Result<String, serde
         cwd: request.cwd.display().to_string(),
         hook_event_name: "PostCompact".to_string(),
         model: request.model.clone(),
-        permission_mode: request.permission_mode.clone(),
         trigger: request.trigger.clone(),
         compact_summary: request.compact_summary.clone(),
     })
@@ -210,6 +230,8 @@ fn post_command_input_json(request: &PostCompactRequest) -> Result<String, serde
 struct CompactHandlerData {
     should_block: bool,
     block_reason: Option<String>,
+    should_stop: bool,
+    stop_reason: Option<String>,
 }
 
 fn parse_pre_completed(
@@ -221,6 +243,8 @@ fn parse_pre_completed(
     let mut status = HookRunStatus::Completed;
     let mut should_block = false;
     let mut block_reason = None;
+    let mut should_stop = false;
+    let mut stop_reason = None;
 
     match run_result.error.as_deref() {
         Some(error) => {
@@ -241,7 +265,19 @@ fn parse_pre_completed(
                             text: system_message,
                         });
                     }
-                    if let Some(invalid_reason) = parsed.invalid_reason {
+                    let _ = parsed.universal.suppress_output;
+                    if !parsed.universal.continue_processing {
+                        status = HookRunStatus::Stopped;
+                        should_stop = true;
+                        stop_reason = parsed.universal.stop_reason.clone();
+                        entries.push(HookOutputEntry {
+                            kind: HookOutputEntryKind::Stop,
+                            text: parsed
+                                .universal
+                                .stop_reason
+                                .unwrap_or_else(|| "PreCompact hook stopped execution".to_string()),
+                        });
+                    } else if let Some(invalid_reason) = parsed.invalid_reason {
                         status = HookRunStatus::Failed;
                         entries.push(HookOutputEntry {
                             kind: HookOutputEntryKind::Error,
@@ -315,6 +351,8 @@ fn parse_pre_completed(
         data: CompactHandlerData {
             should_block,
             block_reason,
+            should_stop,
+            stop_reason,
         },
     }
 }
@@ -342,6 +380,8 @@ fn parse_completed(
 ) -> dispatcher::ParsedHandler<CompactHandlerData> {
     let mut entries = Vec::new();
     let mut status = HookRunStatus::Completed;
+    let mut should_stop = false;
+    let mut stop_reason = None;
 
     match run_result.error.as_deref() {
         Some(error) => {
@@ -362,7 +402,19 @@ fn parse_completed(
                             text: system_message,
                         });
                     }
-                    if let Some(invalid_reason) = parsed.invalid_reason {
+                    let _ = parsed.universal.suppress_output;
+                    if !parsed.universal.continue_processing {
+                        status = HookRunStatus::Stopped;
+                        should_stop = true;
+                        stop_reason = parsed.universal.stop_reason.clone();
+                        entries.push(HookOutputEntry {
+                            kind: HookOutputEntryKind::Stop,
+                            text: parsed
+                                .universal
+                                .stop_reason
+                                .unwrap_or_else(|| format!("{event_label} hook stopped execution")),
+                        });
+                    } else if let Some(invalid_reason) = parsed.invalid_reason {
                         status = HookRunStatus::Failed;
                         entries.push(HookOutputEntry {
                             kind: HookOutputEntryKind::Error,
@@ -400,7 +452,11 @@ fn parse_completed(
             turn_id,
             run: dispatcher::completed_summary(handler, &run_result, status, entries),
         },
-        data: CompactHandlerData::default(),
+        data: CompactHandlerData {
+            should_stop,
+            stop_reason,
+            ..Default::default()
+        },
     }
 }
 
@@ -438,7 +494,6 @@ mod tests {
                 "cwd": test_path_buf("/tmp").display().to_string(),
                 "hook_event_name": "PreCompact",
                 "model": "gpt-test",
-                "permission_mode": "default",
                 "trigger": "manual",
                 "custom_instructions": "",
             })
@@ -460,7 +515,6 @@ mod tests {
                 "cwd": test_path_buf("/tmp").display().to_string(),
                 "hook_event_name": "PostCompact",
                 "model": "gpt-test",
-                "permission_mode": "default",
                 "trigger": "manual",
                 "compact_summary": "summary request complete",
             })
@@ -495,19 +549,49 @@ mod tests {
     }
 
     #[test]
-    fn continue_false_is_not_a_compaction_block_decision() {
+    fn continue_false_stops_before_compaction() {
         let parsed = parse_pre_completed(
             &handler(HookEventName::PreCompact),
             run_result(Some(0), r#"{"continue":false,"stopReason":"nope"}"#, ""),
             Some("turn-1".to_string()),
         );
 
-        assert_eq!(parsed.completed.run.status, HookRunStatus::Failed);
+        assert_eq!(parsed.completed.run.status, HookRunStatus::Stopped);
+        assert_eq!(parsed.data.should_stop, true);
+        assert_eq!(parsed.data.stop_reason, Some("nope".to_string()));
+        assert_eq!(parsed.data.should_block, false);
         assert_eq!(
             parsed.completed.run.entries,
             vec![HookOutputEntry {
-                kind: HookOutputEntryKind::Error,
-                text: "PreCompact hook returned unsupported continue:false".to_string(),
+                kind: HookOutputEntryKind::Stop,
+                text: "nope".to_string(),
+            }]
+        );
+    }
+
+    #[test]
+    fn post_compact_continue_false_stops_after_compaction() {
+        let parsed = parse_post_completed(
+            &handler(HookEventName::PostCompact),
+            run_result(
+                Some(0),
+                r#"{"continue":false,"stopReason":"pause after compact"}"#,
+                "",
+            ),
+            Some("turn-1".to_string()),
+        );
+
+        assert_eq!(parsed.completed.run.status, HookRunStatus::Stopped);
+        assert_eq!(parsed.data.should_stop, true);
+        assert_eq!(
+            parsed.data.stop_reason,
+            Some("pause after compact".to_string())
+        );
+        assert_eq!(
+            parsed.completed.run.entries,
+            vec![HookOutputEntry {
+                kind: HookOutputEntryKind::Stop,
+                text: "pause after compact".to_string(),
             }]
         );
     }
@@ -546,7 +630,6 @@ mod tests {
             cwd: test_path_buf("/tmp").abs(),
             transcript_path: None,
             model: "gpt-test".to_string(),
-            permission_mode: "default".to_string(),
             trigger: "manual".to_string(),
             custom_instructions: String::new(),
         }
@@ -560,7 +643,6 @@ mod tests {
             cwd: test_path_buf("/tmp").abs(),
             transcript_path: None,
             model: "gpt-test".to_string(),
-            permission_mode: "default".to_string(),
             trigger: "manual".to_string(),
             compact_summary: "summary request complete".to_string(),
         }

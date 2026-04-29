@@ -210,6 +210,7 @@ pub(crate) fn parse_pre_compact(stdout: &str) -> Option<PreCompactOutput> {
     let universal = UniversalOutput::from(wire.universal);
     let should_block = matches!(wire.decision, Some(BlockDecisionWire::Block));
     let invalid_block_reason = if should_block
+        && universal.continue_processing
         && match wire.reason.as_deref() {
             Some(reason) => reason.trim().is_empty(),
             None => true,
@@ -220,23 +221,21 @@ pub(crate) fn parse_pre_compact(stdout: &str) -> Option<PreCompactOutput> {
     } else {
         None
     };
-    let invalid_reason = unsupported_pre_compact_universal(&universal);
     Some(PreCompactOutput {
         universal,
-        should_block: should_block && invalid_reason.is_none() && invalid_block_reason.is_none(),
+        should_block: should_block && invalid_block_reason.is_none(),
         reason: wire.reason,
         invalid_block_reason,
-        invalid_reason,
+        invalid_reason: None,
     })
 }
 
 pub(crate) fn parse_post_compact(stdout: &str) -> Option<StatelessHookOutput> {
     let wire: PostCompactCommandOutputWire = parse_json(stdout)?;
     let universal = UniversalOutput::from(wire.universal);
-    let invalid_reason = unsupported_stateless_hook_universal("PostCompact", &universal);
     Some(StatelessHookOutput {
         universal,
-        invalid_reason,
+        invalid_reason: None,
     })
 }
 
@@ -346,37 +345,6 @@ fn unsupported_permission_request_universal(universal: &UniversalOutput) -> Opti
 fn unsupported_post_tool_use_universal(universal: &UniversalOutput) -> Option<String> {
     if universal.suppress_output {
         Some("PostToolUse hook returned unsupported suppressOutput".to_string())
-    } else {
-        None
-    }
-}
-
-fn unsupported_stateless_hook_universal(
-    event_name: &str,
-    universal: &UniversalOutput,
-) -> Option<String> {
-    if !universal.continue_processing {
-        Some(format!(
-            "{event_name} hook returned unsupported continue:false"
-        ))
-    } else if universal.stop_reason.is_some() {
-        Some(format!("{event_name} hook returned unsupported stopReason"))
-    } else if universal.suppress_output {
-        Some(format!(
-            "{event_name} hook returned unsupported suppressOutput"
-        ))
-    } else {
-        None
-    }
-}
-
-fn unsupported_pre_compact_universal(universal: &UniversalOutput) -> Option<String> {
-    if !universal.continue_processing {
-        Some("PreCompact hook returned unsupported continue:false".to_string())
-    } else if universal.stop_reason.is_some() {
-        Some("PreCompact hook returned unsupported stopReason".to_string())
-    } else if universal.suppress_output {
-        Some("PreCompact hook returned unsupported suppressOutput".to_string())
     } else {
         None
     }
