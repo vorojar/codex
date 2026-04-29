@@ -12,7 +12,7 @@
 
 use crate::session::session::Session;
 use crate::session::turn_context::TurnContext;
-use codex_api::upload_file_body;
+use codex_api::upload_file_bytes;
 use codex_login::CodexAuth;
 use serde_json::Value as JsonValue;
 
@@ -133,8 +133,8 @@ async fn build_uploaded_local_argument_value(
                 .local_environment()
                 .get_filesystem()
         });
-    let file_body = file_system
-        .read_file_body(&resolved_path, Some(&sandbox))
+    let file_contents = file_system
+        .read_file(&resolved_path, Some(&sandbox))
         .await
         .map_err(|error| match index {
             Some(index) => {
@@ -142,13 +142,18 @@ async fn build_uploaded_local_argument_value(
             }
             None => format!("failed to read `{file_path}` for `{field_name}`: {error}"),
         })?;
+    let file_name = resolved_path
+        .as_path()
+        .file_name()
+        .and_then(|value| value.to_str())
+        .unwrap_or("file")
+        .to_string();
     let upload_auth = codex_model_provider::auth_provider_from_auth(auth);
-    let uploaded = upload_file_body(
+    let uploaded = upload_file_bytes(
         turn_context.config.chatgpt_base_url.trim_end_matches('/'),
         upload_auth.as_ref(),
-        file_body.file_name,
-        file_body.file_size_bytes,
-        reqwest::Body::wrap_stream(file_body.stream),
+        file_name,
+        file_contents,
     )
     .await
     .map_err(|error| match index {

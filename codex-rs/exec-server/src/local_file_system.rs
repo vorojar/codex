@@ -13,15 +13,13 @@ use crate::CreateDirectoryOptions;
 use crate::ExecServerRuntimePaths;
 use crate::ExecutorFileSystem;
 use crate::FileMetadata;
-use crate::FileReadBody;
 use crate::FileSystemResult;
 use crate::FileSystemSandboxContext;
 use crate::ReadDirectoryEntry;
 use crate::RemoveOptions;
 use crate::sandboxed_file_system::SandboxedFileSystem;
-use tokio_util::io::ReaderStream;
 
-pub(crate) const MAX_READ_FILE_BYTES: u64 = 512 * 1024 * 1024;
+const MAX_READ_FILE_BYTES: u64 = 512 * 1024 * 1024;
 
 pub static LOCAL_FS: LazyLock<Arc<dyn ExecutorFileSystem>> =
     LazyLock::new(|| -> Arc<dyn ExecutorFileSystem> { Arc::new(LocalFileSystem::unsandboxed()) });
@@ -88,15 +86,6 @@ impl ExecutorFileSystem for LocalFileSystem {
     ) -> FileSystemResult<Vec<u8>> {
         let (file_system, sandbox) = self.file_system_for(sandbox)?;
         file_system.read_file(path, sandbox).await
-    }
-
-    async fn read_file_body(
-        &self,
-        path: &AbsolutePathBuf,
-        sandbox: Option<&FileSystemSandboxContext>,
-    ) -> FileSystemResult<FileReadBody> {
-        let (file_system, sandbox) = self.file_system_for(sandbox)?;
-        file_system.read_file_body(path, sandbox).await
     }
 
     async fn write_file(
@@ -170,17 +159,6 @@ impl ExecutorFileSystem for UnsandboxedFileSystem {
     ) -> FileSystemResult<Vec<u8>> {
         reject_platform_sandbox_context(sandbox)?;
         self.file_system.read_file(path, /*sandbox*/ None).await
-    }
-
-    async fn read_file_body(
-        &self,
-        path: &AbsolutePathBuf,
-        sandbox: Option<&FileSystemSandboxContext>,
-    ) -> FileSystemResult<FileReadBody> {
-        reject_platform_sandbox_context(sandbox)?;
-        self.file_system
-            .read_file_body(path, /*sandbox*/ None)
-            .await
     }
 
     async fn write_file(
@@ -274,33 +252,6 @@ impl ExecutorFileSystem for DirectFileSystem {
             ));
         }
         tokio::fs::read(path.as_path()).await
-    }
-
-    async fn read_file_body(
-        &self,
-        path: &AbsolutePathBuf,
-        sandbox: Option<&FileSystemSandboxContext>,
-    ) -> FileSystemResult<FileReadBody> {
-        reject_sandbox_context(sandbox)?;
-        let metadata = tokio::fs::metadata(path.as_path()).await?;
-        if !metadata.is_file() {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidInput,
-                format!("path `{}` is not a file", path.display()),
-            ));
-        }
-        if metadata.len() > MAX_READ_FILE_BYTES {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidInput,
-                format!("file is too large to read: limit is {MAX_READ_FILE_BYTES} bytes"),
-            ));
-        }
-        let file = tokio::fs::File::open(path.as_path()).await?;
-        Ok(FileReadBody {
-            file_name: file_name_from_path(path.as_path()),
-            file_size_bytes: metadata.len(),
-            stream: Box::pin(ReaderStream::new(file)),
-        })
     }
 
     async fn write_file(
@@ -464,13 +415,6 @@ fn reject_platform_sandbox_context(sandbox: Option<&FileSystemSandboxContext>) -
         ));
     }
     Ok(())
-}
-
-pub(crate) fn file_name_from_path(path: &Path) -> String {
-    path.file_name()
-        .and_then(|value| value.to_str())
-        .unwrap_or("file")
-        .to_string()
 }
 
 fn copy_dir_recursive(source: &Path, target: &Path) -> io::Result<()> {

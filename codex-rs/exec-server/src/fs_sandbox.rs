@@ -1,7 +1,6 @@
 use std::collections::HashMap;
 
 use codex_app_server_protocol::JSONRPCErrorError;
-use codex_file_system::FileByteStream;
 use codex_protocol::models::PermissionProfile;
 use codex_protocol::permissions::FileSystemAccessMode;
 use codex_protocol::permissions::FileSystemPath;
@@ -18,7 +17,6 @@ use codex_utils_absolute_path::AbsolutePathBuf;
 use codex_utils_absolute_path::canonicalize_preserving_symlinks;
 use tokio::io::AsyncWriteExt;
 use tokio::process::Command;
-use tokio_util::io::ReaderStream;
 
 use crate::ExecServerRuntimePaths;
 use crate::FileSystemSandboxContext;
@@ -69,31 +67,6 @@ impl FileSystemSandboxRunner {
         let command = self.sandbox_exec_request(&permission_profile, &cwd, sandbox)?;
         let request_json = serde_json::to_vec(&request).map_err(json_error)?;
         run_command(command, request_json).await
-    }
-
-    pub(crate) async fn run_stream(
-        &self,
-        sandbox: &FileSystemSandboxContext,
-        request: FsHelperRequest,
-    ) -> Result<FileByteStream, JSONRPCErrorError> {
-        let cwd = sandbox_cwd(sandbox)?;
-        let mut file_system_policy = sandbox.permissions.file_system_sandbox_policy();
-        let helper_read_roots = if sandbox.use_legacy_landlock {
-            Vec::new()
-        } else {
-            helper_read_roots(&self.runtime_paths)
-        };
-        add_helper_runtime_permissions(&mut file_system_policy, &helper_read_roots, cwd.as_path());
-        normalize_file_system_policy_root_aliases(&mut file_system_policy);
-        let network_policy = NetworkSandboxPolicy::Restricted;
-        let permission_profile = PermissionProfile::from_runtime_permissions_with_enforcement(
-            sandbox.permissions.enforcement(),
-            &file_system_policy,
-            network_policy,
-        );
-        let command = self.sandbox_exec_request(&permission_profile, &cwd, sandbox)?;
-        let request_json = serde_json::to_vec(&request).map_err(json_error)?;
-        run_command_stream(command, request_json).await
     }
 
     fn sandbox_exec_request(
@@ -276,72 +249,6 @@ async fn run_command(
         FsHelperResponse::Ok(payload) => Ok(payload),
         FsHelperResponse::Error(error) => Err(error),
     }
-}
-
-struct StreamCommandState {
-    stdout: ReaderStream<tokio::process::ChildStdout>,
-    child: tokio::process::Child,
-    stderr_task: tokio::task::JoinHandle<Vec<u8>>,
-}
-
-async fn run_command_stream(
-    command: SandboxExecRequest,
-    request_json: Vec<u8>,
-) -> Result<FileByteStream, JSONRPCErrorError> {
-    let mut child = spawn_command(command)?;
-    let mut stdin = child
-        .stdin
-        .take()
-        .ok_or_else(|| internal_error("failed to open fs sandbox helper stdin".to_string()))?;
-    stdin.write_all(&request_json).await.map_err(io_error)?;
-    stdin.shutdown().await.map_err(io_error)?;
-    drop(stdin);
-
-    let stdout = child
-        .stdout
-        .take()
-        .ok_or_else(|| internal_error("failed to open fs sandbox helper stdout".to_string()))?;
-    let stderr = child.stderr.take();
-    let stderr_task = tokio::spawn(async move {
-        let Some(mut stderr) = stderr else {
-            return Vec::new();
-        };
-        let mut output = Vec::new();
-        let _ = tokio::io::AsyncReadExt::read_to_end(&mut stderr, &mut output).await;
-        output
-    });
-    let state = StreamCommandState {
-        stdout: ReaderStream::new(stdout),
-        child,
-        stderr_task,
-    };
-
-    Ok(Box::pin(futures::stream::try_unfold(
-        state,
-        |mut state| async move {
-            match futures::StreamExt::next(&mut state.stdout).await {
-                Some(Ok(bytes)) => Ok(Some((bytes, state))),
-                Some(Err(error)) => {
-                    let _ = state.child.start_kill();
-                    Err(error)
-                }
-                None => {
-                    let status = state.child.wait().await?;
-                    let stderr = state
-                        .stderr_task
-                        .await
-                        .map_err(|error| std::io::Error::other(error.to_string()))?;
-                    if !status.success() {
-                        return Err(std::io::Error::other(format!(
-                            "fs sandbox helper failed with status {status}: {stderr}",
-                            stderr = String::from_utf8_lossy(&stderr).trim()
-                        )));
-                    }
-                    Ok(None)
-                }
-            }
-        },
-    )))
 }
 
 fn spawn_command(

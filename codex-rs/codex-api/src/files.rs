@@ -145,19 +145,19 @@ pub async fn upload_local_file(
     .await
 }
 
-pub async fn upload_file_body(
+pub async fn upload_file_bytes(
     base_url: &str,
     auth: &dyn AuthProvider,
     file_name: String,
-    file_size_bytes: u64,
-    body: reqwest::Body,
+    contents: Vec<u8>,
 ) -> Result<UploadedOpenAiFile, OpenAiFileError> {
+    let file_size_bytes = contents.len() as u64;
     upload_file_body_with_source_path(
         base_url,
         auth,
         file_name,
         file_size_bytes,
-        body,
+        reqwest::Body::from(contents),
         /*source_path*/ None,
     )
     .await

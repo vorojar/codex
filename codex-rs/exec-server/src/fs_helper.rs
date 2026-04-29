@@ -4,14 +4,12 @@ use codex_app_server_protocol::JSONRPCErrorError;
 use serde::Deserialize;
 use serde::Serialize;
 use tokio::io;
-use tokio::io::AsyncWrite;
 
 use crate::CopyOptions;
 use crate::CreateDirectoryOptions;
 use crate::ExecutorFileSystem;
 use crate::RemoveOptions;
 use crate::local_file_system::DirectFileSystem;
-use crate::local_file_system::MAX_READ_FILE_BYTES;
 use crate::protocol::FS_COPY_METHOD;
 use crate::protocol::FS_CREATE_DIRECTORY_METHOD;
 use crate::protocol::FS_GET_METADATA_METHOD;
@@ -45,10 +43,6 @@ pub const CODEX_FS_HELPER_ARG1: &str = "--codex-run-as-fs-helper";
 pub(crate) enum FsHelperRequest {
     #[serde(rename = "fs/readFile")]
     ReadFile(FsReadFileParams),
-    #[serde(rename = "fs/readFileInfo")]
-    ReadFileInfo(FsReadFileParams),
-    #[serde(rename = "fs/readFileStream")]
-    ReadFileStream(FsReadFileParams),
     #[serde(rename = "fs/writeFile")]
     WriteFile(FsWriteFileParams),
     #[serde(rename = "fs/createDirectory")]
@@ -75,8 +69,6 @@ pub(crate) enum FsHelperResponse {
 pub(crate) enum FsHelperPayload {
     #[serde(rename = "fs/readFile")]
     ReadFile(FsReadFileResponse),
-    #[serde(rename = "fs/readFileInfo")]
-    ReadFileInfo(FsReadFileInfoResponse),
     #[serde(rename = "fs/writeFile")]
     WriteFile(FsWriteFileResponse),
     #[serde(rename = "fs/createDirectory")]
@@ -91,17 +83,10 @@ pub(crate) enum FsHelperPayload {
     Copy(FsCopyResponse),
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub(crate) struct FsReadFileInfoResponse {
-    pub file_size_bytes: u64,
-}
-
 impl FsHelperPayload {
     fn operation(&self) -> &'static str {
         match self {
             Self::ReadFile(_) => FS_READ_FILE_METHOD,
-            Self::ReadFileInfo(_) => "fs/readFileInfo",
             Self::WriteFile(_) => FS_WRITE_FILE_METHOD,
             Self::CreateDirectory(_) => FS_CREATE_DIRECTORY_METHOD,
             Self::GetMetadata(_) => FS_GET_METADATA_METHOD,
@@ -115,13 +100,6 @@ impl FsHelperPayload {
         match self {
             Self::ReadFile(response) => Ok(response),
             other => Err(unexpected_response(FS_READ_FILE_METHOD, other.operation())),
-        }
-    }
-
-    pub(crate) fn expect_read_file_info(self) -> Result<FsReadFileInfoResponse, JSONRPCErrorError> {
-        match self {
-            Self::ReadFileInfo(response) => Ok(response),
-            other => Err(unexpected_response("fs/readFileInfo", other.operation())),
         }
     }
 
@@ -201,19 +179,6 @@ pub(crate) async fn run_direct_request(
                 data_base64: STANDARD.encode(data),
             }))
         }
-        FsHelperRequest::ReadFileInfo(params) => {
-            let file = open_read_file(params.path.as_path())
-                .await
-                .map_err(map_fs_error)?;
-            let metadata = file.metadata().await.map_err(map_fs_error)?;
-            validate_read_file_metadata(params.path.as_path(), &metadata).map_err(map_fs_error)?;
-            Ok(FsHelperPayload::ReadFileInfo(FsReadFileInfoResponse {
-                file_size_bytes: metadata.len(),
-            }))
-        }
-        FsHelperRequest::ReadFileStream(_) => Err(invalid_request(
-            "fs/readFileStream is only supported by the streaming helper path".to_string(),
-        )),
         FsHelperRequest::WriteFile(params) => {
             let bytes = STANDARD.decode(params.data_base64).map_err(|err| {
                 invalid_request(format!(
@@ -299,48 +264,6 @@ pub(crate) async fn run_direct_request(
             Ok(FsHelperPayload::Copy(FsCopyResponse {}))
         }
     }
-}
-
-pub(crate) async fn run_direct_stream_request(
-    request: FsHelperRequest,
-    stdout: &mut (impl AsyncWrite + Unpin),
-) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    match request {
-        FsHelperRequest::ReadFileStream(params) => {
-            let mut file = open_read_file(params.path.as_path()).await?;
-            let metadata = file.metadata().await?;
-            validate_read_file_metadata(params.path.as_path(), &metadata)?;
-            tokio::io::copy(&mut file, stdout).await?;
-            Ok(())
-        }
-        _ => Err(Box::new(io::Error::new(
-            io::ErrorKind::InvalidInput,
-            "streaming helper received a non-streaming request",
-        ))),
-    }
-}
-
-fn validate_read_file_metadata(
-    path: &std::path::Path,
-    metadata: &std::fs::Metadata,
-) -> io::Result<()> {
-    if !metadata.is_file() {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidInput,
-            format!("path `{}` is not a file", path.display()),
-        ));
-    }
-    if metadata.len() > MAX_READ_FILE_BYTES {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidInput,
-            format!("file is too large to read: limit is {MAX_READ_FILE_BYTES} bytes"),
-        ));
-    }
-    Ok(())
-}
-
-async fn open_read_file(path: &std::path::Path) -> io::Result<tokio::fs::File> {
-    tokio::fs::File::open(path).await
 }
 
 fn map_fs_error(err: io::Error) -> JSONRPCErrorError {

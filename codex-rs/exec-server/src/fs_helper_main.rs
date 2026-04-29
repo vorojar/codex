@@ -7,7 +7,6 @@ use tokio::io::AsyncWriteExt;
 use crate::fs_helper::FsHelperRequest;
 use crate::fs_helper::FsHelperResponse;
 use crate::fs_helper::run_direct_request;
-use crate::fs_helper::run_direct_stream_request;
 
 pub fn main() -> ! {
     let exit_code = match tokio::runtime::Builder::new_current_thread()
@@ -33,12 +32,6 @@ async fn run_main() -> Result<(), Box<dyn Error + Send + Sync>> {
     let mut input = Vec::new();
     io::stdin().read_to_end(&mut input).await?;
     let request: FsHelperRequest = serde_json::from_slice(&input)?;
-    if matches!(request, FsHelperRequest::ReadFileStream(_)) {
-        let mut stdout = io::stdout();
-        run_direct_stream_request(request, &mut stdout).await?;
-        stdout.shutdown().await?;
-        return Ok(());
-    }
     let response = match run_direct_request(request).await {
         Ok(payload) => FsHelperResponse::Ok(payload),
         Err(error) => FsHelperResponse::Error(error),

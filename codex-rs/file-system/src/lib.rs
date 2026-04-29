@@ -1,5 +1,4 @@
 use async_trait::async_trait;
-use bytes::Bytes;
 use codex_protocol::config_types::WindowsSandboxLevel;
 use codex_protocol::models::PermissionProfile;
 use codex_protocol::models::SandboxEnforcement;
@@ -10,10 +9,8 @@ use codex_protocol::permissions::FileSystemSpecialPath;
 use codex_protocol::permissions::NetworkSandboxPolicy;
 use codex_protocol::protocol::SandboxPolicy;
 use codex_utils_absolute_path::AbsolutePathBuf;
-use futures::Stream;
 use std::io;
 use std::path::Path;
-use std::pin::Pin;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct CreateDirectoryOptions {
@@ -38,14 +35,6 @@ pub struct FileMetadata {
     pub is_symlink: bool,
     pub created_at_ms: i64,
     pub modified_at_ms: i64,
-}
-
-pub type FileByteStream = Pin<Box<dyn Stream<Item = io::Result<Bytes>> + Send + 'static>>;
-
-pub struct FileReadBody {
-    pub file_name: String,
-    pub file_size_bytes: u64,
-    pub stream: FileByteStream,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -149,25 +138,6 @@ pub trait ExecutorFileSystem: Send + Sync {
         path: &AbsolutePathBuf,
         sandbox: Option<&FileSystemSandboxContext>,
     ) -> FileSystemResult<Vec<u8>>;
-
-    async fn read_file_body(
-        &self,
-        path: &AbsolutePathBuf,
-        sandbox: Option<&FileSystemSandboxContext>,
-    ) -> FileSystemResult<FileReadBody> {
-        let bytes = self.read_file(path, sandbox).await?;
-        let file_size_bytes = bytes.len() as u64;
-        let file_name = path
-            .file_name()
-            .and_then(|value| value.to_str())
-            .unwrap_or("file")
-            .to_string();
-        Ok(FileReadBody {
-            file_name,
-            file_size_bytes,
-            stream: Box::pin(futures::stream::once(async move { Ok(Bytes::from(bytes)) })),
-        })
-    }
 
     /// Reads a file and decodes it as UTF-8 text.
     async fn read_file_text(
