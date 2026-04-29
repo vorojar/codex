@@ -12,6 +12,6 @@ expression: "render_lines(&view, 112)"
   PostToolUse           0           0           After a tool executes                                           
   SessionStart          0           0           When a new session starts                                       
   UserPromptSubmit      0           0           When the user submits a prompt                                  
-  Stop                  0           0           Before Codex concludes a response                               
+  Stop                  0           0           Right before Codex ends its turn                                
                                                                                                                 
   Press enter to view hooks; esc to close

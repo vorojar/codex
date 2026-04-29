@@ -563,7 +563,7 @@ fn event_description(event_name: HookEventName) -> &'static str {
         HookEventName::PostToolUse => "After a tool executes",
         HookEventName::SessionStart => "When a new session starts",
         HookEventName::UserPromptSubmit => "When the user submits a prompt",
-        HookEventName::Stop => "Before Codex concludes a response",
+        HookEventName::Stop => "Right before Codex ends its turn",
     }
 }
 
