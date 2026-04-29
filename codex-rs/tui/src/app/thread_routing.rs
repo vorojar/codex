@@ -613,6 +613,10 @@ impl App {
                             approvals_reviewer
                                 .unwrap_or(self.chat_widget.config_ref().approvals_reviewer),
                             permission_profile.clone(),
+                            self.chat_widget
+                                .config_ref()
+                                .permissions
+                                .active_permission_profile(),
                             model.to_string(),
                             effort,
                             *summary,
