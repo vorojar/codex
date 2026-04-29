@@ -88,7 +88,7 @@ statusMessage = "checking"
 fn hooks_toml_deserializes_inline_events_and_state_map() {
     let parsed: HooksToml = toml::from_str(
         r#"
-[state."file:/tmp/hooks.json:pre_tool_use:0:0"]
+[state."/tmp/hooks.json:pre_tool_use:0:0"]
 enabled = false
 
 [[PreToolUse]]
@@ -117,7 +117,7 @@ command = "python3 /tmp/pre.py"
                 ..Default::default()
             },
             state: BTreeMap::from([(
-                "file:/tmp/hooks.json:pre_tool_use:0:0".to_string(),
+                "/tmp/hooks.json:pre_tool_use:0:0".to_string(),
                 super::HookStateToml {
                     enabled: Some(false),
                 },

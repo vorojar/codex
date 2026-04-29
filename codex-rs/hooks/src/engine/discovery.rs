@@ -35,7 +35,7 @@ pub(crate) struct DiscoveryResult {
 #[derive(Clone)]
 struct HookHandlerSource<'a> {
     path: &'a AbsolutePathBuf,
-    key_prefix: String,
+    key_source: String,
     is_managed: bool,
     source: HookSource,
     disabled_hook_keys: &'a HashSet<String>,
@@ -69,6 +69,7 @@ pub(crate) fn discover_handlers(
             /*include_disabled*/ false,
         ) {
             let hook_source = hook_source_for_config_layer_source(&layer.name);
+            let is_managed = hook_source_is_managed(hook_source);
             let json_hooks = load_hooks_json(layer.config_folder().as_deref(), &mut warnings);
             let toml_hooks = load_toml_hooks_from_layer(layer, &mut warnings);
 
@@ -92,8 +93,8 @@ pub(crate) fn discover_handlers(
                     &mut display_order,
                     HookHandlerSource {
                         path: &source_path,
-                        key_prefix: format!("file:{}", source_path.display()),
-                        is_managed: false,
+                        key_source: source_path.display().to_string(),
+                        is_managed,
                         source: hook_source,
                         disabled_hook_keys: &disabled_hook_keys,
                         env: HashMap::new(),
@@ -144,7 +145,7 @@ fn append_managed_requirement_handlers(
         display_order,
         HookHandlerSource {
             path: &source_path,
-            key_prefix: format!("managed:{}", source_path.display()),
+            key_source: source_path.display().to_string(),
             is_managed: true,
             source: hook_source_for_requirement_source(managed_hooks.source.as_ref()),
             disabled_hook_keys,
@@ -190,7 +191,7 @@ fn append_plugin_hook_sources(
             display_order,
             HookHandlerSource {
                 path: &source_path,
-                key_prefix: format!("plugin:{plugin_id}:{source_relative_path}"),
+                key_source: format!("{plugin_id}:{source_relative_path}"),
                 is_managed: false,
                 source: HookSource::Plugin,
                 disabled_hook_keys,
@@ -409,7 +410,7 @@ fn append_matcher_groups(
                     // TODO(abhinav): replace this positional suffix with a durable hook id.
                     let key = format!(
                         "{}:{}:{}:{}",
-                        source.key_prefix,
+                        source.key_source,
                         hook_event_key_label(event_name),
                         group_index,
                         handler_index
@@ -485,6 +486,16 @@ fn hook_source_for_config_layer_source(source: &ConfigLayerSource) -> HookSource
     }
 }
 
+fn hook_source_is_managed(source: HookSource) -> bool {
+    matches!(
+        source,
+        HookSource::System
+            | HookSource::Mdm
+            | HookSource::LegacyManagedConfigFile
+            | HookSource::LegacyManagedConfigMdm
+    )
+}
+
 fn hook_source_for_requirement_source(source: Option<&RequirementSource>) -> HookSource {
     match source {
         Some(RequirementSource::MdmManagedPreferences { .. }) => HookSource::Mdm,
@@ -495,9 +506,8 @@ fn hook_source_for_requirement_source(source: Option<&RequirementSource>) -> Hoo
         Some(RequirementSource::LegacyManagedConfigTomlFromMdm) => {
             HookSource::LegacyManagedConfigMdm
         }
-        Some(RequirementSource::CloudRequirements | RequirementSource::Unknown) | None => {
-            HookSource::Unknown
-        }
+        Some(RequirementSource::CloudRequirements) => HookSource::CloudRequirements,
+        Some(RequirementSource::Unknown) | None => HookSource::Unknown,
     }
 }
 
@@ -530,7 +540,7 @@ mod tests {
     ) -> super::HookHandlerSource<'a> {
         super::HookHandlerSource {
             path,
-            key_prefix: format!("file:{}", path.display()),
+            key_source: path.display().to_string(),
             is_managed: false,
             source: hook_source(),
             disabled_hook_keys,

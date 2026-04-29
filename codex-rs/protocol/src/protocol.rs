@@ -1564,6 +1564,7 @@ pub enum HookSource {
     Mdm,
     SessionFlags,
     Plugin,
+    CloudRequirements,
     LegacyManagedConfigFile,
     LegacyManagedConfigMdm,
     #[default]

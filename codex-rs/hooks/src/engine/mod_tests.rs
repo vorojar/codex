@@ -179,8 +179,8 @@ fn user_disablement_filters_non_managed_hooks_but_not_managed_hooks() {
     );
     let config_path =
         AbsolutePathBuf::try_from(temp.path().join("config.toml")).expect("absolute path");
-    let managed_disabled_key = format!("managed:{}:pre_tool_use:0:0", managed_dir.display());
-    let user_disabled_key = format!("file:{}:pre_tool_use:0:0", config_path.display());
+    let managed_disabled_key = format!("{}:pre_tool_use:0:0", managed_dir.display());
+    let user_disabled_key = format!("{}:pre_tool_use:0:0", config_path.display());
     let mut user_config = TomlValue::Table(Default::default());
     let TomlValue::Table(user_config_entries) = &mut user_config else {
         unreachable!("config TOML root should be a table");
@@ -266,6 +266,83 @@ fn user_disablement_filters_non_managed_hooks_but_not_managed_hooks() {
     assert_eq!(discovered.hook_entries[0].enabled, true);
     assert_eq!(discovered.hook_entries[1].key, user_disabled_key);
     assert_eq!(discovered.hook_entries[1].enabled, false);
+}
+
+#[test]
+fn user_disablement_does_not_filter_managed_layer_hooks() {
+    let temp = tempdir().expect("create temp dir");
+    let managed_config_path =
+        AbsolutePathBuf::try_from(temp.path().join("managed_config.toml")).expect("absolute path");
+    let user_config_path =
+        AbsolutePathBuf::try_from(temp.path().join("config.toml")).expect("absolute path");
+    let managed_key = format!("{}:pre_tool_use:0:0", managed_config_path.display());
+
+    let config_layer_stack = ConfigLayerStack::new(
+        vec![
+            ConfigLayerEntry::new(
+                ConfigLayerSource::User {
+                    file: user_config_path,
+                },
+                config_with_hook_state(&managed_key, false),
+            ),
+            ConfigLayerEntry::new(
+                ConfigLayerSource::LegacyManagedConfigTomlFromFile {
+                    file: managed_config_path,
+                },
+                config_with_pre_tool_use_hook("python3 /tmp/managed-layer.py"),
+            ),
+        ],
+        ConfigRequirements::default(),
+        ConfigRequirementsToml::default(),
+    )
+    .expect("config layer stack");
+
+    let engine = ClaudeHooksEngine::new(
+        /*enabled*/ true,
+        Some(&config_layer_stack),
+        Vec::new(),
+        Vec::new(),
+        CommandShell {
+            program: String::new(),
+            args: Vec::new(),
+        },
+    );
+
+    assert_eq!(engine.handlers.len(), 1);
+    assert!(engine.handlers[0].is_managed);
+    let discovered =
+        super::discovery::discover_handlers(Some(&config_layer_stack), Vec::new(), Vec::new());
+    assert_eq!(discovered.hook_entries.len(), 1);
+    assert_eq!(discovered.hook_entries[0].key, managed_key);
+    assert_eq!(discovered.hook_entries[0].config_key_path, None);
+    assert_eq!(discovered.hook_entries[0].enabled, true);
+}
+
+fn config_with_hook_state(key: &str, enabled: bool) -> TomlValue {
+    serde_json::from_value(serde_json::json!({
+        "hooks": {
+            "state": {
+                (key): {
+                    "enabled": enabled,
+                },
+            },
+        },
+    }))
+    .expect("config TOML should deserialize")
+}
+
+fn config_with_pre_tool_use_hook(command: &str) -> TomlValue {
+    serde_json::from_value(serde_json::json!({
+        "hooks": {
+            "PreToolUse": [{
+                "hooks": [{
+                    "type": "command",
+                    "command": command,
+                }],
+            }],
+        },
+    }))
+    .expect("config TOML should deserialize")
 }
 
 #[test]

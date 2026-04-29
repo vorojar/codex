@@ -91,7 +91,7 @@ async fn hooks_list_shows_discovered_hook() -> Result<()> {
         vec![HooksListEntry {
             cwd: cwd.path().to_path_buf(),
             hooks: vec![HookMetadata {
-                key: format!("file:{}:pre_tool_use:0:0", config_path.as_path().display()),
+                key: format!("{}:pre_tool_use:0:0", config_path.as_path().display()),
                 config_key_path: Some("hooks.state".to_string()),
                 event_name: HookEventName::PreToolUse,
                 handler_type: HookHandlerType::Command,
@@ -161,7 +161,7 @@ async fn hooks_list_shows_discovered_plugin_hook() -> Result<()> {
         vec![HooksListEntry {
             cwd: cwd.path().to_path_buf(),
             hooks: vec![HookMetadata {
-                key: "plugin:demo@test:hooks/hooks.json:pre_tool_use:0:0".to_string(),
+                key: "demo@test:hooks/hooks.json:pre_tool_use:0:0".to_string(),
                 config_key_path: Some("hooks.state".to_string()),
                 event_name: HookEventName::PreToolUse,
                 handler_type: HookHandlerType::Command,
