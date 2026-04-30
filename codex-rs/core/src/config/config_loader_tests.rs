@@ -40,6 +40,13 @@ use std::path::Path;
 use tempfile::tempdir;
 use toml::Value as TomlValue;
 
+#[cfg(target_os = "macos")]
+use codex_protocol::models::ManagedFileSystemPermissions;
+#[cfg(target_os = "macos")]
+use codex_protocol::permissions::FileSystemAccessMode;
+#[cfg(target_os = "macos")]
+use codex_protocol::permissions::FileSystemPath;
+
 fn config_error_from_io(err: &std::io::Error) -> &ConfigError {
     err.get_ref()
         .and_then(|err| err.downcast_ref::<ConfigLoadError>())
