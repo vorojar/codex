@@ -48,8 +48,8 @@ use codex_app_server_protocol::JSONRPCResponse;
 use codex_app_server_protocol::LoginAccountResponse;
 use codex_app_server_protocol::ModelListParams;
 use codex_app_server_protocol::ModelListResponse;
+use codex_app_server_protocol::PermissionProfileSelectionParams;
 use codex_app_server_protocol::RequestId;
-use codex_app_server_protocol::SandboxPolicy;
 use codex_app_server_protocol::ServerNotification;
 use codex_app_server_protocol::ServerRequest;
 use codex_app_server_protocol::ThreadDecrementElicitationParams;
@@ -620,11 +620,18 @@ fn shell_quote(input: &str) -> String {
     format!("'{}'", input.replace('\'', "'\\''"))
 }
 
+fn select_permission_profile(id: &str) -> PermissionProfileSelectionParams {
+    PermissionProfileSelectionParams::Profile {
+        id: id.to_string(),
+        modifications: None,
+    }
+}
+
 struct SendMessagePolicies<'a> {
     command_name: &'static str,
     experimental_api: bool,
     approval_policy: Option<AskForApproval>,
-    sandbox_policy: Option<SandboxPolicy>,
+    permission_profile_id: Option<&'static str>,
     dynamic_tools: &'a Option<Vec<DynamicToolSpec>>,
 }
 
@@ -642,7 +649,7 @@ async fn send_message(
             command_name: "send-message",
             experimental_api: false,
             approval_policy: None,
-            sandbox_policy: None,
+            permission_profile_id: None,
             dynamic_tools: &dynamic_tools,
         },
     )
@@ -685,7 +692,7 @@ async fn send_message_v2_endpoint(
             command_name: "send-message-v2",
             experimental_api,
             approval_policy: None,
-            sandbox_policy: None,
+            permission_profile_id: None,
             dynamic_tools,
         },
     )
@@ -741,9 +748,7 @@ async fn trigger_zsh_fork_multi_cmd_approval(
                 ..Default::default()
             };
             turn_params.approval_policy = Some(AskForApproval::OnRequest);
-            turn_params.sandbox_policy = Some(SandboxPolicy::ReadOnly {
-                network_access: false,
-            });
+            turn_params.permissions = Some(select_permission_profile(":read-only"));
 
             let turn_response = client.turn_start(turn_params)?;
             println!("< turn/start response: {turn_response:?}");
@@ -882,9 +887,7 @@ async fn trigger_cmd_approval(
             command_name: "trigger-cmd-approval",
             experimental_api: true,
             approval_policy: Some(AskForApproval::OnRequest),
-            sandbox_policy: Some(SandboxPolicy::ReadOnly {
-                network_access: false,
-            }),
+            permission_profile_id: Some(":read-only"),
             dynamic_tools,
         },
     )
@@ -908,9 +911,7 @@ async fn trigger_patch_approval(
             command_name: "trigger-patch-approval",
             experimental_api: true,
             approval_policy: Some(AskForApproval::OnRequest),
-            sandbox_policy: Some(SandboxPolicy::ReadOnly {
-                network_access: false,
-            }),
+            permission_profile_id: Some(":read-only"),
             dynamic_tools,
         },
     )
@@ -931,7 +932,7 @@ async fn no_trigger_cmd_approval(
             command_name: "no-trigger-cmd-approval",
             experimental_api: true,
             approval_policy: None,
-            sandbox_policy: None,
+            permission_profile_id: None,
             dynamic_tools,
         },
     )
@@ -967,7 +968,9 @@ async fn send_message_v2_with_policies(
                 ..Default::default()
             };
             turn_params.approval_policy = policies.approval_policy;
-            turn_params.sandbox_policy = policies.sandbox_policy;
+            turn_params.permissions = policies
+                .permission_profile_id
+                .map(select_permission_profile);
 
             let turn_response = client.turn_start(turn_params)?;
             println!("< turn/start response: {turn_response:?}");
@@ -1260,7 +1263,7 @@ fn live_elicitation_timeout_pause(
             text_elements: Vec::new(),
         }],
         approval_policy: Some(AskForApproval::Never),
-        sandbox_policy: Some(SandboxPolicy::DangerFullAccess),
+        permissions: Some(select_permission_profile(":danger-no-sandbox")),
         effort: Some(ReasoningEffort::High),
         cwd: Some(workspace),
         ..Default::default()
