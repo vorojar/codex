@@ -896,15 +896,14 @@ pub(crate) fn build_guardian_review_session_config(
     );
     guardian_config.developer_instructions = None;
     guardian_config.permissions.approval_policy = Constrained::allow_only(AskForApproval::Never);
-    let sandbox_policy = SandboxPolicy::new_read_only_policy();
-    guardian_config.permissions.permission_profile = Constrained::allow_only(
-        PermissionProfile::from_legacy_sandbox_policy(&sandbox_policy),
-    );
+    let permission_profile = PermissionProfile::read_only();
+    guardian_config.permissions.permission_profile =
+        Constrained::allow_only(permission_profile.clone());
     guardian_config
         .permissions
-        .set_legacy_sandbox_policy(sandbox_policy, guardian_config.cwd.as_path())
+        .set_permission_profile(permission_profile)
         .map_err(|err| {
-            anyhow::anyhow!("guardian review session could not set sandbox policy: {err}")
+            anyhow::anyhow!("guardian review session could not set permission profile: {err}")
         })?;
     guardian_config.include_apps_instructions = false;
     guardian_config
