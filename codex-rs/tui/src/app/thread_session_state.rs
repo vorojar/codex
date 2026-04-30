@@ -4,6 +4,7 @@ use crate::session_state::ThreadSessionState;
 use codex_app_server_protocol::AskForApproval;
 use codex_app_server_protocol::Thread;
 use codex_protocol::ThreadId;
+use codex_protocol::models::ActivePermissionProfile;
 use codex_protocol::models::PermissionProfile;
 
 impl App {
@@ -19,10 +20,16 @@ impl App {
             .config_ref()
             .permissions
             .permission_profile();
+        let active_permission_profile = self
+            .chat_widget
+            .config_ref()
+            .permissions
+            .active_permission_profile();
         let update_session = |session: &mut ThreadSessionState| {
             session.approval_policy = approval_policy;
             session.approvals_reviewer = approvals_reviewer;
             session.permission_profile = permission_profile.clone();
+            session.active_permission_profile = active_permission_profile.clone();
         };
 
         if self.primary_thread_id == Some(active_thread_id)
@@ -44,7 +51,8 @@ impl App {
         thread_id: ThreadId,
         thread: &Thread,
     ) -> ThreadSessionState {
-        let permission_profile = self.active_permission_profile();
+        let permission_profile = self.current_permission_profile();
+        let active_permission_profile = self.current_active_permission_profile();
         let mut session = self
             .primary_session_configured
             .clone()
@@ -61,6 +69,7 @@ impl App {
                 ),
                 approvals_reviewer: self.config.approvals_reviewer,
                 permission_profile: permission_profile.clone(),
+                active_permission_profile: active_permission_profile.clone(),
                 cwd: thread.cwd.clone(),
                 instruction_source_paths: Vec::new(),
                 reasoning_effort: self.chat_widget.current_reasoning_effort(),
@@ -74,6 +83,7 @@ impl App {
         session.model_provider_id = thread.model_provider.clone();
         session.cwd = thread.cwd.clone();
         session.permission_profile = permission_profile;
+        session.active_permission_profile = active_permission_profile;
         session.instruction_source_paths = Vec::new();
         session.rollout_path = thread.path.clone();
         if let Some(model) =
@@ -88,11 +98,18 @@ impl App {
         session
     }
 
-    fn active_permission_profile(&self) -> PermissionProfile {
+    fn current_permission_profile(&self) -> PermissionProfile {
         self.chat_widget
             .config_ref()
             .permissions
             .permission_profile()
+    }
+
+    fn current_active_permission_profile(&self) -> Option<ActivePermissionProfile> {
+        self.chat_widget
+            .config_ref()
+            .permissions
+            .active_permission_profile()
     }
 }
 
@@ -129,6 +146,7 @@ mod tests {
             approval_policy: AskForApproval::Never,
             approvals_reviewer: ApprovalsReviewer::User,
             permission_profile: PermissionProfile::read_only(),
+            active_permission_profile: None,
             cwd: cwd.abs(),
             instruction_source_paths: Vec::new(),
             reasoning_effort: None,

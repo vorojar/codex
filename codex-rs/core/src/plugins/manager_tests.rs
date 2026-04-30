@@ -9,11 +9,13 @@ use crate::plugins::test_support::write_curated_plugin_sha_with as write_curated
 use crate::plugins::test_support::write_file;
 use crate::plugins::test_support::write_openai_curated_marketplace;
 use codex_app_server_protocol::ConfigLayerSource;
+use codex_config::AppToolApproval;
 use codex_config::ConfigLayerEntry;
 use codex_config::ConfigLayerStack;
 use codex_config::ConfigRequirements;
 use codex_config::ConfigRequirementsToml;
 use codex_config::McpServerConfig;
+use codex_config::McpServerToolConfig;
 use codex_config::types::McpServerTransportConfig;
 use codex_core_plugins::installed_marketplaces::marketplace_install_root;
 use codex_core_plugins::loader::load_plugins_from_layer_stack;
@@ -95,12 +97,28 @@ fn run_git(repo: &Path, args: &[&str]) {
 }
 
 fn plugin_config_toml(enabled: bool, plugins_feature_enabled: bool) -> String {
+    plugin_config_toml_with_plugin_hooks(
+        enabled,
+        plugins_feature_enabled,
+        /*plugin_hooks_feature_enabled*/ false,
+    )
+}
+
+fn plugin_config_toml_with_plugin_hooks(
+    enabled: bool,
+    plugins_feature_enabled: bool,
+    plugin_hooks_feature_enabled: bool,
+) -> String {
     let mut root = toml::map::Map::new();
 
     let mut features = toml::map::Map::new();
     features.insert(
         "plugins".to_string(),
         Value::Boolean(plugins_feature_enabled),
+    );
+    features.insert(
+        "plugin_hooks".to_string(),
+        Value::Boolean(plugin_hooks_feature_enabled),
     );
     root.insert("features".to_string(), Value::Table(features));
 
@@ -244,6 +262,74 @@ async fn load_plugins_loads_default_skills_and_mcp_servers() {
     assert_eq!(
         outcome.effective_apps(),
         vec![AppConnectorId("connector_example".to_string())]
+    );
+}
+
+#[tokio::test]
+async fn load_plugins_applies_plugin_mcp_server_policy() {
+    let codex_home = TempDir::new().unwrap();
+    let plugin_root = codex_home
+        .path()
+        .join("plugins/cache")
+        .join("test/sample/local");
+
+    write_file(
+        &plugin_root.join(".codex-plugin/plugin.json"),
+        r#"{
+  "name": "sample"
+}"#,
+    );
+    write_file(
+        &plugin_root.join(".mcp.json"),
+        r#"{
+  "mcpServers": {
+    "sample": {
+      "type": "http",
+      "url": "https://sample.example/mcp",
+      "default_tools_approval_mode": "prompt",
+      "enabled_tools": ["read", "search"],
+      "tools": {
+        "search": { "approval_mode": "prompt" }
+      }
+    }
+  }
+}"#,
+    );
+    let config_toml = r#"
+[features]
+plugins = true
+
+[plugins."sample@test"]
+enabled = true
+
+[plugins."sample@test".mcp_servers.sample]
+enabled = false
+default_tools_approval_mode = "approve"
+enabled_tools = ["search"]
+disabled_tools = ["delete"]
+
+[plugins."sample@test".mcp_servers.sample.tools.search]
+approval_mode = "approve"
+"#;
+
+    let outcome = load_plugins_from_config(config_toml, codex_home.path()).await;
+    let server = outcome.plugins()[0]
+        .mcp_servers
+        .get("sample")
+        .expect("sample server");
+
+    assert!(!server.enabled);
+    assert_eq!(
+        server.default_tools_approval_mode,
+        Some(AppToolApproval::Approve)
+    );
+    assert_eq!(server.enabled_tools, Some(vec!["search".to_string()]));
+    assert_eq!(server.disabled_tools, Some(vec!["delete".to_string()]));
+    assert_eq!(
+        server.tools.get("search"),
+        Some(&McpServerToolConfig {
+            approval_mode: Some(AppToolApproval::Approve),
+        })
     );
 }
 
@@ -995,6 +1081,61 @@ async fn load_plugins_returns_empty_when_feature_disabled() {
         .await;
 
     assert_eq!(outcome, PluginLoadOutcome::default());
+}
+
+#[tokio::test]
+async fn plugins_for_config_reloads_when_plugin_hooks_enablement_changes() {
+    let codex_home = TempDir::new().unwrap();
+    let plugin_root = codex_home
+        .path()
+        .join("plugins/cache")
+        .join("test/sample/local");
+
+    write_file(
+        &plugin_root.join(".codex-plugin/plugin.json"),
+        r#"{"name":"sample"}"#,
+    );
+    write_file(
+        &plugin_root.join("hooks/hooks.json"),
+        r#"{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "hooks": [{ "type": "command", "command": "echo plugin hook" }]
+      }
+    ]
+  }
+}"#,
+    );
+
+    let manager = PluginsManager::new(codex_home.path().to_path_buf());
+    write_file(
+        &codex_home.path().join(CONFIG_TOML_FILE),
+        &plugin_config_toml_with_plugin_hooks(
+            /*enabled*/ true, /*plugins_feature_enabled*/ true,
+            /*plugin_hooks_feature_enabled*/ false,
+        ),
+    );
+    let config_without_plugin_hooks = load_config(codex_home.path(), codex_home.path()).await;
+    let without_plugin_hooks = manager
+        .plugins_for_config(&config_without_plugin_hooks)
+        .await;
+    assert!(
+        without_plugin_hooks
+            .effective_plugin_hook_sources()
+            .is_empty()
+    );
+
+    write_file(
+        &codex_home.path().join(CONFIG_TOML_FILE),
+        &plugin_config_toml_with_plugin_hooks(
+            /*enabled*/ true, /*plugins_feature_enabled*/ true,
+            /*plugin_hooks_feature_enabled*/ true,
+        ),
+    );
+    let config_with_plugin_hooks = load_config(codex_home.path(), codex_home.path()).await;
+    let with_plugin_hooks = manager.plugins_for_config(&config_with_plugin_hooks).await;
+    assert_eq!(with_plugin_hooks.effective_plugin_hook_sources().len(), 1);
 }
 
 #[tokio::test]
@@ -3365,6 +3506,7 @@ async fn load_plugins_ignores_project_config_files() {
         std::collections::HashMap::new(),
         &PluginStore::new(codex_home.path().to_path_buf()),
         Some(Product::Codex),
+        /*plugin_hooks_enabled*/ false,
     )
     .await;
 

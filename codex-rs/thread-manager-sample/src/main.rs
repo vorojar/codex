@@ -8,56 +8,53 @@ use std::sync::Arc;
 use anyhow::Context;
 use anyhow::bail;
 use clap::Parser;
-use codex_arg0::Arg0DispatchPaths;
-use codex_arg0::arg0_dispatch_or_else;
-use codex_config::ConfigLayerStack;
-use codex_config::config_toml::ProjectConfig;
-use codex_config::config_toml::RealtimeAudioConfig;
-use codex_config::config_toml::RealtimeConfig;
-use codex_config::types::AuthCredentialsStoreMode;
-use codex_config::types::History;
-use codex_config::types::MemoriesConfig;
-use codex_config::types::ModelAvailabilityNuxConfig;
-use codex_config::types::Notice;
-use codex_config::types::OAuthCredentialsStoreMode;
-use codex_config::types::OtelConfig;
-use codex_config::types::ToolSuggestConfig;
-use codex_config::types::TuiKeymap;
-use codex_config::types::TuiNotificationSettings;
-use codex_config::types::UriBasedFileOpener;
-use codex_core::CodexThread;
-use codex_core::NewThread;
-use codex_core::ThreadManager;
-use codex_core::config::Config;
-use codex_core::config::Constrained;
-use codex_core::config::GhostSnapshotConfig;
-use codex_core::config::MultiAgentV2Config;
-use codex_core::config::Permissions;
-use codex_core::config::TerminalResizeReflowConfig;
-use codex_core::config::ThreadStoreConfig;
-use codex_core::config::find_codex_home;
-use codex_exec_server::EnvironmentManager;
-use codex_exec_server::EnvironmentManagerArgs;
-use codex_exec_server::ExecServerRuntimePaths;
-use codex_features::Feature;
-use codex_login::AuthManager;
-use codex_login::default_client::set_default_originator;
-use codex_model_provider_info::OPENAI_PROVIDER_ID;
-use codex_model_provider_info::built_in_model_providers;
-use codex_models_manager::collaboration_mode_presets::CollaborationModesConfig;
-use codex_protocol::config_types::AltScreenMode;
-use codex_protocol::config_types::ApprovalsReviewer;
-use codex_protocol::config_types::ShellEnvironmentPolicy;
-use codex_protocol::config_types::WebSearchMode;
-use codex_protocol::models::PermissionProfile;
-use codex_protocol::protocol::AskForApproval;
-use codex_protocol::protocol::EventMsg;
-use codex_protocol::protocol::Op;
-use codex_protocol::protocol::SessionSource;
-use codex_protocol::user_input::UserInput;
-use codex_rollout::RolloutConfig;
-use codex_thread_store::LocalThreadStore;
-use codex_utils_absolute_path::AbsolutePathBuf;
+use codex_core_api::AbsolutePathBuf;
+use codex_core_api::AltScreenMode;
+use codex_core_api::ApprovalsReviewer;
+use codex_core_api::Arg0DispatchPaths;
+use codex_core_api::AskForApproval;
+use codex_core_api::AuthCredentialsStoreMode;
+use codex_core_api::AuthManager;
+use codex_core_api::CodexThread;
+use codex_core_api::Config;
+use codex_core_api::ConfigLayerStack;
+use codex_core_api::Constrained;
+use codex_core_api::EnvironmentManager;
+use codex_core_api::EnvironmentManagerArgs;
+use codex_core_api::EventMsg;
+use codex_core_api::ExecServerRuntimePaths;
+use codex_core_api::GhostSnapshotConfig;
+use codex_core_api::History;
+use codex_core_api::MemoriesConfig;
+use codex_core_api::ModelAvailabilityNuxConfig;
+use codex_core_api::MultiAgentV2Config;
+use codex_core_api::NewThread;
+use codex_core_api::Notice;
+use codex_core_api::OAuthCredentialsStoreMode;
+use codex_core_api::OPENAI_PROVIDER_ID;
+use codex_core_api::Op;
+use codex_core_api::OtelConfig;
+use codex_core_api::PermissionProfile;
+use codex_core_api::Permissions;
+use codex_core_api::ProjectConfig;
+use codex_core_api::RealtimeAudioConfig;
+use codex_core_api::RealtimeConfig;
+use codex_core_api::SessionSource;
+use codex_core_api::ShellEnvironmentPolicy;
+use codex_core_api::TerminalResizeReflowConfig;
+use codex_core_api::ThreadManager;
+use codex_core_api::ThreadStoreConfig;
+use codex_core_api::ToolSuggestConfig;
+use codex_core_api::TuiKeymap;
+use codex_core_api::TuiNotificationSettings;
+use codex_core_api::UriBasedFileOpener;
+use codex_core_api::UserInput;
+use codex_core_api::WebSearchMode;
+use codex_core_api::arg0_dispatch_or_else;
+use codex_core_api::built_in_model_providers;
+use codex_core_api::find_codex_home;
+use codex_core_api::set_default_originator;
+use codex_core_api::thread_store_from_config;
 
 #[derive(Debug, Parser)]
 #[command(
@@ -110,18 +107,13 @@ async fn run_main(arg0_paths: Arg0DispatchPaths) -> anyhow::Result<()> {
         config.codex_self_exe.clone(),
         config.codex_linux_sandbox_exe.clone(),
     )?;
-    let thread_store = Arc::new(LocalThreadStore::new(RolloutConfig::from_view(&config)));
+    let thread_store = thread_store_from_config(&config);
     let environment_manager =
         Arc::new(EnvironmentManager::new(EnvironmentManagerArgs::new(local_runtime_paths)).await);
     let thread_manager = ThreadManager::new(
         &config,
         auth_manager,
         SessionSource::Exec,
-        CollaborationModesConfig {
-            default_mode_request_user_input: config
-                .features
-                .enabled(Feature::DefaultModeRequestUserInput),
-        },
         environment_manager,
         /*analytics_events_client*/ None,
     );
@@ -173,6 +165,7 @@ fn new_config(model: Option<String>, arg0_paths: Arg0DispatchPaths) -> anyhow::R
         permissions: Permissions {
             approval_policy: Constrained::allow_any(AskForApproval::Never),
             permission_profile: Constrained::allow_any(PermissionProfile::default()),
+            active_permission_profile: None,
             network: None,
             allow_login_shell: true,
             shell_environment_policy: ShellEnvironmentPolicy::default(),
@@ -237,6 +230,7 @@ fn new_config(model: Option<String>, arg0_paths: Arg0DispatchPaths) -> anyhow::R
         model_catalog: None,
         model_verbosity: None,
         chatgpt_base_url: "https://chatgpt.com/backend-api/".to_string(),
+        apps_mcp_path_override: None,
         realtime_audio: RealtimeAudioConfig::default(),
         experimental_realtime_ws_base_url: None,
         experimental_realtime_ws_model: None,

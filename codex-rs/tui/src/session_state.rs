@@ -7,6 +7,7 @@ use std::path::PathBuf;
 
 use codex_app_server_protocol::AskForApproval;
 use codex_protocol::ThreadId;
+use codex_protocol::models::ActivePermissionProfile;
 use codex_protocol::models::PermissionProfile;
 use codex_utils_absolute_path::AbsolutePathBuf;
 
@@ -31,6 +32,9 @@ pub(crate) struct ThreadSessionState {
     /// responses are converted to a profile at ingestion time using the
     /// response cwd so cached sessions do not reinterpret cwd-bound grants.
     pub(crate) permission_profile: PermissionProfile,
+    /// Named or implicit built-in profile that produced `permission_profile`,
+    /// when the server knows it.
+    pub(crate) active_permission_profile: Option<ActivePermissionProfile>,
     pub(crate) cwd: AbsolutePathBuf,
     pub(crate) instruction_source_paths: Vec<AbsolutePathBuf>,
     pub(crate) reasoning_effort: Option<codex_protocol::openai_models::ReasoningEffort>,
