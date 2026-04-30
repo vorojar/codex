@@ -72,6 +72,14 @@ use url::Url;
 
 const MCP_CALL_COUNT_METRIC: &str = "codex.mcp.call";
 const MCP_CALL_DURATION_METRIC: &str = "codex.mcp.call.duration_ms";
+const MCP_RESULT_TELEMETRY_META_KEY: &str = "codex/telemetry";
+const MCP_RESULT_TELEMETRY_SPAN_KEY: &str = "span";
+const MCP_RESULT_TELEMETRY_TARGET_ID_KEY: &str = "target_id";
+const MCP_RESULT_TELEMETRY_DID_TRIGGER_SERVER_USER_FLOW_KEY: &str = "did_trigger_server_user_flow";
+const MCP_RESULT_TELEMETRY_TARGET_ID_SPAN_ATTR: &str = "codex.mcp.target.id";
+const MCP_RESULT_TELEMETRY_SERVER_USER_FLOW_SPAN_ATTR: &str =
+    "codex.mcp.server_user_flow.triggered";
+const MCP_RESULT_TELEMETRY_TARGET_ID_MAX_CHARS: usize = 256;
 
 /// Handles the specified tool call dispatches the appropriate
 /// `McpToolCallBegin` and `McpToolCallEnd` events to the `Session`.
@@ -132,7 +140,8 @@ pub(crate) async fn handle_mcp_tool_call(
     let approval_mode = if server == CODEX_APPS_MCP_SERVER_NAME {
         app_tool_policy.approval
     } else {
-        custom_mcp_tool_approval_mode(turn_context.as_ref(), &server, &tool_name)
+        custom_mcp_tool_approval_mode(sess.as_ref(), turn_context.as_ref(), &server, &tool_name)
+            .await
     };
 
     if server == CODEX_APPS_MCP_SERVER_NAME && !app_tool_policy.enabled {
@@ -318,7 +327,7 @@ async fn handle_approved_mcp_tool_call(
     };
     let result = async {
         let rewritten_arguments = rewrite?;
-        execute_mcp_tool_call(
+        let result = execute_mcp_tool_call(
             sess,
             turn_context,
             &server,
@@ -326,7 +335,9 @@ async fn handle_approved_mcp_tool_call(
             rewritten_arguments,
             request_meta,
         )
-        .await
+        .await;
+        record_mcp_result_span_telemetry(&Span::current(), result.as_ref().ok());
+        result
     }
     .instrument(mcp_tool_call_span(
         sess,
@@ -443,6 +454,8 @@ fn mcp_tool_call_span(
         turn.id = turn_context.sub_id.as_str(),
         server.address = Empty,
         server.port = Empty,
+        codex.mcp.target.id = Empty,
+        codex.mcp.server_user_flow.triggered = Empty,
     );
     record_server_fields(&span, fields.server_origin);
     span
@@ -469,6 +482,47 @@ fn record_server_fields(span: &Span, url: Option<&str>) {
     }
     if let Some(port) = parsed.port_or_known_default() {
         span.record("server.port", port as i64);
+    }
+}
+
+fn record_mcp_result_span_telemetry(span: &Span, result: Option<&CallToolResult>) {
+    let Some(span_telemetry) = result
+        .and_then(|result| result.meta.as_ref())
+        .and_then(JsonValue::as_object)
+        .and_then(|meta| meta.get(MCP_RESULT_TELEMETRY_META_KEY))
+        .and_then(JsonValue::as_object)
+        .and_then(|telemetry| telemetry.get(MCP_RESULT_TELEMETRY_SPAN_KEY))
+        .and_then(JsonValue::as_object)
+    else {
+        return;
+    };
+
+    if let Some(target_id) = span_telemetry
+        .get(MCP_RESULT_TELEMETRY_TARGET_ID_KEY)
+        .and_then(JsonValue::as_str)
+        .filter(|target_id| !target_id.is_empty())
+    {
+        span.record(
+            MCP_RESULT_TELEMETRY_TARGET_ID_SPAN_ATTR,
+            truncate_str_to_char_boundary(target_id, MCP_RESULT_TELEMETRY_TARGET_ID_MAX_CHARS),
+        );
+    }
+
+    if let Some(did_trigger_server_user_flow) = span_telemetry
+        .get(MCP_RESULT_TELEMETRY_DID_TRIGGER_SERVER_USER_FLOW_KEY)
+        .and_then(JsonValue::as_bool)
+    {
+        span.record(
+            MCP_RESULT_TELEMETRY_SERVER_USER_FLOW_SPAN_ATTR,
+            did_trigger_server_user_flow,
+        );
+    }
+}
+
+fn truncate_str_to_char_boundary(value: &str, max_chars: usize) -> &str {
+    match value.char_indices().nth(max_chars) {
+        Some((index, _)) => &value[..index],
+        None => value,
     }
 }
 
@@ -668,12 +722,13 @@ const MCP_TOOL_OPENAI_OUTPUT_TEMPLATE_META_KEY: &str = "openai/outputTemplate";
 const MCP_TOOL_UI_RESOURCE_URI_META_KEY: &str = "ui/resourceUri";
 const MCP_TOOL_THREAD_ID_META_KEY: &str = "threadId";
 
-fn custom_mcp_tool_approval_mode(
+async fn custom_mcp_tool_approval_mode(
+    sess: &Session,
     turn_context: &TurnContext,
     server: &str,
     tool_name: &str,
 ) -> AppToolApproval {
-    turn_context
+    let user_configured_mode = turn_context
         .config
         .config_layer_stack
         .effective_config()
@@ -685,6 +740,28 @@ fn custom_mcp_tool_approval_mode(
         })
         .and_then(|servers| {
             let server_config = servers.get(server)?;
+            Some(
+                server_config
+                    .tools
+                    .get(tool_name)
+                    .and_then(|tool| tool.approval_mode)
+                    .or(server_config.default_tools_approval_mode)
+                    .unwrap_or_default(),
+            )
+        });
+    if let Some(user_configured_mode) = user_configured_mode {
+        return user_configured_mode;
+    }
+
+    sess.services
+        .plugins_manager
+        .plugins_for_config(turn_context.config.as_ref())
+        .await
+        .plugins()
+        .iter()
+        .filter(|plugin| plugin.is_active())
+        .find_map(|plugin| {
+            let server_config = plugin.mcp_servers.get(server)?;
             server_config
                 .tools
                 .get(tool_name)
@@ -1662,7 +1739,7 @@ async fn maybe_persist_mcp_tool_approval(
         };
         persist_codex_app_tool_approval(&turn_context.config, &connector_id, &tool_name).await
     } else {
-        persist_custom_mcp_tool_approval(&turn_context.config, &key.server, &tool_name).await
+        persist_non_app_mcp_tool_approval(sess, &turn_context.config, &key.server, &tool_name).await
     };
 
     if let Err(err) = persist_result {
@@ -1700,22 +1777,80 @@ async fn persist_codex_app_tool_approval(
         .await
 }
 
+#[cfg(test)]
 async fn persist_custom_mcp_tool_approval(
     config: &Config,
     server: &str,
     tool_name: &str,
 ) -> anyhow::Result<()> {
-    let config_edits_builder = if let Some(project_config_folder) =
-        project_mcp_tool_approval_config_folder(config, server)
-    {
-        ConfigEditsBuilder::new(&project_config_folder)
-    } else {
-        if !user_mcp_server_is_configured(config, server)? {
-            anyhow::bail!("MCP server `{server}` is not configured in config.toml");
-        }
-        ConfigEditsBuilder::for_config(config)
+    let Some(config_edits_builder) = custom_mcp_tool_approval_config_builder(config, server)?
+    else {
+        anyhow::bail!("MCP server `{server}` is not configured in config.toml");
     };
 
+    persist_custom_mcp_tool_approval_with(config_edits_builder, server, tool_name).await
+}
+
+async fn persist_non_app_mcp_tool_approval(
+    sess: &Session,
+    config: &Config,
+    server: &str,
+    tool_name: &str,
+) -> anyhow::Result<()> {
+    if let Some(config_edits_builder) = custom_mcp_tool_approval_config_builder(config, server)? {
+        return persist_custom_mcp_tool_approval_with(config_edits_builder, server, tool_name)
+            .await;
+    }
+
+    let plugin_config_name = sess
+        .services
+        .plugins_manager
+        .plugins_for_config(config)
+        .await
+        .plugins()
+        .iter()
+        .filter(|plugin| plugin.is_active())
+        .find(|plugin| plugin.mcp_servers.contains_key(server))
+        .map(|plugin| plugin.config_name.clone());
+
+    if let Some(plugin_config_name) = plugin_config_name {
+        return ConfigEditsBuilder::for_config(config)
+            .with_edits([ConfigEdit::SetPath {
+                segments: vec![
+                    "plugins".to_string(),
+                    plugin_config_name,
+                    "mcp_servers".to_string(),
+                    server.to_string(),
+                    "tools".to_string(),
+                    tool_name.to_string(),
+                    "approval_mode".to_string(),
+                ],
+                value: value("approve"),
+            }])
+            .apply()
+            .await;
+    }
+
+    anyhow::bail!("MCP server `{server}` is not configured in config.toml or an enabled plugin")
+}
+
+fn custom_mcp_tool_approval_config_builder(
+    config: &Config,
+    server: &str,
+) -> anyhow::Result<Option<ConfigEditsBuilder>> {
+    if let Some(project_config_folder) = project_mcp_tool_approval_config_folder(config, server) {
+        return Ok(Some(ConfigEditsBuilder::new(&project_config_folder)));
+    }
+
+    Ok(user_mcp_server_is_configured(config, server)?
+        .then(|| ConfigEditsBuilder::for_config(config)))
+}
+
+async fn persist_custom_mcp_tool_approval_with(
+    config_edits_builder: ConfigEditsBuilder,
+    server: &str,
+    tool_name: &str,
+) -> anyhow::Result<()> {
     config_edits_builder
         .with_edits([ConfigEdit::SetPath {
             segments: vec![

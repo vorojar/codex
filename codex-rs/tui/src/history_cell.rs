@@ -2825,7 +2825,7 @@ pub struct FinalMessageSeparator {
     runtime_metrics: Option<RuntimeMetricsSummary>,
 }
 impl FinalMessageSeparator {
-    /// Creates a separator; `elapsed_seconds` typically comes from the status indicator timer.
+    /// Creates a separator; completed turns should pass protocol turn duration when available.
     pub(crate) fn new(
         elapsed_seconds: Option<u64>,
         runtime_metrics: Option<RuntimeMetricsSummary>,
@@ -3194,6 +3194,7 @@ mod tests {
             approval_policy: AskForApproval::Never,
             approvals_reviewer: codex_protocol::config_types::ApprovalsReviewer::User,
             permission_profile: PermissionProfile::read_only(),
+            active_permission_profile: None,
             cwd: test_path_buf("/tmp/project").abs(),
             reasoning_effort: None,
             history_log_id: 0,

@@ -3,6 +3,7 @@ use crate::app_server_session::ThreadSessionState;
 use crate::read_session_model;
 use codex_app_server_protocol::Thread;
 use codex_protocol::ThreadId;
+use codex_protocol::models::ActivePermissionProfile;
 use codex_protocol::models::PermissionProfile;
 
 impl App {
@@ -18,10 +19,16 @@ impl App {
             .config_ref()
             .permissions
             .permission_profile();
+        let active_permission_profile = self
+            .chat_widget
+            .config_ref()
+            .permissions
+            .active_permission_profile();
         let update_session = |session: &mut ThreadSessionState| {
             session.approval_policy = approval_policy;
             session.approvals_reviewer = approvals_reviewer;
             session.permission_profile = permission_profile.clone();
+            session.active_permission_profile = active_permission_profile.clone();
         };
 
         if self.primary_thread_id == Some(active_thread_id)
@@ -43,7 +50,8 @@ impl App {
         thread_id: ThreadId,
         thread: &Thread,
     ) -> ThreadSessionState {
-        let permission_profile = self.active_permission_profile();
+        let permission_profile = self.current_permission_profile();
+        let active_permission_profile = self.current_active_permission_profile();
         let mut session = self
             .primary_session_configured
             .clone()
@@ -58,6 +66,7 @@ impl App {
                 approval_policy: self.config.permissions.approval_policy.value(),
                 approvals_reviewer: self.config.approvals_reviewer,
                 permission_profile: permission_profile.clone(),
+                active_permission_profile: active_permission_profile.clone(),
                 cwd: thread.cwd.clone(),
                 instruction_source_paths: Vec::new(),
                 reasoning_effort: self.chat_widget.current_reasoning_effort(),
@@ -71,6 +80,7 @@ impl App {
         session.model_provider_id = thread.model_provider.clone();
         session.cwd = thread.cwd.clone();
         session.permission_profile = permission_profile;
+        session.active_permission_profile = active_permission_profile;
         session.instruction_source_paths = Vec::new();
         session.rollout_path = thread.path.clone();
         if let Some(model) =
@@ -85,11 +95,18 @@ impl App {
         session
     }
 
-    fn active_permission_profile(&self) -> PermissionProfile {
+    fn current_permission_profile(&self) -> PermissionProfile {
         self.chat_widget
             .config_ref()
             .permissions
             .permission_profile()
+    }
+
+    fn current_active_permission_profile(&self) -> Option<ActivePermissionProfile> {
+        self.chat_widget
+            .config_ref()
+            .permissions
+            .active_permission_profile()
     }
 }
 
@@ -110,7 +127,6 @@ mod tests {
     use codex_protocol::protocol::FileSystemSandboxPolicy;
     use codex_protocol::protocol::FileSystemSpecialPath;
     use codex_protocol::protocol::NetworkSandboxPolicy;
-    use codex_protocol::protocol::SandboxPolicy;
     use pretty_assertions::assert_eq;
     use std::path::PathBuf;
 
@@ -126,6 +142,7 @@ mod tests {
             approval_policy: AskForApproval::Never,
             approvals_reviewer: ApprovalsReviewer::User,
             permission_profile: PermissionProfile::read_only(),
+            active_permission_profile: None,
             cwd: cwd.abs(),
             instruction_source_paths: Vec::new(),
             reasoning_effort: None,
@@ -174,23 +191,15 @@ mod tests {
         app.config.permissions.approval_policy =
             codex_config::Constrained::allow_any(AskForApproval::OnRequest);
         app.config.approvals_reviewer = ApprovalsReviewer::AutoReview;
-        let expected_sandbox_policy = SandboxPolicy::new_workspace_write_policy();
-        let expected_file_system_policy =
-            FileSystemSandboxPolicy::from_legacy_sandbox_policy_for_cwd(
-                &expected_sandbox_policy,
-                &main_session.cwd,
-            );
-        let expected_permission_profile = PermissionProfile::from_runtime_permissions(
-            &expected_file_system_policy,
-            NetworkSandboxPolicy::from(&expected_sandbox_policy),
-        );
+        let expected_permission_profile = PermissionProfile::workspace_write();
         app.chat_widget.handle_thread_session(main_session.clone());
         app.chat_widget
-            .set_sandbox_policy(expected_sandbox_policy.clone())
-            .expect("set widget sandbox policy");
+            .set_permission_profile(expected_permission_profile.clone())
+            .expect("set widget permission profile");
         app.config
-            .set_legacy_sandbox_policy(expected_sandbox_policy.clone())
-            .expect("set sandbox policy");
+            .permissions
+            .set_permission_profile(expected_permission_profile.clone())
+            .expect("set permission profile");
 
         app.sync_active_thread_permission_settings_to_cached_session()
             .await;
