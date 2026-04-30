@@ -170,7 +170,8 @@ where
 /// Formats tracing spans and events into feedback log entries.
 ///
 /// Log writers should call `on_new_span`, `on_record`, and `format_event` from
-/// their corresponding `tracing_subscriber::Layer` hooks. This keeps the
+/// their corresponding `tracing_subscriber::Layer` hooks. Only one
+/// `LogEntryFormatter` should be installed in a subscriber. This keeps the
 /// feedback-log body, message extraction, and thread-id propagation consistent
 /// across local and remote log sinks.
 #[derive(Clone, Debug)]
@@ -199,7 +200,12 @@ impl LogEntryFormatter {
         attrs.record(&mut visitor);
 
         if let Some(span) = ctx.span(id) {
-            span.extensions_mut().insert(SpanLogContext {
+            let mut extensions = span.extensions_mut();
+            debug_assert!(
+                extensions.get_mut::<SpanLogContext>().is_none(),
+                "only one LogEntryFormatter may be installed in a tracing subscriber"
+            );
+            extensions.insert(SpanLogContext {
                 name: span.metadata().name().to_string(),
                 formatted_fields: format_fields(attrs),
                 thread_id: visitor.thread_id,
