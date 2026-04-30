@@ -323,10 +323,14 @@ async fn permission_profile_with_legacy_fallback(
 ) -> Option<PermissionProfile> {
     match (permission_profile, sandbox_policy) {
         (Some(permission_profile), _) => Some(permission_profile),
-        (None, Some(sandbox_policy)) => Some(
-            sess.permission_profile_from_legacy_sandbox_update(sandbox_policy, cwd)
-                .await,
-        ),
+        (None, Some(sandbox_policy)) => {
+            let state = sess.state.lock().await;
+            Some(
+                state
+                    .session_configuration
+                    .permission_profile_from_legacy_sandbox_update(sandbox_policy, cwd),
+            )
+        }
         (None, None) => None,
     }
 }

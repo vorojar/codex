@@ -338,7 +338,6 @@ use codex_protocol::protocol::Op;
 use codex_protocol::protocol::RateLimitSnapshot;
 use codex_protocol::protocol::RequestUserInputEvent;
 use codex_protocol::protocol::ReviewDecision;
-use codex_protocol::protocol::SandboxPolicy;
 use codex_protocol::protocol::SessionConfiguredEvent;
 use codex_protocol::protocol::SessionNetworkProxyRuntime;
 use codex_protocol::protocol::SkillDependencies as ProtocolSkillDependencies;
@@ -1352,17 +1351,6 @@ impl Session {
     ) -> ConstraintResult<()> {
         let state = self.state.lock().await;
         state.session_configuration.apply(updates).map(|_| ())
-    }
-
-    pub(crate) async fn permission_profile_from_legacy_sandbox_update(
-        &self,
-        sandbox_policy: &SandboxPolicy,
-        cwd: Option<&Path>,
-    ) -> PermissionProfile {
-        let state = self.state.lock().await;
-        state
-            .session_configuration
-            .permission_profile_from_legacy_sandbox_update(sandbox_policy, cwd)
     }
 
     pub(crate) async fn set_session_startup_prewarm(
