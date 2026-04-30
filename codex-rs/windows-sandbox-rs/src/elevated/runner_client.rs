@@ -49,6 +49,12 @@ const RUNNER_SPAWN_READY_POLL_INTERVAL: Duration = Duration::from_millis(50);
 const RUNNER_ERROR_MODE_FLAGS: u32 = 0x0001 | 0x0002;
 const WAIT_OBJECT_0: u32 = 0;
 
+fn runner_launch_cwd(codex_home: &Path) -> std::io::Result<std::path::PathBuf> {
+    let launch_cwd = codex_home.join(".sandbox");
+    std::fs::create_dir_all(&launch_cwd)?;
+    Ok(launch_cwd)
+}
+
 pub(crate) struct RunnerTransport {
     pipe_write: File,
     pipe_read: File,
@@ -243,7 +249,8 @@ pub(crate) fn spawn_runner_transport(
     let mut cmdline_vec = to_wide(&runner_full_cmd);
     let exe_w = to_wide(&runner_cmdline);
     let resolved_cwd = resolve_sandbox_path(cwd);
-    let cwd_w = to_wide(&resolved_cwd);
+    let launch_cwd = runner_launch_cwd(codex_home)?;
+    let cwd_w = to_wide(&launch_cwd);
     let user_w = to_wide(&sandbox_creds.username);
     let domain_w = to_wide(".");
     let password_w = to_wide(&sandbox_creds.password);
@@ -392,5 +399,19 @@ fn wait_for_complete_frame(pipe_read: &File, timeout: Duration) -> Result<()> {
         }
 
         std::thread::sleep(RUNNER_SPAWN_READY_POLL_INTERVAL);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::runner_launch_cwd;
+
+    #[test]
+    fn runner_launch_cwd_uses_local_sandbox_dir() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let launch_cwd = runner_launch_cwd(temp.path()).expect("launch cwd");
+
+        assert_eq!(launch_cwd, temp.path().join(".sandbox"));
+        assert!(launch_cwd.is_dir());
     }
 }

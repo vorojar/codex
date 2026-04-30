@@ -7,6 +7,7 @@ use crate::ipc_framed::EmptyPayload;
 use crate::ipc_framed::FramedMessage;
 use crate::ipc_framed::Message;
 use crate::ipc_framed::SpawnRequest;
+use crate::path_normalization::resolve_sandbox_path;
 use crate::runner_client::spawn_runner_transport;
 use crate::spawn_prep::prepare_elevated_spawn_context;
 use anyhow::Result;
@@ -40,12 +41,14 @@ pub(crate) async fn spawn_windows_sandbox_session_elevated(
         &command,
     )?;
 
+    let resolved_cwd = resolve_sandbox_path(cwd);
+    let resolved_policy_cwd = resolve_sandbox_path(sandbox_policy_cwd);
     let spawn_request = SpawnRequest {
         command: command.clone(),
-        cwd: cwd.to_path_buf(),
+        cwd: resolved_cwd,
         env: env_map.clone(),
         policy_json_or_preset: policy_json_or_preset.to_string(),
-        sandbox_policy_cwd: sandbox_policy_cwd.to_path_buf(),
+        sandbox_policy_cwd: resolved_policy_cwd,
         codex_home: elevated.common.sandbox_base.clone(),
         real_codex_home: codex_home.to_path_buf(),
         cap_sids: elevated.cap_sids.clone(),
