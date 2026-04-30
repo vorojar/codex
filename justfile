@@ -93,6 +93,10 @@ mcp-server-run *args:
 write-config-schema:
     cargo run -p codex-core --bin codex-write-config-schema
 
+# Regenerate vendored rollout session-state contract fixtures.
+write-session-state-fixtures:
+    cargo run -p codex-rollout --bin write_session_state_fixtures
+
 # Regenerate vendored app-server protocol schema artifacts.
 write-app-server-schema *args:
     cargo run -p codex-app-server-protocol --bin write_schema_fixtures -- "$@"

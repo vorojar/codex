@@ -1,6 +1,13 @@
 load("//:defs.bzl", "codex_rust_crate")
 
+SESSION_STATE_CONTRACT_FIXTURES = glob(["fixtures/session-state/*.json"], allow_empty = False)
+
 codex_rust_crate(
     name = "rollout",
     crate_name = "codex_rollout",
+    compile_data = SESSION_STATE_CONTRACT_FIXTURES,
+    rustc_env = {
+        "CARGO_MANIFEST_DIR": "codex-rs/rollout",
+    },
+    test_data_extra = SESSION_STATE_CONTRACT_FIXTURES,
 )

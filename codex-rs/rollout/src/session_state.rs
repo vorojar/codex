@@ -21,6 +21,8 @@ use std::time::UNIX_EPOCH;
 
 const SESSION_STATE_SCHEMA_VERSION: u32 = 2;
 const ROOT_TURN_LEASE_MINUTES: i64 = 15;
+const SESSION_LEASE_SECONDS: i64 = 60;
+pub const SESSION_HEARTBEAT_SECONDS: u64 = 15;
 
 /// Persisted rollout sibling state for the current interactive session.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -31,6 +33,9 @@ pub struct SessionStateSidecar {
     pub updated_at: String,
     /// Current terminal attachment when Codex can identify one.
     pub terminal: Option<TerminalAttachment>,
+    /// Whole-session lifecycle, independent of the current root turn.
+    #[serde(default = "open_session_state")]
+    pub session: SessionStateSession,
     /// Root turn lifecycle as observed by Codex.
     pub root_turn: SessionStateRootTurn,
     /// Unified-exec processes that remain alive beyond their startup response.
@@ -40,6 +45,14 @@ pub struct SessionStateSidecar {
     pub owner_watchdogs: SessionStateOwnerWatchdogs,
     /// Parent-edge metadata when this session is a spawned subagent.
     pub subagent: Option<SessionStateSubagent>,
+}
+
+/// Whole-session lifecycle for an interactive Codex session.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "status", rename_all = "snake_case")]
+pub enum SessionStateSession {
+    Open { lease_expires_at: String },
+    Closed,
 }
 
 /// Root user-turn lifecycle for the session.
@@ -193,6 +206,11 @@ impl SessionStateTracker {
         })
     }
 
+    /// Refreshes the whole-session lease even when no root turn is active.
+    pub fn note_session_observed(&self) -> Result<bool> {
+        self.update(|current, now| refreshed_sidecar(current, now, current.root_turn.clone()))
+    }
+
     /// Records a terminal root turn.
     pub fn note_root_turn_completed(&self, turn_id: &str) -> Result<bool> {
         self.update(|current, now| {
@@ -235,6 +253,7 @@ impl SessionStateTracker {
         self.update(|current, now| SessionStateSidecar {
             schema_version: SESSION_STATE_SCHEMA_VERSION,
             updated_at: format_timestamp(now),
+            session: refreshed_session_state(&current.session, now),
             background_exec: SessionStateBackgroundExec { processes },
             ..current.clone()
         })
@@ -245,7 +264,18 @@ impl SessionStateTracker {
         self.update(|current, now| SessionStateSidecar {
             schema_version: SESSION_STATE_SCHEMA_VERSION,
             updated_at: format_timestamp(now),
+            session: refreshed_session_state(&current.session, now),
             owner_watchdogs: SessionStateOwnerWatchdogs { active_count },
+            ..current.clone()
+        })
+    }
+
+    /// Records that the whole session has closed cleanly.
+    pub fn note_session_closed(&self) -> Result<bool> {
+        self.update(|current, now| SessionStateSidecar {
+            schema_version: SESSION_STATE_SCHEMA_VERSION,
+            updated_at: format_timestamp(now),
+            session: SessionStateSession::Closed,
             ..current.clone()
         })
     }
@@ -254,12 +284,20 @@ impl SessionStateTracker {
         &self,
         build: impl FnOnce(&SessionStateSidecar, chrono::DateTime<Utc>) -> SessionStateSidecar,
     ) -> Result<bool> {
+        self.update_at(Utc::now(), build)
+    }
+
+    fn update_at(
+        &self,
+        now: chrono::DateTime<Utc>,
+        build: impl FnOnce(&SessionStateSidecar, chrono::DateTime<Utc>) -> SessionStateSidecar,
+    ) -> Result<bool> {
         let sidecar = {
             let mut guard = self
                 .sidecar
                 .lock()
                 .map_err(|_| anyhow::anyhow!("session state lock poisoned"))?;
-            *guard = build(&guard, Utc::now());
+            *guard = build(&guard, now);
             guard.clone()
         };
         self.write_snapshot(&sidecar)
@@ -358,6 +396,7 @@ fn build_idle_session_state_sidecar(
         schema_version: SESSION_STATE_SCHEMA_VERSION,
         updated_at: updated_at.to_rfc3339_opts(SecondsFormat::Secs, true),
         terminal,
+        session: open_session_state_at(updated_at),
         root_turn: SessionStateRootTurn::Idle,
         background_exec: SessionStateBackgroundExec::default(),
         owner_watchdogs: SessionStateOwnerWatchdogs::default(),
@@ -415,6 +454,7 @@ fn refreshed_sidecar(
     SessionStateSidecar {
         schema_version: SESSION_STATE_SCHEMA_VERSION,
         updated_at: format_timestamp(updated_at),
+        session: refreshed_session_state(&current.session, updated_at),
         root_turn,
         ..current.clone()
     }
@@ -446,6 +486,30 @@ fn root_turn_started_at(root_turn: &SessionStateRootTurn, turn_id: &str, fallbac
 
 fn root_turn_lease_expires_at(updated_at: chrono::DateTime<Utc>) -> chrono::DateTime<Utc> {
     updated_at + chrono::Duration::minutes(ROOT_TURN_LEASE_MINUTES)
+}
+
+fn session_lease_expires_at(updated_at: chrono::DateTime<Utc>) -> chrono::DateTime<Utc> {
+    updated_at + chrono::Duration::seconds(SESSION_LEASE_SECONDS)
+}
+
+fn open_session_state() -> SessionStateSession {
+    open_session_state_at(Utc::now())
+}
+
+fn open_session_state_at(updated_at: chrono::DateTime<Utc>) -> SessionStateSession {
+    SessionStateSession::Open {
+        lease_expires_at: format_timestamp(session_lease_expires_at(updated_at)),
+    }
+}
+
+fn refreshed_session_state(
+    session: &SessionStateSession,
+    updated_at: chrono::DateTime<Utc>,
+) -> SessionStateSession {
+    match session {
+        SessionStateSession::Open { .. } => open_session_state_at(updated_at),
+        SessionStateSession::Closed => SessionStateSession::Closed,
+    }
 }
 
 fn format_timestamp(timestamp: chrono::DateTime<Utc>) -> String {
@@ -565,6 +629,9 @@ mod tests {
             schema_version: SESSION_STATE_SCHEMA_VERSION,
             updated_at: "2026-04-07T18:00:00Z".to_string(),
             terminal,
+            session: SessionStateSession::Open {
+                lease_expires_at: "2026-04-07T18:01:00Z".to_string(),
+            },
             root_turn: SessionStateRootTurn::Running {
                 turn_id: "turn-1".to_string(),
                 started_at: "2026-04-07T17:58:00Z".to_string(),
@@ -658,6 +725,10 @@ mod tests {
                 "schema_version": 2,
                 "updated_at": "2026-04-07T18:00:00Z",
                 "terminal": null,
+                "session": {
+                    "status": "open",
+                    "lease_expires_at": "2026-04-07T18:01:00Z",
+                },
                 "root_turn": {
                     "status": "running",
                     "turn_id": "turn-1",
@@ -695,6 +766,24 @@ mod tests {
     }
 
     #[test]
+    fn refreshed_idle_sidecar_extends_open_session_lease() {
+        let sidecar = idle_sidecar(/*terminal*/ None);
+        let refreshed_at = chrono::DateTime::parse_from_rfc3339("2026-04-07T18:00:15Z")
+            .unwrap()
+            .with_timezone(&Utc);
+
+        let refreshed = refreshed_sidecar(&sidecar, refreshed_at, sidecar.root_turn.clone());
+
+        assert_eq!(refreshed.root_turn, SessionStateRootTurn::Idle);
+        assert_eq!(
+            refreshed.session,
+            SessionStateSession::Open {
+                lease_expires_at: "2026-04-07T18:01:15Z".to_string(),
+            }
+        );
+    }
+
+    #[test]
     fn write_session_state_sidecar_writes_terminal_null_when_missing() -> Result<()> {
         let temp_dir = TempDir::new()?;
         let rollout_path = temp_dir.path().join("rollout-thread.jsonl");
@@ -719,6 +808,7 @@ mod tests {
         }))?;
 
         assert_eq!(sidecar.owner_watchdogs.active_count, 0);
+        assert!(matches!(sidecar.session, SessionStateSession::Open { .. }));
         Ok(())
     }
 
@@ -802,6 +892,74 @@ mod tests {
         let sidecar: SessionStateSidecar =
             serde_json::from_slice(&fs::read(session_state_sidecar_path(&rollout_path))?)?;
         assert_eq!(sidecar.owner_watchdogs.active_count, 2);
+
+        Ok(())
+    }
+
+    #[test]
+    fn session_state_tracker_closes_session_lifecycle() -> Result<()> {
+        let temp_dir = TempDir::new()?;
+        let rollout_path = temp_dir.path().join("rollout-session.jsonl");
+        let tracker = SessionStateTracker::new(
+            Some(rollout_path.clone()),
+            &SessionSource::Cli,
+            /*terminal*/ None,
+        );
+
+        tracker.write_current()?;
+        tracker.note_session_closed()?;
+
+        let sidecar: SessionStateSidecar =
+            serde_json::from_slice(&fs::read(session_state_sidecar_path(&rollout_path))?)?;
+        assert_eq!(sidecar.session, SessionStateSession::Closed);
+
+        Ok(())
+    }
+
+    #[test]
+    fn session_state_tracker_refreshes_idle_session_lifecycle_lease() -> Result<()> {
+        let temp_dir = TempDir::new()?;
+        let rollout_path = temp_dir.path().join("rollout-session-refresh.jsonl");
+        let tracker = SessionStateTracker::new(
+            Some(rollout_path.clone()),
+            &SessionSource::Cli,
+            /*terminal*/ None,
+        );
+        let first_observed_at = chrono::DateTime::parse_from_rfc3339("2026-04-07T18:00:00Z")
+            .unwrap()
+            .with_timezone(&Utc);
+        let second_observed_at = chrono::DateTime::parse_from_rfc3339("2026-04-07T18:00:15Z")
+            .unwrap()
+            .with_timezone(&Utc);
+
+        tracker.update_at(first_observed_at, |current, now| {
+            refreshed_sidecar(current, now, current.root_turn.clone())
+        })?;
+        let initial_sidecar: SessionStateSidecar =
+            serde_json::from_slice(&fs::read(session_state_sidecar_path(&rollout_path))?)?;
+
+        tracker.update_at(second_observed_at, |current, now| {
+            refreshed_sidecar(current, now, current.root_turn.clone())
+        })?;
+        let refreshed_sidecar: SessionStateSidecar =
+            serde_json::from_slice(&fs::read(session_state_sidecar_path(&rollout_path))?)?;
+
+        assert_eq!(
+            initial_sidecar,
+            build_idle_session_state_sidecar(
+                /*terminal*/ None,
+                /*subagent*/ None,
+                first_observed_at,
+            )
+        );
+        assert_eq!(
+            refreshed_sidecar,
+            build_idle_session_state_sidecar(
+                /*terminal*/ None,
+                /*subagent*/ None,
+                second_observed_at,
+            )
+        );
 
         Ok(())
     }

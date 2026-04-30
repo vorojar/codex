@@ -563,13 +563,13 @@ async fn custom_model_alias_sends_base_model_slug() -> Result<()> {
             approval_policy: config.permissions.approval_policy.value(),
             approvals_reviewer: None,
             sandbox_policy: config.legacy_sandbox_policy(),
+            permission_profile: None,
             model: alias.to_string(),
             effort: None,
             summary: None,
             service_tier: None,
             collaboration_mode: None,
             personality: None,
-            permission_profile: None,
             environments: None,
         })
         .await?;

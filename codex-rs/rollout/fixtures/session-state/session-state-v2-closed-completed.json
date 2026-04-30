@@ -1,0 +1,21 @@
+{
+  "schema_version": 2,
+  "updated_at": "2026-04-07T18:00:00Z",
+  "terminal": null,
+  "session": {
+    "status": "closed"
+  },
+  "root_turn": {
+    "status": "completed",
+    "turn_id": "turn-1",
+    "started_at": "2026-04-07T17:58:00Z",
+    "completed_at": "2026-04-07T18:00:00Z"
+  },
+  "background_exec": {
+    "processes": []
+  },
+  "owner_watchdogs": {
+    "active_count": 0
+  },
+  "subagent": null
+}

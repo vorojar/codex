@@ -884,6 +884,7 @@ pub async fn shutdown(sess: &Arc<Session>, sub_id: String) -> bool {
         manager.begin_shutdown()
     };
     mcp_shutdown.await;
+    sess.close_session_state();
     sess.guardian_review_session.shutdown().await;
     info!("Shutting down Codex instance");
     let history = sess.clone_history().await;
@@ -1186,7 +1187,9 @@ pub(super) async fn submission_loop(
         manager.begin_shutdown()
     };
     mcp_shutdown.await;
-    // Also drain cached guardian state on this implicit shutdown path.
+    // Also close persisted lifecycle state and drain cached guardian state on
+    // this implicit shutdown path.
+    sess.close_session_state();
     sess.guardian_review_session.shutdown().await;
     debug!("Agent loop exited");
 }

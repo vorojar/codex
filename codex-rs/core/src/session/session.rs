@@ -896,6 +896,7 @@ impl Session {
             if let Err(err) = sess.session_state_tracker.write_current() {
                 warn!("failed to write session state sidecar: {err:#}");
             }
+            spawn_session_lifecycle_heartbeat(&sess);
             // Dispatch the SessionConfiguredEvent first and then report any errors.
             // If resuming, include converted initial messages in the payload so UIs can render them immediately.
             let initial_messages = initial_history.get_event_msgs();

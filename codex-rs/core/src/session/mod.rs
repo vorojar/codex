@@ -7,6 +7,7 @@ use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 use std::sync::atomic::AtomicU64;
 use std::sync::atomic::Ordering;
+use std::time::Duration;
 use std::time::SystemTime;
 use std::time::UNIX_EPOCH;
 
@@ -39,6 +40,7 @@ use crate::installation_id::resolve_installation_id;
 use crate::parse_turn_item;
 use crate::path_utils::normalize_for_native_workdir;
 use crate::realtime_conversation::RealtimeConversationManager;
+use crate::rollout::SESSION_HEARTBEAT_SECONDS;
 use crate::rollout::SessionStateBackgroundExecProcess;
 use crate::rollout::SessionStateTracker;
 use crate::rollout::find_thread_name_by_id;
@@ -1697,6 +1699,12 @@ impl Session {
             .set_owner_watchdog_count(active_count)
         {
             warn!("failed to update owner watchdog session state sidecar: {err:#}");
+        }
+    }
+
+    fn close_session_state(&self) {
+        if let Err(err) = self.session_state_tracker.note_session_closed() {
+            warn!("failed to close session state sidecar: {err:#}");
         }
     }
 
@@ -3501,6 +3509,21 @@ pub(crate) fn emit_subagent_session_started(
     });
 }
 
+fn spawn_session_lifecycle_heartbeat(sess: &Arc<Session>) {
+    let weak_sess = Arc::downgrade(sess);
+    tokio::spawn(async move {
+        let mut interval = tokio::time::interval(Duration::from_secs(SESSION_HEARTBEAT_SECONDS));
+        loop {
+            interval.tick().await;
+            let Some(sess) = weak_sess.upgrade() else {
+                break;
+            };
+            if let Err(err) = sess.session_state_tracker.note_session_observed() {
+                warn!("failed to refresh session lifecycle sidecar: {err:#}");
+            }
+        }
+    });
+}
 fn skills_to_info(
     skills: &[SkillMetadata],
     disabled_paths: &HashSet<AbsolutePathBuf>,

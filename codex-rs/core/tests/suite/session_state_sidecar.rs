@@ -60,6 +60,8 @@ async fn interactive_start_writes_session_state_sidecar() -> Result<()> {
     let sidecar_json = read_sidecar_json(&sidecar_path)?;
     assert_eq!(sidecar.schema_version, 2);
     assert_eq!(sidecar.terminal, terminal_attachment());
+    assert_eq!(sidecar_json["session"]["status"], "open");
+    assert!(sidecar_json["session"]["lease_expires_at"].is_string());
     assert_eq!(sidecar_json["root_turn"]["status"], "idle");
     assert_eq!(
         sidecar_json["background_exec"]["processes"],
@@ -125,6 +127,7 @@ async fn interactive_turn_updates_session_state_sidecar() -> Result<()> {
     .await;
 
     let completed = read_sidecar_json(&sidecar_path)?;
+    assert_eq!(completed["session"]["status"], "open");
     assert_eq!(completed["root_turn"]["status"], "completed");
     assert_eq!(completed["root_turn"]["turn_id"], turn_id);
 
@@ -229,6 +232,28 @@ async fn interactive_resume_refreshes_session_state_sidecar() -> Result<()> {
         .expect("resumed rollout path");
     let refreshed = read_sidecar(&session_state_sidecar_path(refreshed_rollout_path))?;
     assert_eq!(refreshed.terminal, terminal_attachment());
+
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn interactive_shutdown_closes_session_state_sidecar() -> Result<()> {
+    skip_if_no_network!(Ok(()));
+
+    let server = start_mock_server().await;
+    let mut builder = test_codex().with_session_source(SessionSource::Cli);
+    let test = builder.build(&server).await?;
+    let sidecar_path = session_state_sidecar_path(
+        test.session_configured
+            .rollout_path
+            .as_deref()
+            .expect("rollout path"),
+    );
+
+    test.codex.shutdown_and_wait().await?;
+
+    let sidecar = read_sidecar_json(&sidecar_path)?;
+    assert_eq!(sidecar["session"]["status"], "closed");
 
     Ok(())
 }
