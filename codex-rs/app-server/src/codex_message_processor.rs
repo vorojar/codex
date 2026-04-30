@@ -8072,9 +8072,7 @@ impl CodexMessageProcessor {
                 Ok(config) => {
                     let setup_request = WindowsSandboxSetupRequest {
                         mode,
-                        policy: config
-                            .permissions
-                            .legacy_sandbox_policy(config.cwd.as_path()),
+                        permission_profile: config.permissions.permission_profile(),
                         policy_cwd: config.cwd.to_path_buf(),
                         command_cwd,
                         env_map: std::env::vars().collect(),

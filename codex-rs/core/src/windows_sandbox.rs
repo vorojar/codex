@@ -9,7 +9,9 @@ use codex_features::FeaturesToml;
 use codex_login::default_client::originator;
 use codex_otel::sanitize_metric_tag_value;
 use codex_protocol::config_types::WindowsSandboxLevel;
+use codex_protocol::models::PermissionProfile;
 use codex_protocol::protocol::SandboxPolicy;
+use codex_sandboxing::compatibility_sandbox_policy_for_permission_profile;
 use std::collections::BTreeMap;
 use std::collections::HashMap;
 use std::path::Path;
@@ -272,7 +274,7 @@ pub enum WindowsSandboxSetupMode {
 #[derive(Debug, Clone)]
 pub struct WindowsSandboxSetupRequest {
     pub mode: WindowsSandboxSetupMode,
-    pub policy: SandboxPolicy,
+    pub permission_profile: PermissionProfile,
     pub policy_cwd: PathBuf,
     pub command_cwd: PathBuf,
     pub env_map: HashMap<String, String>,
@@ -311,13 +313,20 @@ async fn run_windows_sandbox_setup_and_persist(
     request: WindowsSandboxSetupRequest,
 ) -> anyhow::Result<()> {
     let mode = request.mode;
-    let policy = request.policy;
+    let permission_profile = request.permission_profile;
     let policy_cwd = request.policy_cwd;
     let command_cwd = request.command_cwd;
     let env_map = request.env_map;
     let codex_home = request.codex_home;
     let active_profile = request.active_profile;
     let setup_codex_home = codex_home.clone();
+    let file_system_sandbox_policy = permission_profile.file_system_sandbox_policy();
+    let policy = compatibility_sandbox_policy_for_permission_profile(
+        &permission_profile,
+        &file_system_sandbox_policy,
+        permission_profile.network_sandbox_policy(),
+        policy_cwd.as_path(),
+    );
 
     let setup_result = tokio::task::spawn_blocking(move || -> anyhow::Result<()> {
         match mode {
