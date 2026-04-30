@@ -77,6 +77,7 @@ use codex_app_server_protocol::TurnCompletedNotification;
 use codex_app_server_protocol::TurnDiffUpdatedNotification;
 use codex_app_server_protocol::TurnError;
 use codex_app_server_protocol::TurnInterruptResponse;
+use codex_app_server_protocol::TurnItemsView;
 use codex_app_server_protocol::TurnPlanStep;
 use codex_app_server_protocol::TurnPlanUpdatedNotification;
 use codex_app_server_protocol::TurnStartedNotification;
@@ -167,6 +168,7 @@ pub(crate) async fn apply_bespoke_event_handling(
                 let state = thread_state.lock().await;
                 state.active_turn_snapshot().unwrap_or_else(|| Turn {
                     id: payload.turn_id.clone(),
+                    items_view: TurnItemsView::NotLoaded,
                     items: Vec::new(),
                     error: None,
                     status: TurnStatus::InProgress,
@@ -1408,6 +1410,7 @@ async fn emit_turn_completed_with_status(
         thread_id: conversation_id.to_string(),
         turn: Turn {
             id: event_turn_id,
+            items_view: TurnItemsView::NotLoaded,
             items: vec![],
             error: turn_completion_metadata.error,
             status: turn_completion_metadata.status,

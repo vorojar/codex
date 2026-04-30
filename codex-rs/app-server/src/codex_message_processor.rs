@@ -225,6 +225,7 @@ use codex_app_server_protocol::Turn;
 use codex_app_server_protocol::TurnError;
 use codex_app_server_protocol::TurnInterruptParams;
 use codex_app_server_protocol::TurnInterruptResponse;
+use codex_app_server_protocol::TurnItemsView;
 use codex_app_server_protocol::TurnStartParams;
 use codex_app_server_protocol::TurnStartResponse;
 use codex_app_server_protocol::TurnStatus;
@@ -6777,6 +6778,7 @@ impl CodexMessageProcessor {
                 .await;
             let turn = Turn {
                 id: turn_id,
+                items_view: TurnItemsView::NotLoaded,
                 items: vec![],
                 error: None,
                 status: TurnStatus::InProgress,
@@ -7154,6 +7156,7 @@ impl CodexMessageProcessor {
 
         Turn {
             id: turn_id,
+            items_view: TurnItemsView::Summary,
             items,
             error: None,
             status: TurnStatus::InProgress,
@@ -9901,6 +9904,24 @@ fn reconstruct_thread_turns_for_turns_list(
     if let Some(active_turn) = active_turn {
         merge_turn_history_with_active_turn(&mut turns, active_turn);
     }
+    for turn in &mut turns {
+        let first_user_item_index = turn
+            .items
+            .iter()
+            .position(|item| matches!(item, ThreadItem::UserMessage { .. }));
+        let final_agent_item_index = turn
+            .items
+            .iter()
+            .rposition(|item| matches!(item, ThreadItem::AgentMessage { .. }));
+        let mut item_index = 0;
+        turn.items.retain(|_| {
+            let keep = Some(item_index) == first_user_item_index
+                || Some(item_index) == final_agent_item_index;
+            item_index += 1;
+            keep
+        });
+        turn.items_view = TurnItemsView::Summary;
+    }
     turns
 }
 
@@ -10074,6 +10095,7 @@ mod tests {
         ))];
         let active_turn = Turn {
             id: "live-turn".to_string(),
+            items_view: TurnItemsView::Full,
             items: vec![ThreadItem::UserMessage {
                 id: "live-user-message".to_string(),
                 content: vec![V2UserInput::Text {
@@ -10095,7 +10117,9 @@ mod tests {
             Some(active_turn.clone()),
         );
 
-        assert_eq!(turns.last(), Some(&active_turn));
+        let mut expected_turn = active_turn;
+        expected_turn.items_view = TurnItemsView::Summary;
+        assert_eq!(turns.last(), Some(&expected_turn));
     }
 
     #[test]

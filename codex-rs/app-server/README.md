@@ -149,7 +149,9 @@ Example with notification opt-out:
 - `thread/list` — page through stored rollouts; supports cursor-based pagination and optional `modelProviders`, `sourceKinds`, `archived`, `cwd`, and `searchTerm` filters. Each returned `thread` includes `status` (`ThreadStatus`), defaulting to `notLoaded` when the thread is not currently loaded.
 - `thread/loaded/list` — list the thread ids currently loaded in memory.
 - `thread/read` — read a stored thread by id without resuming it; optionally include turns via `includeTurns`. The returned `thread` includes `status` (`ThreadStatus`), defaulting to `notLoaded` when the thread is not currently loaded.
-- `thread/turns/list` — page through a stored thread’s turn history without resuming it; supports cursor-based pagination with `sortDirection`, `nextCursor`, and `backwardsCursor`.
+- `thread/turns/list` — page through a stored thread’s turn history without resuming it; supports cursor-based pagination with `sortDirection`, `nextCursor`, and `backwardsCursor`. Returned turns use `itemsView: "summary"` and include only the first user message and final assistant message in `items` when available.
+- `thread/items/list` — page through the full item history for a single turn without resuming the thread; supports cursor-based pagination with `sortDirection`, `nextCursor`, and `backwardsCursor`.
+- `thread/item/content/read` — fetch large deferred item content, such as generated image bytes, after a history-loading API returns a placeholder.
 - `thread/metadata/update` — patch stored thread metadata in sqlite; currently supports updating persisted `gitInfo` fields and returns the refreshed `thread`.
 - `thread/memoryMode/set` — experimental; set a thread’s persisted memory eligibility to `"enabled"` or `"disabled"` for either a loaded thread or a stored rollout; returns `{}` on success.
 - `memory/reset` — experimental; clear the current `CODEX_HOME/memories` directory and reset persisted memory stage data in sqlite while preserving existing thread memory modes; returns `{}` on success.
@@ -276,7 +278,14 @@ Valid `personality` values are `"friendly"`, `"pragmatic"`, and `"none"`. When `
 
 To continue a stored session, call `thread/resume` with the `thread.id` you previously recorded. The response shape matches `thread/start`. When the stored session includes persisted token usage, the server emits `thread/tokenUsage/updated` immediately after the response so clients can render restored usage before the next turn starts. You can also pass the same configuration overrides supported by `thread/start`, including `approvalsReviewer`.
 
-By default, `thread/resume` includes the reconstructed turn history in `thread.turns`. Pass `excludeTurns: true` to return only thread metadata and live resume state, then call `thread/turns/list` separately if you want to page the turn history over the network. In that mode the server also skips replaying restored `thread/tokenUsage/updated`, which avoids rebuilding turns just to attribute historical usage.
+App-server supports two history loading modes:
+
+- Fully hydrated history: the default for `thread/resume`, and the behavior for `thread/read` when `includeTurns: true`. The response includes `thread.turns`; each returned turn has `itemsView: "full"` and `items` contains every `ThreadItem` available from persisted app-server history.
+- Paged history: pass `excludeTurns: true` to `thread/resume`, or omit `includeTurns` on `thread/read`, to receive only thread metadata. Then call `thread/turns/list` for summary turns and `thread/items/list` to hydrate the full item list for an individual turn.
+
+Both modes can defer large item payloads. Pass `largeContent: "deferred"` when loading history to receive metadata placeholders for large content, such as generated images, and fetch bytes later with `thread/item/content/read`. Omit `largeContent`, or pass `"inline"`, to preserve the legacy behavior of embedding large payloads directly in returned `ThreadItem`s.
+
+In paged history mode, `thread/resume` skips replaying restored `thread/tokenUsage/updated`, which avoids rebuilding turns just to attribute historical usage.
 
 By default, resume uses the latest persisted `model` and `reasoningEffort` values associated with the thread. Supplying any of `model`, `modelProvider`, `config.model`, or `config.model_reasoning_effort` disables that persisted fallback and uses the explicit overrides plus normal config resolution instead.
 
@@ -402,7 +411,7 @@ Later, after the idle unload timeout:
 
 ### Example: Read a thread
 
-Use `thread/read` to fetch a stored thread by id without resuming it. Pass `includeTurns` when you want the full rollout history loaded into `thread.turns`. The returned thread includes `agentNickname` and `agentRole` for AgentControl-spawned thread sub-agents when available.
+Use `thread/read` to fetch a stored thread by id without resuming it. By default, this returns metadata only so clients can page history with `thread/turns/list` and `thread/items/list`. Pass `includeTurns` when you want the fully hydrated rollout history loaded into `thread.turns`; returned turns use `itemsView: "full"`. The returned thread includes `agentNickname` and `agentRole` for AgentControl-spawned thread sub-agents when available.
 
 ```json
 { "method": "thread/read", "id": 22, "params": { "threadId": "thr_123" } }
@@ -420,7 +429,7 @@ Use `thread/read` to fetch a stored thread by id without resuming it. Pass `incl
 
 ### Example: List thread turns
 
-Use `thread/turns/list` to page a stored thread’s turn history without resuming it. By default, results are sorted descending so clients can start at the present and fetch older turns with `nextCursor`. The response also includes `backwardsCursor`; pass it as `cursor` on a later request with `sortDirection: "asc"` to fetch turns newer than the first item from the earlier page.
+Use `thread/turns/list` to page a stored thread’s turn history without resuming it. This endpoint is the scalable alternative to loading fully hydrated `thread.turns` in `thread/resume` or `thread/read`. By default, results are sorted descending so clients can start at the present and fetch older turns with `nextCursor`. The response also includes `backwardsCursor`; pass it as `cursor` on a later request with `sortDirection: "asc"` to fetch turns newer than the first item from the earlier page. Returned turns use `itemsView: "summary"`; their `items` field contains only the first user message and final assistant message when those items are available.
 
 ```json
 { "method": "thread/turns/list", "id": 24, "params": {
@@ -432,6 +441,42 @@ Use `thread/turns/list` to page a stored thread’s turn history without resumin
     "data": [ ... ],
     "nextCursor": "older-turns-cursor-or-null",
     "backwardsCursor": "newer-turns-cursor-or-null"
+} }
+```
+
+### Example: List turn items
+
+Use `thread/items/list` to hydrate a summarized turn returned from `thread/turns/list`. By default, results are sorted ascending so clients can append items in natural turn order. Accumulate pages until `nextCursor` is null, then replace the client-side turn’s `items` with the collected item list and treat that local turn representation as fully hydrated. Pass `largeContent: "deferred"` to keep large item payloads as placeholders even while hydrating the item list. The response also includes `backwardsCursor`; pass it as `cursor` on a later request with `sortDirection: "desc"` to fetch items before the first item from the earlier page.
+
+```json
+{ "method": "thread/items/list", "id": 25, "params": {
+    "threadId": "thr_123",
+    "turnId": "turn_456",
+    "limit": 50,
+    "sortDirection": "asc"
+} }
+{ "id": 25, "result": {
+    "data": [ ... ],
+    "nextCursor": "newer-items-cursor-or-null",
+    "backwardsCursor": "older-items-cursor-or-null"
+} }
+```
+
+### Example: Read deferred item content
+
+Some `ThreadItem`s can contain large payloads. For example, `imageGeneration` items expose structured `content`; when `content.type` is `"deferred"`, render a placeholder from the available metadata and call `thread/item/content/read` when the bytes are needed:
+
+```json
+{ "method": "thread/item/content/read", "id": 26, "params": {
+    "threadId": "thr_123",
+    "turnId": "turn_456",
+    "itemId": "ig_789",
+    "contentId": "img_abc"
+} }
+{ "id": 26, "result": {
+    "mimeType": "image/png",
+    "dataBase64": "...",
+    "byteLength": 1234567
 } }
 ```
 

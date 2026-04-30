@@ -10,6 +10,7 @@ use crate::protocol::v2::CollabAgentToolCallStatus;
 use crate::protocol::v2::CommandExecutionStatus;
 use crate::protocol::v2::DynamicToolCallOutputContentItem;
 use crate::protocol::v2::DynamicToolCallStatus;
+use crate::protocol::v2::ImageGenerationContent;
 use crate::protocol::v2::McpToolCallError;
 use crate::protocol::v2::McpToolCallResult;
 use crate::protocol::v2::McpToolCallStatus;
@@ -17,6 +18,7 @@ use crate::protocol::v2::ThreadItem;
 use crate::protocol::v2::Turn;
 use crate::protocol::v2::TurnError as V2TurnError;
 use crate::protocol::v2::TurnError;
+use crate::protocol::v2::TurnItemsView;
 use crate::protocol::v2::TurnStatus;
 use crate::protocol::v2::UserInput;
 use crate::protocol::v2::WebSearchAction;
@@ -580,6 +582,9 @@ impl ThreadHistoryBuilder {
             id: payload.call_id.clone(),
             status: String::new(),
             revised_prompt: None,
+            content: ImageGenerationContent::Unavailable {
+                reason: "image generation has not completed".to_string(),
+            },
             result: String::new(),
             saved_path: None,
         };
@@ -591,6 +596,11 @@ impl ThreadHistoryBuilder {
             id: payload.call_id.clone(),
             status: payload.status.clone(),
             revised_prompt: payload.revised_prompt.clone(),
+            content: ImageGenerationContent::Inline {
+                data_base64: payload.result.clone(),
+                mime_type: None,
+                byte_length: None,
+            },
             result: payload.result.clone(),
             saved_path: payload.saved_path.clone(),
         };
@@ -1160,6 +1170,7 @@ impl From<PendingTurn> for Turn {
     fn from(value: PendingTurn) -> Self {
         Self {
             id: value.id,
+            items_view: TurnItemsView::Full,
             items: value.items,
             error: value.error,
             status: value.status,
@@ -1174,6 +1185,7 @@ impl From<&PendingTurn> for Turn {
     fn from(value: &PendingTurn) -> Self {
         Self {
             id: value.id.clone(),
+            items_view: TurnItemsView::Full,
             items: value.items.clone(),
             error: value.error.clone(),
             status: value.status.clone(),
@@ -1442,6 +1454,7 @@ mod tests {
             turns[0],
             Turn {
                 id: "turn-image".into(),
+                items_view: TurnItemsView::Full,
                 status: TurnStatus::Completed,
                 error: None,
                 started_at: None,
@@ -1459,6 +1472,11 @@ mod tests {
                         id: "ig_123".into(),
                         status: "completed".into(),
                         revised_prompt: Some("final prompt".into()),
+                        content: ImageGenerationContent::Inline {
+                            data_base64: "Zm9v".into(),
+                            mime_type: None,
+                            byte_length: None,
+                        },
                         result: "Zm9v".into(),
                         saved_path: Some(test_path_buf("/tmp/ig_123.png").abs()),
                     },
@@ -2706,6 +2724,7 @@ mod tests {
             turns,
             vec![Turn {
                 id: "turn-compact".into(),
+                items_view: TurnItemsView::Full,
                 status: TurnStatus::Completed,
                 error: None,
                 started_at: None,
@@ -2961,6 +2980,7 @@ mod tests {
             turns[0],
             Turn {
                 id: "turn-a".into(),
+                items_view: TurnItemsView::Full,
                 status: TurnStatus::Completed,
                 error: None,
                 started_at: None,

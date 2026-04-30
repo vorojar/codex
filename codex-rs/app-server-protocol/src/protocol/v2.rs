@@ -3735,9 +3735,19 @@ pub struct ThreadResumeParams {
     pub developer_instructions: Option<String>,
     #[ts(optional = nullable)]
     pub personality: Option<Personality>,
-    /// When true, return only thread metadata and live-resume state without
-    /// populating `thread.turns`. This is useful when the client plans to call
-    /// `thread/turns/list` immediately after resuming.
+    /// Controls whether large item payloads, such as generated image bytes, are embedded in
+    /// returned ThreadItems or replaced with deferred content references.
+    ///
+    /// Defaults to `inline` for compatibility. New clients that may load large histories should
+    /// prefer `deferred` and fetch bytes on demand with `thread/item/content/read`.
+    #[ts(optional = nullable)]
+    pub large_content: Option<LargeContentMode>,
+    /// When false, `thread/resume` returns the traditional fully hydrated thread history:
+    /// `thread.turns` is populated and each returned Turn has `itemsView: "full"`.
+    ///
+    /// When true, return only thread metadata and live-resume state without populating
+    /// `thread.turns`. Clients that choose this scalable mode should page history with
+    /// `thread/turns/list`, then hydrate individual summary turns with `thread/items/list`.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub exclude_turns: bool,
     /// If true, persist additional rollout EventMsg variants required to
@@ -3837,6 +3847,13 @@ pub struct ThreadForkParams {
     pub base_instructions: Option<String>,
     #[ts(optional = nullable)]
     pub developer_instructions: Option<String>,
+    /// Controls whether large item payloads, such as generated image bytes, are embedded in
+    /// returned ThreadItems or replaced with deferred content references.
+    ///
+    /// Defaults to `inline` for compatibility. New clients that may load large histories should
+    /// prefer `deferred` and fetch bytes on demand with `thread/item/content/read`.
+    #[ts(optional = nullable)]
+    pub large_content: Option<LargeContentMode>,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub ephemeral: bool,
     /// When true, return only thread metadata and live fork state without
@@ -4408,7 +4425,18 @@ pub enum ThreadActiveFlag {
 #[ts(export_to = "v2/")]
 pub struct ThreadReadParams {
     pub thread_id: String,
-    /// When true, include turns and their items from rollout history.
+    /// Controls whether large item payloads, such as generated image bytes, are embedded in
+    /// returned ThreadItems or replaced with deferred content references.
+    ///
+    /// Defaults to `inline` for compatibility. New clients that may load large histories should
+    /// prefer `deferred` and fetch bytes on demand with `thread/item/content/read`.
+    #[ts(optional = nullable)]
+    pub large_content: Option<LargeContentMode>,
+    /// When true, include the traditional fully hydrated thread history:
+    /// `thread.turns` is populated and each returned Turn has `itemsView: "full"`.
+    ///
+    /// When false, `thread/read` returns metadata only. Clients can page history separately
+    /// with `thread/turns/list`, then hydrate individual summary turns with `thread/items/list`.
     #[serde(default)]
     pub include_turns: bool,
 }
@@ -4425,6 +4453,12 @@ pub struct ThreadReadResponse {
 #[ts(export_to = "v2/")]
 pub struct ThreadTurnsListParams {
     pub thread_id: String,
+    /// Controls whether large item payloads in summary Turn items are embedded inline or returned
+    /// as deferred content references.
+    ///
+    /// Defaults to `inline` for compatibility. New clients should prefer `deferred`.
+    #[ts(optional = nullable)]
+    pub large_content: Option<LargeContentMode>,
     /// Opaque cursor to pass to the next call to continue after the last turn.
     #[ts(optional = nullable)]
     pub cursor: Option<String>,
@@ -4440,6 +4474,11 @@ pub struct ThreadTurnsListParams {
 #[serde(rename_all = "camelCase")]
 #[ts(export_to = "v2/")]
 pub struct ThreadTurnsListResponse {
+    /// Summary turns for paged history UIs.
+    ///
+    /// Each Turn returned by `thread/turns/list` has `itemsView: "summary"` and includes only
+    /// the first user message and final assistant message in `items` when those items are
+    /// available. Use `thread/items/list` to hydrate the complete item list for a turn.
     pub data: Vec<Turn>,
     /// Opaque cursor to pass to the next call to continue after the last turn.
     /// if None, there are no more turns to return.
@@ -4449,6 +4488,82 @@ pub struct ThreadTurnsListResponse {
     /// Use it with the opposite `sortDirection` to include the anchor turn again
     /// and catch updates to that turn.
     pub backwards_cursor: Option<String>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "v2/")]
+pub struct ThreadItemsListParams {
+    pub thread_id: String,
+    /// Turn to hydrate after receiving a summary Turn from `thread/turns/list`.
+    pub turn_id: String,
+    /// Controls whether large item payloads, such as generated image bytes, are embedded in
+    /// returned ThreadItems or replaced with deferred content references.
+    ///
+    /// Defaults to `inline` for compatibility. New clients should prefer `deferred`.
+    #[ts(optional = nullable)]
+    pub large_content: Option<LargeContentMode>,
+    /// Opaque cursor to pass to the next call to continue after the last item.
+    #[ts(optional = nullable)]
+    pub cursor: Option<String>,
+    /// Optional item page size.
+    #[ts(optional = nullable)]
+    pub limit: Option<u32>,
+    /// Optional item pagination direction; defaults to ascending.
+    #[ts(optional = nullable)]
+    pub sort_direction: Option<SortDirection>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "v2/")]
+pub struct ThreadItemsListResponse {
+    /// Full ThreadItems for the requested turn page. Accumulate pages until `nextCursor` is null
+    /// to hydrate the client-side Turn representation.
+    pub data: Vec<ThreadItem>,
+    /// Opaque cursor to pass to the next call to continue after the last item.
+    /// if None, there are no more items to return.
+    pub next_cursor: Option<String>,
+    /// Opaque cursor to pass as `cursor` when reversing `sortDirection`.
+    /// This is only populated when the page contains at least one item.
+    /// Use it with the opposite `sortDirection` to include the anchor item again
+    /// and catch updates to that item.
+    pub backwards_cursor: Option<String>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "v2/")]
+pub struct ThreadItemContentReadParams {
+    pub thread_id: String,
+    pub turn_id: String,
+    pub item_id: String,
+    /// Opaque content identifier returned from a deferred item content placeholder.
+    pub content_id: String,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "v2/")]
+pub struct ThreadItemContentReadResponse {
+    /// Media type of the returned content when known.
+    pub mime_type: Option<String>,
+    /// Base64-encoded content bytes.
+    pub data_base64: String,
+    /// Decoded byte length when known.
+    #[ts(type = "number | null")]
+    pub byte_length: Option<i64>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(rename_all = "camelCase", export_to = "v2/")]
+pub enum LargeContentMode {
+    /// Preserve legacy behavior and embed large payloads directly in returned ThreadItems.
+    Inline,
+    /// Return metadata placeholders for large payloads and fetch bytes through
+    /// `thread/item/content/read`.
+    Deferred,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, JsonSchema, TS)]
@@ -5146,10 +5261,10 @@ impl From<CoreTokenUsage> for TokenUsageBreakdown {
 #[ts(export_to = "v2/")]
 pub struct Turn {
     pub id: String,
-    /// Only populated on a `thread/resume` or `thread/fork` response.
-    /// For all other responses and notifications returning a Turn,
-    /// the items field will be an empty list.
+    /// Turn items at the level of detail described by `itemsView`.
     pub items: Vec<ThreadItem>,
+    /// Indicates how much of this Turn's item history is present in `items`.
+    pub items_view: TurnItemsView,
     pub status: TurnStatus,
     /// Only populated when the Turn's status is failed.
     pub error: Option<TurnError>,
@@ -5162,6 +5277,22 @@ pub struct Turn {
     /// Duration between turn start and completion in milliseconds, if known.
     #[ts(type = "number | null")]
     pub duration_ms: Option<i64>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(rename_all = "camelCase", export_to = "v2/")]
+pub enum TurnItemsView {
+    /// `items` was not loaded for this Turn. The field is intentionally empty.
+    NotLoaded,
+    /// `items` contains only a display summary for this Turn.
+    ///
+    /// For `thread/turns/list`, this currently means the first user message and the final
+    /// assistant message when those items are available.
+    Summary,
+    /// `items` contains every ThreadItem available from persisted app-server history for this
+    /// Turn.
+    Full,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, JsonSchema, TS)]
@@ -5948,6 +6079,14 @@ pub enum ThreadItem {
         id: String,
         status: String,
         revised_prompt: Option<String>,
+        /// Structured image content metadata. New clients should render from this field instead
+        /// of reading the legacy `result` field directly.
+        content: ImageGenerationContent,
+        /// Legacy base64-encoded image result.
+        ///
+        /// This is populated in `largeContent: "inline"` mode for compatibility. In
+        /// `largeContent: "deferred"` mode, clients should expect this to be empty and use
+        /// `content` plus `thread/item/content/read` instead.
         result: String,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         #[ts(optional)]
@@ -5962,6 +6101,36 @@ pub enum ThreadItem {
     #[serde(rename_all = "camelCase")]
     #[ts(rename_all = "camelCase")]
     ContextCompaction { id: String },
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, JsonSchema, TS)]
+#[serde(tag = "type", rename_all = "camelCase")]
+#[ts(tag = "type", export_to = "v2/")]
+pub enum ImageGenerationContent {
+    /// Image bytes are embedded directly in the item.
+    #[serde(rename_all = "camelCase")]
+    #[ts(rename_all = "camelCase")]
+    Inline {
+        data_base64: String,
+        mime_type: Option<String>,
+        #[ts(type = "number | null")]
+        byte_length: Option<i64>,
+    },
+    /// Image bytes are available through `thread/item/content/read`.
+    #[serde(rename_all = "camelCase")]
+    #[ts(rename_all = "camelCase")]
+    Deferred {
+        content_id: String,
+        mime_type: Option<String>,
+        #[ts(type = "number | null")]
+        byte_length: Option<i64>,
+        width: Option<u32>,
+        height: Option<u32>,
+    },
+    /// Image content is not available yet, or is no longer available.
+    #[serde(rename_all = "camelCase")]
+    #[ts(rename_all = "camelCase")]
+    Unavailable { reason: String },
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, JsonSchema, TS)]
@@ -6421,6 +6590,11 @@ impl From<CoreTurnItem> for ThreadItem {
                 id: image.id,
                 status: image.status,
                 revised_prompt: image.revised_prompt,
+                content: ImageGenerationContent::Inline {
+                    data_base64: image.result.clone(),
+                    mime_type: None,
+                    byte_length: None,
+                },
                 result: image.result,
                 saved_path: image.saved_path,
             },
