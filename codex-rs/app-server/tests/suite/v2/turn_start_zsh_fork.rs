@@ -20,6 +20,7 @@ use codex_app_server_protocol::CommandExecutionStatus;
 use codex_app_server_protocol::ItemCompletedNotification;
 use codex_app_server_protocol::ItemStartedNotification;
 use codex_app_server_protocol::JSONRPCResponse;
+use codex_app_server_protocol::PermissionProfileSelectionParams;
 use codex_app_server_protocol::RequestId;
 use codex_app_server_protocol::ServerRequest;
 use codex_app_server_protocol::ThreadItem;
@@ -44,6 +45,13 @@ use tokio::time::timeout;
 const DEFAULT_READ_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(15);
 #[cfg(not(windows))]
 const DEFAULT_READ_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
+
+fn select_permission_profile(id: &str) -> PermissionProfileSelectionParams {
+    PermissionProfileSelectionParams::Profile {
+        id: id.to_string(),
+        modifications: None,
+    }
+}
 
 #[tokio::test]
 async fn turn_start_shell_zsh_fork_executes_command_v2() -> Result<()> {
@@ -123,7 +131,7 @@ async fn turn_start_shell_zsh_fork_executes_command_v2() -> Result<()> {
             }],
             cwd: Some(workspace.clone()),
             approval_policy: Some(codex_app_server_protocol::AskForApproval::Never),
-            sandbox_policy: Some(codex_app_server_protocol::SandboxPolicy::DangerFullAccess),
+            permissions: Some(select_permission_profile(":danger-no-sandbox")),
             model: Some("mock-model".to_string()),
             effort: Some(codex_protocol::openai_models::ReasoningEffort::Medium),
             summary: Some(codex_protocol::config_types::ReasoningSummary::Auto),
@@ -534,12 +542,7 @@ async fn turn_start_shell_zsh_fork_subcommand_decline_marks_parent_declined_v2()
             }],
             cwd: Some(workspace.clone()),
             approval_policy: Some(codex_app_server_protocol::AskForApproval::UnlessTrusted),
-            sandbox_policy: Some(codex_app_server_protocol::SandboxPolicy::WorkspaceWrite {
-                writable_roots: vec![workspace.clone().try_into()?],
-                network_access: false,
-                exclude_tmpdir_env_var: false,
-                exclude_slash_tmp: false,
-            }),
+            permissions: Some(select_permission_profile(":workspace")),
             model: Some("mock-model".to_string()),
             effort: Some(codex_protocol::openai_models::ReasoningEffort::Medium),
             summary: Some(codex_protocol::config_types::ReasoningSummary::Auto),

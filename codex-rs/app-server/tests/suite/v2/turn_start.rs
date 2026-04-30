@@ -89,6 +89,13 @@ fn body_contains(req: &wiremock::Request, text: &str) -> bool {
         .is_some_and(|body| body.contains(text))
 }
 
+fn select_permission_profile(id: &str) -> PermissionProfileSelectionParams {
+    PermissionProfileSelectionParams::Profile {
+        id: id.to_string(),
+        modifications: None,
+    }
+}
+
 #[tokio::test]
 async fn turn_start_sends_originator_header() -> Result<()> {
     let responses = vec![create_final_assistant_message_sse_response("Done")?];
@@ -704,10 +711,7 @@ async fn turn_start_rejects_invalid_permission_selection_before_starting_turn() 
                 text: "Hello".to_string(),
                 text_elements: Vec::new(),
             }],
-            permissions: Some(PermissionProfileSelectionParams::Profile {
-                id: ":danger-no-sandbox".to_string(),
-                modifications: None,
-            }),
+            permissions: Some(select_permission_profile(":danger-no-sandbox")),
             ..Default::default()
         })
         .await?;
@@ -1574,7 +1578,7 @@ async fn turn_start_exec_approval_toggle_v2() -> Result<()> {
                 text_elements: Vec::new(),
             }],
             approval_policy: Some(codex_app_server_protocol::AskForApproval::Never),
-            sandbox_policy: Some(codex_app_server_protocol::SandboxPolicy::DangerFullAccess),
+            permissions: Some(select_permission_profile(":danger-no-sandbox")),
             model: Some("mock-model".to_string()),
             effort: Some(ReasoningEffort::Medium),
             summary: Some(ReasoningSummary::Auto),
@@ -1742,7 +1746,7 @@ async fn turn_start_exec_approval_decline_v2() -> Result<()> {
 }
 
 #[tokio::test]
-async fn turn_start_updates_sandbox_and_cwd_between_turns_v2() -> Result<()> {
+async fn turn_start_updates_permissions_and_cwd_between_turns_v2() -> Result<()> {
     skip_if_no_network!(Ok(()));
 
     let tmp = TempDir::new()?;
@@ -1796,7 +1800,7 @@ async fn turn_start_updates_sandbox_and_cwd_between_turns_v2() -> Result<()> {
     .await??;
     let ThreadStartResponse { thread, .. } = to_response::<ThreadStartResponse>(start_resp)?;
 
-    // first turn with workspace-write sandbox and first_cwd
+    // First turn uses the named workspace profile and first_cwd.
     let first_turn = mcp
         .send_turn_start_request(TurnStartParams {
             environments: None,
@@ -1809,13 +1813,8 @@ async fn turn_start_updates_sandbox_and_cwd_between_turns_v2() -> Result<()> {
             cwd: Some(first_cwd.clone()),
             approval_policy: Some(codex_app_server_protocol::AskForApproval::Never),
             approvals_reviewer: None,
-            sandbox_policy: Some(codex_app_server_protocol::SandboxPolicy::WorkspaceWrite {
-                writable_roots: vec![first_cwd.try_into()?],
-                network_access: false,
-                exclude_tmpdir_env_var: false,
-                exclude_slash_tmp: false,
-            }),
-            permissions: None,
+            sandbox_policy: None,
+            permissions: Some(select_permission_profile(":workspace")),
             model: Some("mock-model".to_string()),
             effort: Some(ReasoningEffort::Medium),
             summary: Some(ReasoningSummary::Auto),
@@ -1837,7 +1836,7 @@ async fn turn_start_updates_sandbox_and_cwd_between_turns_v2() -> Result<()> {
     .await??;
     mcp.clear_message_buffer();
 
-    // second turn with workspace-write and second_cwd, ensure exec begins in second_cwd
+    // Second turn switches profiles and cwd; ensure exec begins in second_cwd.
     let second_turn = mcp
         .send_turn_start_request(TurnStartParams {
             environments: None,
@@ -1850,8 +1849,8 @@ async fn turn_start_updates_sandbox_and_cwd_between_turns_v2() -> Result<()> {
             cwd: Some(second_cwd.clone()),
             approval_policy: Some(codex_app_server_protocol::AskForApproval::Never),
             approvals_reviewer: None,
-            sandbox_policy: Some(codex_app_server_protocol::SandboxPolicy::DangerFullAccess),
-            permissions: None,
+            sandbox_policy: None,
+            permissions: Some(select_permission_profile(":danger-no-sandbox")),
             model: Some("mock-model".to_string()),
             effort: Some(ReasoningEffort::Medium),
             summary: Some(ReasoningSummary::Auto),
@@ -3275,7 +3274,7 @@ async fn command_execution_notifications_include_process_id() -> Result<()> {
                 text: "run a command".to_string(),
                 text_elements: Vec::new(),
             }],
-            sandbox_policy: Some(codex_app_server_protocol::SandboxPolicy::DangerFullAccess),
+            permissions: Some(select_permission_profile(":danger-no-sandbox")),
             ..Default::default()
         })
         .await?;
@@ -3405,7 +3404,7 @@ async fn turn_start_with_elevated_override_does_not_persist_project_trust() -> R
         .send_turn_start_request(TurnStartParams {
             thread_id: thread.id,
             cwd: Some(workspace.path().to_path_buf()),
-            sandbox_policy: Some(codex_app_server_protocol::SandboxPolicy::DangerFullAccess),
+            permissions: Some(select_permission_profile(":danger-no-sandbox")),
             input: vec![V2UserInput::Text {
                 text: "Hello".to_string(),
                 text_elements: Vec::new(),
