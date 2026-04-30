@@ -20,8 +20,8 @@ use tracing_subscriber::layer::SubscriberExt;
 
 use codex_protocol::ThreadId;
 use codex_protocol::config_types::ReasoningSummary;
+use codex_protocol::models::PermissionProfile;
 use codex_protocol::protocol::AskForApproval;
-use codex_protocol::protocol::SandboxPolicy;
 use codex_protocol::protocol::SessionSource;
 use codex_protocol::user_input::UserInput;
 
@@ -508,7 +508,8 @@ fn otel_export_routing_policy_routes_api_request_auth_observability() {
             /*context_window*/ None,
             /*auto_compact_token_limit*/ None,
             AskForApproval::Never,
-            SandboxPolicy::DangerFullAccess,
+            &PermissionProfile::Disabled,
+            std::path::Path::new("/"),
             Vec::new(),
             /*active_profile*/ None,
         );
