@@ -42,7 +42,7 @@ use codex_app_server_protocol::CancelLoginAccountParams;
 use codex_app_server_protocol::CancelLoginAccountResponse;
 use codex_app_server_protocol::CancelLoginAccountStatus;
 use codex_app_server_protocol::ClientRequest;
-use codex_app_server_protocol::ClientResponse;
+use codex_app_server_protocol::ClientResponsePayload;
 use codex_app_server_protocol::CodexErrorInfo;
 use codex_app_server_protocol::CollaborationModeListParams;
 use codex_app_server_protocol::CollaborationModeListResponse;
@@ -76,6 +76,9 @@ use codex_app_server_protocol::GetConversationSummaryParams;
 use codex_app_server_protocol::GetConversationSummaryResponse;
 use codex_app_server_protocol::GitDiffToRemoteResponse;
 use codex_app_server_protocol::GitInfo as ApiGitInfo;
+use codex_app_server_protocol::HookMetadata;
+use codex_app_server_protocol::HooksListParams;
+use codex_app_server_protocol::HooksListResponse;
 use codex_app_server_protocol::JSONRPCErrorError;
 use codex_app_server_protocol::ListMcpServerStatusParams;
 use codex_app_server_protocol::ListMcpServerStatusResponse;
@@ -106,7 +109,8 @@ use codex_app_server_protocol::MockExperimentalMethodParams;
 use codex_app_server_protocol::MockExperimentalMethodResponse;
 use codex_app_server_protocol::ModelListParams;
 use codex_app_server_protocol::ModelListResponse;
-use codex_app_server_protocol::PermissionProfile as ApiPermissionProfile;
+use codex_app_server_protocol::PermissionProfileModificationParams;
+use codex_app_server_protocol::PermissionProfileSelectionParams;
 use codex_app_server_protocol::PluginDetail;
 use codex_app_server_protocol::PluginInstallParams;
 use codex_app_server_protocol::PluginInstallResponse;
@@ -233,6 +237,7 @@ use codex_chatgpt::connectors;
 use codex_chatgpt::workspace_settings;
 use codex_config::CloudRequirementsLoadError;
 use codex_config::CloudRequirementsLoadErrorCode;
+use codex_config::ConfigLayerStack;
 use codex_config::loader::project_trust_key;
 use codex_config::types::McpServerTransportConfig;
 use codex_core::CodexThread;
@@ -319,7 +324,6 @@ use codex_mcp::resolve_oauth_scopes;
 use codex_memories_write::clear_memory_roots_contents;
 use codex_model_provider::ProviderAccountError;
 use codex_model_provider::create_model_provider;
-use codex_models_manager::collaboration_mode_presets::CollaborationModesConfig;
 use codex_models_manager::collaboration_mode_presets::builtin_collaboration_mode_presets;
 use codex_protocol::ThreadId;
 use codex_protocol::config_types::CollaborationMode;
@@ -514,6 +518,7 @@ impl Drop for ActiveLogin {
 }
 
 /// Handles JSON-RPC messages for Codex threads (and legacy conversation APIs).
+#[derive(Clone)]
 pub(crate) struct CodexMessageProcessor {
     auth_manager: Arc<AuthManager>,
     thread_manager: Arc<ThreadManager>,
@@ -538,14 +543,6 @@ pub(crate) struct CodexMessageProcessor {
     background_tasks: TaskTracker,
     feedback: CodexFeedback,
     log_db: Option<LogDbLayer>,
-}
-
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub(crate) enum ApiVersion {
-    #[allow(dead_code)]
-    V1,
-    #[default]
-    V2,
 }
 
 #[derive(Clone)]
@@ -719,6 +716,23 @@ impl CodexMessageProcessor {
             .await
     }
 
+    /// Resolve a caller-provided cwd into the absolute cwd and matching config layers
+    /// so list-style RPCs share the same per-cwd error handling.
+    async fn resolve_cwd_config(
+        &self,
+        cwd: &Path,
+    ) -> Result<(AbsolutePathBuf, ConfigLayerStack), String> {
+        let cwd_abs =
+            AbsolutePathBuf::relative_to_current_dir(cwd).map_err(|err| err.to_string())?;
+        let config_layer_stack = self
+            .config_manager
+            .load_config_layers_for_cwd(cwd_abs.clone())
+            .await
+            .map_err(|err| err.to_string())?;
+
+        Ok((cwd_abs, config_layer_stack))
+    }
+
     pub(crate) fn handle_config_mutation(&self) {
         self.clear_plugin_related_caches();
     }
@@ -881,15 +895,13 @@ impl CodexMessageProcessor {
     fn normalize_turn_start_collaboration_mode(
         &self,
         mut collaboration_mode: CollaborationMode,
-        collaboration_modes_config: CollaborationModesConfig,
     ) -> CollaborationMode {
         if collaboration_mode.settings.developer_instructions.is_none()
-            && let Some(instructions) =
-                builtin_collaboration_mode_presets(collaboration_modes_config)
-                    .into_iter()
-                    .find(|preset| preset.mode == Some(collaboration_mode.mode))
-                    .and_then(|preset| preset.developer_instructions.flatten())
-                    .filter(|instructions| !instructions.is_empty())
+            && let Some(instructions) = builtin_collaboration_mode_presets()
+                .into_iter()
+                .find(|preset| preset.mode == Some(collaboration_mode.mode))
+                .and_then(|preset| preset.developer_instructions.flatten())
+                .filter(|instructions| !instructions.is_empty())
         {
             collaboration_mode.settings.developer_instructions = Some(instructions);
         }
@@ -1084,6 +1096,10 @@ impl CodexMessageProcessor {
             }
             ClientRequest::SkillsList { request_id, params } => {
                 self.skills_list(to_connection_request_id(request_id), params)
+                    .await;
+            }
+            ClientRequest::HooksList { request_id, params } => {
+                self.hooks_list(to_connection_request_id(request_id), params)
                     .await;
             }
             ClientRequest::MarketplaceAdd { request_id, params } => {
@@ -1338,8 +1354,11 @@ impl CodexMessageProcessor {
                 self.login_api_key_v2(request_id, LoginApiKeyParams { api_key })
                     .await;
             }
-            LoginAccountParams::Chatgpt => {
-                self.login_chatgpt_v2(request_id).await;
+            LoginAccountParams::Chatgpt {
+                codex_streamlined_login,
+            } => {
+                self.login_chatgpt_v2(request_id, codex_streamlined_login)
+                    .await;
             }
             LoginAccountParams::ChatgptDeviceCode => {
                 self.login_chatgpt_device_code_v2(request_id).await;
@@ -1441,6 +1460,7 @@ impl CodexMessageProcessor {
     // Build options for a ChatGPT login attempt; performs validation.
     async fn login_chatgpt_common(
         &self,
+        codex_streamlined_login: bool,
     ) -> std::result::Result<LoginServerOptions, JSONRPCErrorError> {
         let config = self.config.as_ref();
 
@@ -1458,6 +1478,7 @@ impl CodexMessageProcessor {
 
         let opts = LoginServerOptions {
             open_browser: false,
+            codex_streamlined_login,
             ..LoginServerOptions::new(
                 config.codex_home.to_path_buf(),
                 CLIENT_ID.to_string(),
@@ -1496,13 +1517,20 @@ impl CodexMessageProcessor {
         }
     }
 
-    async fn login_chatgpt_v2(&self, request_id: ConnectionRequestId) {
-        let result = self.login_chatgpt_response().await;
+    async fn login_chatgpt_v2(
+        &self,
+        request_id: ConnectionRequestId,
+        codex_streamlined_login: bool,
+    ) {
+        let result = self.login_chatgpt_response(codex_streamlined_login).await;
         self.outgoing.send_result(request_id, result).await;
     }
 
-    async fn login_chatgpt_response(&self) -> Result<LoginAccountResponse, JSONRPCErrorError> {
-        let opts = self.login_chatgpt_common().await?;
+    async fn login_chatgpt_response(
+        &self,
+        codex_streamlined_login: bool,
+    ) -> Result<LoginAccountResponse, JSONRPCErrorError> {
+        let opts = self.login_chatgpt_common(codex_streamlined_login).await?;
         let server = run_login_server(opts)
             .map_err(|err| internal_error(format!("failed to start login server: {err}")))?;
         let login_id = Uuid::new_v4();
@@ -1573,7 +1601,9 @@ impl CodexMessageProcessor {
     async fn login_chatgpt_device_code_response(
         &self,
     ) -> Result<LoginAccountResponse, JSONRPCErrorError> {
-        let opts = self.login_chatgpt_common().await?;
+        let opts = self
+            .login_chatgpt_common(/*codex_streamlined_login*/ false)
+            .await?;
         let device_code = request_device_code(&opts)
             .await
             .map_err(Self::login_chatgpt_device_code_start_error)?;
@@ -2118,7 +2148,7 @@ impl CodexMessageProcessor {
         let result = self
             .exec_one_off_command_inner(request_id.clone(), params)
             .await
-            .map(|()| None::<serde_json::Value>);
+            .map(|()| None::<ClientResponsePayload>);
         self.send_optional_result(request_id, result).await;
     }
 
@@ -2409,7 +2439,7 @@ impl CodexMessageProcessor {
             approval_policy,
             approvals_reviewer,
             sandbox,
-            permission_profile,
+            permissions,
             config,
             service_name,
             base_instructions,
@@ -2423,11 +2453,11 @@ impl CodexMessageProcessor {
             environments,
             persist_extended_history,
         } = params;
-        if sandbox.is_some() && permission_profile.is_some() {
+        if sandbox.is_some() && permissions.is_some() {
             self.outgoing
                 .send_error(
                     request_id,
-                    invalid_request("`permissionProfile` cannot be combined with `sandbox`"),
+                    invalid_request("`permissions` cannot be combined with `sandbox`"),
                 )
                 .await;
             return;
@@ -2462,7 +2492,7 @@ impl CodexMessageProcessor {
             approval_policy,
             approvals_reviewer,
             sandbox,
-            permission_profile,
+            permissions,
             base_instructions,
             developer_instructions,
             personality,
@@ -2521,7 +2551,7 @@ impl CodexMessageProcessor {
             /*approval_policy*/ None,
             /*approvals_reviewer*/ None,
             /*sandbox*/ None,
-            /*permission_profile*/ None,
+            /*permissions*/ None,
             /*base_instructions*/ None,
             /*developer_instructions*/ None,
             /*personality*/ None,
@@ -2795,7 +2825,6 @@ impl CodexMessageProcessor {
                     thread_id,
                     request_id.connection_id,
                     experimental_raw_events,
-                    ApiVersion::V2,
                 )
                 .instrument(tracing::info_span!(
                     "app_server.thread_start.attach_listener",
@@ -2833,8 +2862,9 @@ impl CodexMessageProcessor {
                 &config_snapshot.permission_profile,
                 config_snapshot.cwd.as_path(),
             );
-            let permission_profile =
-                thread_response_permission_profile(config_snapshot.permission_profile);
+            let active_permission_profile = thread_response_active_permission_profile(
+                config_snapshot.active_permission_profile,
+            );
 
             let response = ThreadStartResponse {
                 thread: thread.clone(),
@@ -2846,7 +2876,8 @@ impl CodexMessageProcessor {
                 approval_policy: config_snapshot.approval_policy.into(),
                 approvals_reviewer: config_snapshot.approvals_reviewer.into(),
                 sandbox,
-                permission_profile,
+                permission_profile: Some(config_snapshot.permission_profile.into()),
+                active_permission_profile,
                 reasoning_effort: config_snapshot.reasoning_effort,
             };
             Ok::<_, JSONRPCErrorError>((response, thread_started_notification(thread)))
@@ -2855,16 +2886,6 @@ impl CodexMessageProcessor {
 
         match result {
             Ok((response, notif)) => {
-                listener_task_context
-                    .analytics_events_client
-                    .track_response(
-                        request_id.connection_id.0,
-                        ClientResponse::ThreadStart {
-                            request_id: request_id.request_id.clone(),
-                            response: response.clone(),
-                        },
-                    );
-
                 listener_task_context
                     .outgoing
                     .send_response(request_id, response)
@@ -2902,12 +2923,12 @@ impl CodexMessageProcessor {
         approval_policy: Option<codex_app_server_protocol::AskForApproval>,
         approvals_reviewer: Option<codex_app_server_protocol::ApprovalsReviewer>,
         sandbox: Option<SandboxMode>,
-        permission_profile: Option<ApiPermissionProfile>,
+        permissions: Option<PermissionProfileSelectionParams>,
         base_instructions: Option<String>,
         developer_instructions: Option<String>,
         personality: Option<Personality>,
     ) -> ConfigOverrides {
-        ConfigOverrides {
+        let mut overrides = ConfigOverrides {
             model,
             model_provider,
             service_tier,
@@ -2917,14 +2938,15 @@ impl CodexMessageProcessor {
             approvals_reviewer: approvals_reviewer
                 .map(codex_app_server_protocol::ApprovalsReviewer::to_core),
             sandbox_mode: sandbox.map(SandboxMode::to_core),
-            permission_profile: permission_profile.map(Into::into),
             codex_linux_sandbox_exe: self.arg0_paths.codex_linux_sandbox_exe.clone(),
             main_execve_wrapper_exe: self.arg0_paths.main_execve_wrapper_exe.clone(),
             base_instructions,
             developer_instructions,
             personality,
             ..Default::default()
-        }
+        };
+        apply_permission_profile_selection_to_config_overrides(&mut overrides, permissions);
+        overrides
     }
 
     async fn thread_archive(&self, request_id: ConnectionRequestId, params: ThreadArchiveParams) {
@@ -3544,7 +3566,7 @@ impl CodexMessageProcessor {
         let result = self
             .thread_rollback_start(&request_id, params)
             .await
-            .map(|()| None::<serde_json::Value>);
+            .map(|()| None::<ClientResponsePayload>);
         self.send_optional_result(request_id, result).await;
     }
 
@@ -4177,7 +4199,6 @@ impl CodexMessageProcessor {
                     thread_id,
                     connection_id,
                     /*raw_events_enabled*/ false,
-                    ApiVersion::V2,
                 )
                 .await,
                 thread_id,
@@ -4206,11 +4227,11 @@ impl CodexMessageProcessor {
             return;
         }
 
-        if params.sandbox.is_some() && params.permission_profile.is_some() {
+        if params.sandbox.is_some() && params.permissions.is_some() {
             self.outgoing
                 .send_error(
                     request_id,
-                    invalid_request("`permissionProfile` cannot be combined with `sandbox`"),
+                    invalid_request("`permissions` cannot be combined with `sandbox`"),
                 )
                 .await;
             return;
@@ -4243,7 +4264,7 @@ impl CodexMessageProcessor {
             approval_policy,
             approvals_reviewer,
             sandbox,
-            permission_profile,
+            permissions,
             config: mut request_overrides,
             base_instructions,
             developer_instructions,
@@ -4278,7 +4299,7 @@ impl CodexMessageProcessor {
             approval_policy,
             approvals_reviewer,
             sandbox,
-            permission_profile,
+            permissions,
             base_instructions,
             developer_instructions,
             personality,
@@ -4338,7 +4359,6 @@ impl CodexMessageProcessor {
                         thread_id,
                         request_id.connection_id,
                         /*raw_events_enabled*/ false,
-                        ApiVersion::V2,
                     )
                     .await,
                     thread_id,
@@ -4385,8 +4405,9 @@ impl CodexMessageProcessor {
                     &config_snapshot.permission_profile,
                     config_snapshot.cwd.as_path(),
                 );
-                let permission_profile =
-                    thread_response_permission_profile(config_snapshot.permission_profile.clone());
+                let active_permission_profile = thread_response_active_permission_profile(
+                    config_snapshot.active_permission_profile,
+                );
 
                 let response = ThreadResumeResponse {
                     thread,
@@ -4398,16 +4419,10 @@ impl CodexMessageProcessor {
                     approval_policy: session_configured.approval_policy.into(),
                     approvals_reviewer: session_configured.approvals_reviewer.into(),
                     sandbox,
-                    permission_profile,
+                    permission_profile: Some(config_snapshot.permission_profile.into()),
+                    active_permission_profile,
                     reasoning_effort: session_configured.reasoning_effort,
                 };
-                self.analytics_events_client.track_response(
-                    request_id.connection_id.0,
-                    ClientResponse::ThreadResume {
-                        request_id: request_id.request_id.clone(),
-                        response: response.clone(),
-                    },
-                );
 
                 let connection_id = request_id.connection_id;
                 let token_usage_thread = include_turns.then(|| response.thread.clone());
@@ -4524,7 +4539,6 @@ impl CodexMessageProcessor {
                 existing_thread_id,
                 existing_thread.clone(),
                 thread_state.clone(),
-                ApiVersion::V2,
             )
             .await?;
 
@@ -4805,7 +4819,7 @@ impl CodexMessageProcessor {
             approval_policy,
             approvals_reviewer,
             sandbox,
-            permission_profile,
+            permissions,
             config: cli_overrides,
             base_instructions,
             developer_instructions,
@@ -4815,9 +4829,9 @@ impl CodexMessageProcessor {
         } = params;
         let include_turns = !exclude_turns;
         let result = async {
-            if sandbox.is_some() && permission_profile.is_some() {
+            if sandbox.is_some() && permissions.is_some() {
                 return Err(invalid_request(
-                    "`permissionProfile` cannot be combined with `sandbox`",
+                    "`permissions` cannot be combined with `sandbox`",
                 ));
             }
 
@@ -4870,7 +4884,7 @@ impl CodexMessageProcessor {
                 approval_policy,
                 approvals_reviewer,
                 sandbox,
-                permission_profile,
+                permissions,
                 base_instructions,
                 developer_instructions,
                 /*personality*/ None,
@@ -4921,7 +4935,6 @@ impl CodexMessageProcessor {
                     thread_id,
                     request_id.connection_id,
                     /*raw_events_enabled*/ false,
-                    ApiVersion::V2,
                 )
                 .await,
                 thread_id,
@@ -4986,8 +4999,9 @@ impl CodexMessageProcessor {
                 &config_snapshot.permission_profile,
                 config_snapshot.cwd.as_path(),
             );
-            let permission_profile =
-                thread_response_permission_profile(config_snapshot.permission_profile);
+            let active_permission_profile = thread_response_active_permission_profile(
+                config_snapshot.active_permission_profile,
+            );
 
             let response = ThreadForkResponse {
                 thread: thread.clone(),
@@ -4999,7 +5013,8 @@ impl CodexMessageProcessor {
                 approval_policy: session_configured.approval_policy.into(),
                 approvals_reviewer: session_configured.approvals_reviewer.into(),
                 sandbox,
-                permission_profile,
+                permission_profile: Some(config_snapshot.permission_profile.into()),
+                active_permission_profile,
                 reasoning_effort: session_configured.reasoning_effort,
             };
 
@@ -5020,14 +5035,6 @@ impl CodexMessageProcessor {
                 return;
             }
         };
-        self.analytics_events_client.track_response(
-            request_id.connection_id.0,
-            ClientResponse::ThreadFork {
-                request_id: request_id.request_id.clone(),
-                response: response.clone(),
-            },
-        );
-
         let connection_id = request_id.connection_id;
         let token_usage_thread = include_turns.then(|| response.thread.clone());
         self.outgoing.send_response(request_id, response).await;
@@ -5811,7 +5818,7 @@ impl CodexMessageProcessor {
         request_id: ConnectionRequestId,
         result: Result<Option<T>, JSONRPCErrorError>,
     ) where
-        T: serde::Serialize,
+        T: Into<ClientResponsePayload>,
     {
         match result {
             Ok(Some(response)) => self.outgoing.send_response(request_id, response).await,
@@ -6259,43 +6266,24 @@ impl CodexMessageProcessor {
             .map(|environment| environment.get_filesystem());
         let mut data = Vec::new();
         for cwd in cwds {
+            let (cwd_abs, config_layer_stack) = match self.resolve_cwd_config(&cwd).await {
+                Ok(resolved) => resolved,
+                Err(message) => {
+                    let error_path = cwd.clone();
+                    data.push(codex_app_server_protocol::SkillsListEntry {
+                        cwd,
+                        skills: Vec::new(),
+                        errors: vec![codex_app_server_protocol::SkillErrorInfo {
+                            path: error_path,
+                            message,
+                        }],
+                    });
+                    continue;
+                }
+            };
             let extra_roots = extra_roots_by_cwd
                 .get(&cwd)
                 .map_or(&[][..], std::vec::Vec::as_slice);
-            let cwd_abs = match AbsolutePathBuf::relative_to_current_dir(cwd.as_path()) {
-                Ok(path) => path,
-                Err(err) => {
-                    let error_path = cwd.clone();
-                    data.push(codex_app_server_protocol::SkillsListEntry {
-                        cwd,
-                        skills: Vec::new(),
-                        errors: vec![codex_app_server_protocol::SkillErrorInfo {
-                            path: error_path,
-                            message: err.to_string(),
-                        }],
-                    });
-                    continue;
-                }
-            };
-            let config_layer_stack = match self
-                .config_manager
-                .load_config_layers_for_cwd(cwd_abs.clone())
-                .await
-            {
-                Ok(config_layer_stack) => config_layer_stack,
-                Err(err) => {
-                    let error_path = cwd.clone();
-                    data.push(codex_app_server_protocol::SkillsListEntry {
-                        cwd,
-                        skills: Vec::new(),
-                        errors: vec![codex_app_server_protocol::SkillErrorInfo {
-                            path: error_path,
-                            message: err.to_string(),
-                        }],
-                    });
-                    continue;
-                }
-            };
             let effective_skill_roots = if workspace_codex_plugins_enabled {
                 plugins_manager
                     .effective_skill_roots_for_layer_stack(&config_layer_stack, &config)
@@ -6327,6 +6315,86 @@ impl CodexMessageProcessor {
         }
         Ok(SkillsListResponse { data })
     }
+
+    async fn hooks_list(&self, request_id: ConnectionRequestId, params: HooksListParams) {
+        let result = self.hooks_list_response(params).await;
+        self.outgoing.send_result(request_id, result).await;
+    }
+
+    /// Handle `hooks/list` by resolving hooks for each requested cwd.
+    async fn hooks_list_response(
+        &self,
+        params: HooksListParams,
+    ) -> Result<HooksListResponse, JSONRPCErrorError> {
+        let HooksListParams { cwds } = params;
+        let cwds = if cwds.is_empty() {
+            vec![self.config.cwd.to_path_buf()]
+        } else {
+            cwds
+        };
+
+        let auth = self.auth_manager.auth().await;
+        let plugins_manager = self.thread_manager.plugins_manager();
+        let mut data = Vec::new();
+        for cwd in cwds {
+            let config = match self
+                .config_manager
+                .load_for_cwd(
+                    /*request_overrides*/ None,
+                    ConfigOverrides::default(),
+                    Some(cwd.clone()),
+                )
+                .await
+            {
+                Ok(config) => config,
+                Err(err) => {
+                    let error_path = cwd.clone();
+                    data.push(codex_app_server_protocol::HooksListEntry {
+                        cwd,
+                        hooks: Vec::new(),
+                        warnings: Vec::new(),
+                        errors: vec![codex_app_server_protocol::HookErrorInfo {
+                            path: error_path,
+                            message: err.to_string(),
+                        }],
+                    });
+                    continue;
+                }
+            };
+            let workspace_codex_plugins_enabled = self
+                .workspace_codex_plugins_enabled(&config, auth.as_ref())
+                .await;
+            let plugins_enabled =
+                config.features.enabled(Feature::Plugins) && workspace_codex_plugins_enabled;
+            let plugin_outcome = if plugins_enabled && config.features.enabled(Feature::PluginHooks)
+            {
+                plugins_manager
+                    .plugins_for_layer_stack(
+                        &config.config_layer_stack,
+                        &config,
+                        /*plugin_hooks_feature_enabled*/ true,
+                    )
+                    .await
+            } else {
+                codex_core::plugins::PluginLoadOutcome::default()
+            };
+            let hooks = codex_hooks::list_hooks(codex_hooks::HooksConfig {
+                feature_enabled: config.features.enabled(Feature::CodexHooks),
+                config_layer_stack: Some(config.config_layer_stack),
+                plugin_hook_sources: plugin_outcome.effective_plugin_hook_sources(),
+                plugin_hook_load_warnings: plugin_outcome.effective_plugin_hook_warnings(),
+                ..Default::default()
+            });
+            data.push(codex_app_server_protocol::HooksListEntry {
+                cwd,
+                hooks: hooks_to_info(&hooks.hooks),
+                warnings: hooks.warnings,
+                errors: Vec::new(),
+            });
+        }
+        Ok(HooksListResponse { data })
+    }
+
     async fn marketplace_remove(
         &self,
         request_id: ConnectionRequestId,
@@ -6490,13 +6558,9 @@ impl CodexMessageProcessor {
                 self.track_error_response(&request_id, error, /*error_type*/ None);
             })?;
 
-            let collaboration_modes_config = CollaborationModesConfig {
-                default_mode_request_user_input: thread
-                    .enabled(Feature::DefaultModeRequestUserInput),
-            };
-            let collaboration_mode = params.collaboration_mode.map(|mode| {
-                self.normalize_turn_start_collaboration_mode(mode, collaboration_modes_config)
-            });
+            let collaboration_mode = params
+                .collaboration_mode
+                .map(|mode| self.normalize_turn_start_collaboration_mode(mode));
             let environments: Option<Vec<TurnEnvironmentSelection>> =
                 params.environments.map(|environments| {
                     environments
@@ -6525,7 +6589,7 @@ impl CodexMessageProcessor {
                 || params.approval_policy.is_some()
                 || params.approvals_reviewer.is_some()
                 || params.sandbox_policy.is_some()
-                || params.permission_profile.is_some()
+                || params.permissions.is_some()
                 || params.model.is_some()
                 || params.service_tier.is_some()
                 || params.effort.is_some()
@@ -6533,9 +6597,9 @@ impl CodexMessageProcessor {
                 || collaboration_mode.is_some()
                 || params.personality.is_some();
 
-            if params.sandbox_policy.is_some() && params.permission_profile.is_some() {
+            if params.sandbox_policy.is_some() && params.permissions.is_some() {
                 return Err(invalid_request(
-                    "`permissionProfile` cannot be combined with `sandboxPolicy`",
+                    "`permissions` cannot be combined with `sandboxPolicy`",
                 ));
             }
 
@@ -6545,7 +6609,45 @@ impl CodexMessageProcessor {
                 .approvals_reviewer
                 .map(codex_app_server_protocol::ApprovalsReviewer::to_core);
             let sandbox_policy = params.sandbox_policy.map(|p| p.to_core());
-            let permission_profile = params.permission_profile.map(Into::into);
+            let (permission_profile, active_permission_profile) =
+                if let Some(permissions) = params.permissions {
+                    let snapshot = thread.config_snapshot().await;
+                    let mut overrides = ConfigOverrides {
+                        cwd: cwd.clone(),
+                        codex_linux_sandbox_exe: self.arg0_paths.codex_linux_sandbox_exe.clone(),
+                        main_execve_wrapper_exe: self.arg0_paths.main_execve_wrapper_exe.clone(),
+                        ..Default::default()
+                    };
+                    apply_permission_profile_selection_to_config_overrides(
+                        &mut overrides,
+                        Some(permissions),
+                    );
+                    let config = self
+                        .config_manager
+                        .load_for_cwd(
+                            /*request_overrides*/ None,
+                            overrides,
+                            Some(snapshot.cwd.to_path_buf()),
+                        )
+                        .await
+                        .map_err(|err| config_load_error(&err))?;
+                    // Startup config is allowed to fall back when requirements
+                    // disallow a configured profile. An explicit turn request
+                    // is different: reject it before accepting user input.
+                    if let Some(warning) = config.startup_warnings.iter().find(|warning| {
+                        warning.contains("Configured value for `permission_profile` is disallowed")
+                    }) {
+                        return Err(invalid_request(format!(
+                            "invalid turn context override: {warning}"
+                        )));
+                    }
+                    (
+                        Some(config.permissions.permission_profile()),
+                        config.permissions.active_permission_profile(),
+                    )
+                } else {
+                    (None, None)
+                };
             let model = params.model;
             let effort = params.effort.map(Some);
             let summary = params.summary;
@@ -6563,6 +6665,7 @@ impl CodexMessageProcessor {
                         approvals_reviewer,
                         sandbox_policy: sandbox_policy.clone(),
                         permission_profile: permission_profile.clone(),
+                        active_permission_profile: active_permission_profile.clone(),
                         windows_sandbox_level: None,
                         model: model.clone(),
                         effort,
@@ -6589,6 +6692,7 @@ impl CodexMessageProcessor {
                     approvals_reviewer,
                     sandbox_policy,
                     permission_profile,
+                    active_permission_profile,
                     windows_sandbox_level: None,
                     model,
                     effort,
@@ -6645,13 +6749,6 @@ impl CodexMessageProcessor {
 
         match result {
             Ok(response) => {
-                self.analytics_events_client.track_response(
-                    request_id.connection_id.0,
-                    ClientResponse::TurnStart {
-                        request_id: request_id.request_id.clone(),
-                        response: response.clone(),
-                    },
-                );
                 self.outgoing.send_response(request_id, response).await;
             }
             Err(error) => {
@@ -6822,13 +6919,6 @@ impl CodexMessageProcessor {
 
         match result {
             Ok(response) => {
-                self.analytics_events_client.track_response(
-                    request_id.connection_id.0,
-                    ClientResponse::TurnSteer {
-                        request_id: request_id.request_id.clone(),
-                        response: response.clone(),
-                    },
-                );
                 self.outgoing.send_response(request_id, response).await;
             }
             Err(error) => {
@@ -6849,7 +6939,6 @@ impl CodexMessageProcessor {
                 thread_id,
                 request_id.connection_id,
                 /*raw_events_enabled*/ false,
-                ApiVersion::V2,
             )
             .await
         {
@@ -7135,7 +7224,6 @@ impl CodexMessageProcessor {
                 thread_id,
                 request_id.connection_id,
                 /*raw_events_enabled*/ false,
-                ApiVersion::V2,
             )
             .await,
             thread_id,
@@ -7262,9 +7350,7 @@ impl CodexMessageProcessor {
                     {
                         return Err(invalid_request("no active turn to interrupt"));
                     }
-                    thread_state
-                        .pending_interrupts
-                        .push((request_id.clone(), ApiVersion::V2));
+                    thread_state.pending_interrupts.push(request_id.clone());
                 }
 
                 self.outgoing
@@ -7287,7 +7373,7 @@ impl CodexMessageProcessor {
                         let mut thread_state = thread_state.lock().await;
                         thread_state
                             .pending_interrupts
-                            .retain(|(pending_request_id, _)| pending_request_id != &request_id);
+                            .retain(|pending_request_id| pending_request_id != &request_id);
                     }
                     let interrupt_target = if is_startup_interrupt {
                         "startup"
@@ -7309,7 +7395,6 @@ impl CodexMessageProcessor {
         conversation_id: ThreadId,
         connection_id: ConnectionId,
         raw_events_enabled: bool,
-        api_version: ApiVersion,
     ) -> Result<EnsureConversationListenerResult, JSONRPCErrorError> {
         Self::ensure_conversation_listener_task(
             ListenerTaskContext {
@@ -7326,7 +7411,6 @@ impl CodexMessageProcessor {
             conversation_id,
             connection_id,
             raw_events_enabled,
-            api_version,
         )
         .await
     }
@@ -7340,7 +7424,6 @@ impl CodexMessageProcessor {
         conversation_id: ThreadId,
         connection_id: ConnectionId,
         raw_events_enabled: bool,
-        api_version: ApiVersion,
     ) -> Result<EnsureConversationListenerResult, JSONRPCErrorError> {
         let conversation = match listener_task_context
             .thread_manager
@@ -7385,7 +7468,6 @@ impl CodexMessageProcessor {
             conversation_id,
             conversation,
             thread_state,
-            api_version,
         )
         .await
         {
@@ -7427,7 +7509,6 @@ impl CodexMessageProcessor {
         conversation_id: ThreadId,
         conversation: Arc<CodexThread>,
         thread_state: Arc<Mutex<ThreadState>>,
-        api_version: ApiVersion,
     ) -> Result<(), JSONRPCErrorError> {
         Self::ensure_listener_task_running_task(
             ListenerTaskContext {
@@ -7444,7 +7525,6 @@ impl CodexMessageProcessor {
             conversation_id,
             conversation,
             thread_state,
-            api_version,
         )
         .await
     }
@@ -7454,7 +7534,6 @@ impl CodexMessageProcessor {
         conversation_id: ThreadId,
         conversation: Arc<CodexThread>,
         thread_state: Arc<Mutex<ThreadState>>,
-        api_version: ApiVersion,
     ) -> Result<(), JSONRPCErrorError> {
         let (cancel_tx, mut cancel_rx) = oneshot::channel();
         let Some(mut unloading_state) = UnloadingState::new(
@@ -7546,7 +7625,6 @@ impl CodexMessageProcessor {
                             && !raw_events_enabled
                         {
                             maybe_emit_hook_prompt_item_completed(
-                                api_version,
                                 conversation_id,
                                 &event.id,
                                 &raw_response_item_event.item,
@@ -7566,7 +7644,6 @@ impl CodexMessageProcessor {
                             thread_state.clone(),
                             thread_watch_manager.clone(),
                             thread_list_state_permit.clone(),
-                            api_version,
                             fallback_model_provider.clone(),
                             codex_home.as_path(),
                         )
@@ -8285,13 +8362,15 @@ async fn handle_pending_thread_resume_request(
         approval_policy,
         approvals_reviewer,
         permission_profile,
+        active_permission_profile,
         cwd,
         reasoning_effort,
         ..
     } = pending.config_snapshot;
     let instruction_sources = pending.instruction_sources;
     let sandbox = thread_response_sandbox_policy(&permission_profile, cwd.as_path());
-    let permission_profile = thread_response_permission_profile(permission_profile);
+    let active_permission_profile =
+        thread_response_active_permission_profile(active_permission_profile);
 
     let response = ThreadResumeResponse {
         thread,
@@ -8303,7 +8382,8 @@ async fn handle_pending_thread_resume_request(
         approval_policy: approval_policy.into(),
         approvals_reviewer: approvals_reviewer.into(),
         sandbox,
-        permission_profile,
+        permission_profile: Some(permission_profile.into()),
+        active_permission_profile,
         reasoning_effort,
     };
     let token_usage_thread = pending.include_turns.then(|| response.thread.clone());
@@ -8530,15 +8610,11 @@ fn collect_resume_override_mismatches(
             ));
         }
     }
-    if let Some(requested_permission_profile) = request.permission_profile.as_ref() {
-        let requested_permission_profile =
-            codex_protocol::models::PermissionProfile::from(requested_permission_profile.clone());
-        if requested_permission_profile != config_snapshot.permission_profile {
-            mismatch_details.push(format!(
-                "permission_profile requested={requested_permission_profile:?} active={:?}",
-                config_snapshot.permission_profile
-            ));
-        }
+    if request.permissions.is_some() {
+        mismatch_details.push(format!(
+            "permissions override was provided and ignored while running; active={:?}",
+            config_snapshot.active_permission_profile
+        ));
     }
     if let Some(requested_personality) = request.personality.as_ref()
         && config_snapshot.personality.as_ref() != Some(requested_personality)
@@ -8644,6 +8720,24 @@ fn skills_to_info(
                 scope: skill.scope.into(),
                 enabled,
             }
+        })
+        .collect()
+}
+
+fn hooks_to_info(hooks: &[codex_hooks::HookListEntry]) -> Vec<HookMetadata> {
+    hooks
+        .iter()
+        .map(|hook| HookMetadata {
+            event_name: hook.event_name.into(),
+            handler_type: hook.handler_type.into(),
+            matcher: hook.matcher.clone(),
+            command: hook.command.clone(),
+            timeout_sec: hook.timeout_sec,
+            status_message: hook.status_message.clone(),
+            source_path: hook.source_path.clone(),
+            source: hook.source.into(),
+            plugin_id: hook.plugin_id.clone(),
+            display_order: hook.display_order,
         })
         .collect()
 }
@@ -9427,10 +9521,29 @@ fn with_thread_spawn_agent_metadata(
     }
 }
 
-fn thread_response_permission_profile(
-    permission_profile: codex_protocol::models::PermissionProfile,
-) -> Option<codex_app_server_protocol::PermissionProfile> {
-    Some(permission_profile.into())
+fn thread_response_active_permission_profile(
+    active_permission_profile: Option<codex_protocol::models::ActivePermissionProfile>,
+) -> Option<codex_app_server_protocol::ActivePermissionProfile> {
+    active_permission_profile.map(Into::into)
+}
+
+fn apply_permission_profile_selection_to_config_overrides(
+    overrides: &mut ConfigOverrides,
+    permissions: Option<PermissionProfileSelectionParams>,
+) {
+    let Some(PermissionProfileSelectionParams::Profile { id, modifications }) = permissions else {
+        return;
+    };
+    overrides.default_permissions = Some(id);
+    overrides
+        .additional_writable_roots
+        .extend(modifications.unwrap_or_default().into_iter().map(
+            |modification| match modification {
+                PermissionProfileModificationParams::AdditionalWritableRoot { path } => {
+                    path.to_path_buf()
+                }
+            },
+        ));
 }
 
 fn thread_response_sandbox_policy(
@@ -9454,6 +9567,13 @@ fn requested_permissions_trust_project(overrides: &ConfigOverrides, cwd: &Path) 
             codex_protocol::config_types::SandboxMode::WorkspaceWrite
                 | codex_protocol::config_types::SandboxMode::DangerFullAccess
         )
+    ) {
+        return true;
+    }
+
+    if matches!(
+        overrides.default_permissions.as_deref(),
+        Some(":workspace" | ":danger-no-sandbox")
     ) {
         return true;
     }
@@ -9975,23 +10095,6 @@ mod tests {
     }
 
     #[test]
-    fn thread_response_permission_profile_preserves_enforcement() {
-        let full_access_profile = codex_protocol::models::PermissionProfile::Disabled;
-        let external_profile = codex_protocol::models::PermissionProfile::External {
-            network: codex_protocol::permissions::NetworkSandboxPolicy::Restricted,
-        };
-
-        assert_eq!(
-            thread_response_permission_profile(external_profile.clone()),
-            Some(external_profile.into())
-        );
-        assert_eq!(
-            thread_response_permission_profile(full_access_profile.clone()),
-            Some(full_access_profile.into())
-        );
-    }
-
-    #[test]
     fn requested_permissions_trust_project_uses_permission_profile_intent() {
         let cwd = test_path_buf("/tmp/project").abs();
         let full_access_profile = codex_protocol::models::PermissionProfile::Disabled;
@@ -10035,9 +10138,30 @@ mod tests {
             },
             cwd.as_path()
         ));
+        assert!(requested_permissions_trust_project(
+            &ConfigOverrides {
+                default_permissions: Some(":workspace".to_string()),
+                ..Default::default()
+            },
+            cwd.as_path()
+        ));
+        assert!(requested_permissions_trust_project(
+            &ConfigOverrides {
+                default_permissions: Some(":danger-no-sandbox".to_string()),
+                ..Default::default()
+            },
+            cwd.as_path()
+        ));
         assert!(!requested_permissions_trust_project(
             &ConfigOverrides {
                 permission_profile: Some(read_only_profile),
+                ..Default::default()
+            },
+            cwd.as_path()
+        ));
+        assert!(!requested_permissions_trust_project(
+            &ConfigOverrides {
+                default_permissions: Some(":read-only".to_string()),
                 ..Default::default()
             },
             cwd.as_path()
@@ -10212,7 +10336,7 @@ mod tests {
             approval_policy: None,
             approvals_reviewer: None,
             sandbox: None,
-            permission_profile: None,
+            permissions: None,
             config: None,
             base_instructions: None,
             developer_instructions: None,
@@ -10227,6 +10351,7 @@ mod tests {
             approval_policy: codex_protocol::protocol::AskForApproval::OnRequest,
             approvals_reviewer: codex_protocol::config_types::ApprovalsReviewer::User,
             permission_profile: codex_protocol::models::PermissionProfile::Disabled,
+            active_permission_profile: None,
             cwd,
             ephemeral: false,
             reasoning_effort: None,
