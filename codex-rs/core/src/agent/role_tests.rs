@@ -512,7 +512,8 @@ model_reasoning_effort = "high"
 #[tokio::test]
 #[cfg(not(windows))]
 async fn apply_role_does_not_materialize_default_sandbox_workspace_write_fields() {
-    use codex_protocol::protocol::SandboxPolicy;
+    use codex_protocol::permissions::NetworkSandboxPolicy;
+
     let (home, mut config) = test_config_with_cli_overrides(vec![
         (
             "sandbox_mode".to_string(),
@@ -574,12 +575,13 @@ writable_roots = ["./sandbox-root"]
         false
     );
 
-    match &config.legacy_sandbox_policy() {
-        SandboxPolicy::WorkspaceWrite { network_access, .. } => {
-            assert_eq!(*network_access, true);
-        }
-        other => panic!("expected workspace-write sandbox policy, got {other:?}"),
-    }
+    assert_eq!(
+        config
+            .permissions
+            .permission_profile()
+            .network_sandbox_policy(),
+        NetworkSandboxPolicy::Enabled,
+    );
 }
 
 #[tokio::test]
