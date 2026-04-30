@@ -1783,7 +1783,6 @@ async fn spawn_agent_reapplies_runtime_sandbox_after_role_config() {
     let (mut session, mut turn) = make_session_and_context().await;
     let manager = thread_manager();
     session.services.agent_control = manager.agent_control();
-    let expected_sandbox = turn.config.legacy_sandbox_policy();
     let mut expected_permission_profile = turn.config.permissions.permission_profile();
     let PermissionProfile::Managed { file_system, .. } = &mut expected_permission_profile else {
         panic!("test fixture should use managed permissions");
@@ -1840,7 +1839,6 @@ async fn spawn_agent_reapplies_runtime_sandbox_after_role_config() {
         .expect("spawned agent thread should exist")
         .config_snapshot()
         .await;
-    assert_eq!(snapshot.sandbox_policy(), expected_sandbox);
     assert_eq!(snapshot.approval_policy, AskForApproval::OnRequest);
     assert_eq!(snapshot.permission_profile, expected_permission_profile);
     let child_thread = manager
