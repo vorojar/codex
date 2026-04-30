@@ -3174,10 +3174,10 @@ async fn profile_sandbox_mode_overrides_base() -> std::io::Result<()> {
     )
     .await?;
 
-    assert!(matches!(
-        &config.legacy_sandbox_policy(),
-        &SandboxPolicy::DangerFullAccess
-    ));
+    assert_eq!(
+        config.permissions.permission_profile(),
+        PermissionProfile::Disabled
+    );
 
     Ok(())
 }
@@ -3208,15 +3208,22 @@ async fn cli_override_takes_precedence_over_profile_sandbox_mode() -> std::io::R
         Config::load_from_base_config_with_overrides(cfg, overrides, codex_home.abs()).await?;
 
     if cfg!(target_os = "windows") {
-        assert!(matches!(
-            &config.legacy_sandbox_policy(),
-            SandboxPolicy::ReadOnly { .. }
-        ));
+        assert_eq!(
+            config.permissions.permission_profile(),
+            PermissionProfile::read_only()
+        );
     } else {
-        assert!(matches!(
-            &config.legacy_sandbox_policy(),
-            SandboxPolicy::WorkspaceWrite { .. }
-        ));
+        assert!(
+            config
+                .permissions
+                .file_system_sandbox_policy()
+                .can_write_path_with_cwd(config.cwd.as_path(), config.cwd.as_path()),
+            "Expected workspace-write permissions"
+        );
+        assert_eq!(
+            config.permissions.network_sandbox_policy(),
+            NetworkSandboxPolicy::Restricted
+        );
     }
 
     Ok(())
@@ -7500,20 +7507,22 @@ async fn test_untrusted_project_gets_unless_trusted_approval_policy() -> anyhow:
 
     // Verify that untrusted projects still get WorkspaceWrite sandbox (or ReadOnly on Windows)
     if cfg!(target_os = "windows") {
-        assert!(
-            matches!(
-                &config.legacy_sandbox_policy(),
-                SandboxPolicy::ReadOnly { .. }
-            ),
-            "Expected ReadOnly on Windows"
+        assert_eq!(
+            config.permissions.permission_profile(),
+            PermissionProfile::read_only(),
+            "Expected ReadOnly permissions on Windows"
         );
     } else {
         assert!(
-            matches!(
-                &config.legacy_sandbox_policy(),
-                SandboxPolicy::WorkspaceWrite { .. }
-            ),
-            "Expected WorkspaceWrite sandbox for untrusted project"
+            config
+                .permissions
+                .file_system_sandbox_policy()
+                .can_write_path_with_cwd(config.cwd.as_path(), config.cwd.as_path()),
+            "Expected workspace permissions for untrusted project"
+        );
+        assert_eq!(
+            config.permissions.network_sandbox_policy(),
+            NetworkSandboxPolicy::Restricted
         );
     }
 
@@ -7536,8 +7545,8 @@ async fn requirements_disallowing_default_sandbox_falls_back_to_required_default
         .build()
         .await?;
     assert_eq!(
-        config.legacy_sandbox_policy(),
-        SandboxPolicy::new_read_only_policy()
+        config.permissions.permission_profile(),
+        PermissionProfile::read_only()
     );
     Ok(())
 }
@@ -7578,8 +7587,8 @@ async fn explicit_sandbox_mode_falls_back_when_disallowed_by_requirements() -> s
         .build()
         .await?;
     assert_eq!(
-        config.legacy_sandbox_policy(),
-        SandboxPolicy::new_read_only_policy()
+        config.permissions.permission_profile(),
+        PermissionProfile::read_only()
     );
     Ok(())
 }
