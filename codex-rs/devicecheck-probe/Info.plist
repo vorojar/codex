@@ -5,7 +5,7 @@
   <key>CFBundleExecutable</key>
   <string>DeviceCheckProbe</string>
   <key>CFBundleIdentifier</key>
-  <string>com.openai.codex</string>
+  <string>com.openai.codex.app-server</string>
   <key>CFBundleName</key>
   <string>DeviceCheckProbe</string>
   <key>CFBundlePackageType</key>
