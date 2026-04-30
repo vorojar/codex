@@ -1993,6 +1993,7 @@ dependencies = [
  "codex-utils-absolute-path",
  "codex-utils-cargo-bin",
  "pretty_assertions",
+ "serde_json",
  "similar",
  "tempfile",
  "thiserror 2.0.18",

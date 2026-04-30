@@ -36,66 +36,89 @@ enum StreamingParserMode {
     StartedPatch,
     AddFile,
     DeleteFile,
-    UpdateFile,
+    UpdateFile {
+        hunk_line_number: usize,
+    },
     EndedPatch,
 }
 
-fn handle_hunk_headers_and_end_patch(
-    trimmed: &str,
-    hunks: &mut Vec<Hunk>,
-) -> Result<Option<StreamingParserMode>, String> {
-    if trimmed == END_PATCH_MARKER {
-        ensure_update_hunk_is_not_empty(hunks)?;
-        return Ok(Some(StreamingParserMode::EndedPatch));
-    }
-    if let Some(path) = trimmed.strip_prefix(ADD_FILE_MARKER) {
-        ensure_update_hunk_is_not_empty(hunks)?;
-        hunks.push(AddFile {
-            path: PathBuf::from(path),
-            contents: String::new(),
-        });
-        return Ok(Some(StreamingParserMode::AddFile));
-    }
-    if let Some(path) = trimmed.strip_prefix(DELETE_FILE_MARKER) {
-        ensure_update_hunk_is_not_empty(hunks)?;
-        hunks.push(DeleteFile {
-            path: PathBuf::from(path),
-        });
-        return Ok(Some(StreamingParserMode::DeleteFile));
-    }
-    if let Some(path) = trimmed.strip_prefix(UPDATE_FILE_MARKER) {
-        ensure_update_hunk_is_not_empty(hunks)?;
-        hunks.push(UpdateFile {
-            path: PathBuf::from(path),
-            move_path: None,
-            chunks: Vec::new(),
-        });
-        return Ok(Some(StreamingParserMode::UpdateFile));
-    }
-    Ok(None)
-}
-
-fn ensure_update_hunk_is_not_empty(hunks: &[Hunk]) -> Result<(), String> {
-    if let Some(UpdateFile { chunks, .. }) = hunks.last()
-        && (chunks.is_empty()
-            || chunks
-                .last()
-                .is_some_and(|chunk| chunk.old_lines.is_empty() && chunk.new_lines.is_empty()))
-    {
-        return Err("Update hunk does not contain any lines".to_string());
-    }
-    Ok(())
-}
-
 impl StreamingPatchParser {
+    fn ensure_update_hunk_is_not_empty(&self, line: &str) -> Result<(), ParseError> {
+        if let Some(UpdateFile { path, chunks, .. }) = self.state.hunks.last() {
+            if chunks.is_empty()
+                && let StreamingParserMode::UpdateFile { hunk_line_number } = self.state.mode
+            {
+                return Err(InvalidHunkError {
+                    message: format!("Update file hunk for path '{}' is empty", path.display()),
+                    line_number: hunk_line_number,
+                });
+            }
+            if chunks
+                .last()
+                .is_some_and(|chunk| chunk.old_lines.is_empty() && chunk.new_lines.is_empty())
+            {
+                if line == END_PATCH_MARKER {
+                    return Err(InvalidHunkError {
+                        message: "Update hunk does not contain any lines".to_string(),
+                        line_number: self.line_number,
+                    });
+                }
+                return Err(InvalidHunkError {
+                    message: format!(
+                        "Unexpected line found in update hunk: '{line}'. Every line should start with ' ' (context line), '+' (added line), or '-' (removed line)"
+                    ),
+                    line_number: self.line_number,
+                });
+            }
+        }
+        Ok(())
+    }
+
+    fn handle_hunk_headers_and_end_patch(&mut self, trimmed: &str) -> Result<bool, ParseError> {
+        if trimmed == END_PATCH_MARKER {
+            self.ensure_update_hunk_is_not_empty(trimmed)?;
+            self.state.mode = StreamingParserMode::EndedPatch;
+            return Ok(true);
+        }
+        if let Some(path) = trimmed.strip_prefix(ADD_FILE_MARKER) {
+            self.ensure_update_hunk_is_not_empty(trimmed)?;
+            self.state.hunks.push(AddFile {
+                path: PathBuf::from(path),
+                contents: String::new(),
+            });
+            self.state.mode = StreamingParserMode::AddFile;
+            return Ok(true);
+        }
+        if let Some(path) = trimmed.strip_prefix(DELETE_FILE_MARKER) {
+            self.ensure_update_hunk_is_not_empty(trimmed)?;
+            self.state.hunks.push(DeleteFile {
+                path: PathBuf::from(path),
+            });
+            self.state.mode = StreamingParserMode::DeleteFile;
+            return Ok(true);
+        }
+        if let Some(path) = trimmed.strip_prefix(UPDATE_FILE_MARKER) {
+            self.ensure_update_hunk_is_not_empty(trimmed)?;
+            self.state.hunks.push(UpdateFile {
+                path: PathBuf::from(path),
+                move_path: None,
+                chunks: Vec::new(),
+            });
+            self.state.mode = StreamingParserMode::UpdateFile {
+                hunk_line_number: self.line_number,
+            };
+            return Ok(true);
+        }
+        Ok(false)
+    }
+
     pub fn push_delta(&mut self, delta: &str) -> Result<Vec<Hunk>, ParseError> {
         for ch in delta.chars() {
             if ch == '\n' {
-                let line = std::mem::take(&mut self.line_buffer);
-                let state = std::mem::take(&mut self.state);
+                let mut line = std::mem::take(&mut self.line_buffer);
+                line.truncate(line.strip_suffix('\r').map_or(line.len(), str::len));
                 self.line_number += 1;
-                self.state =
-                    Self::process_line(state, line.trim_end_matches('\r'), self.line_number)?;
+                self.process_line(&line)?;
             } else {
                 self.line_buffer.push(ch);
             }
@@ -106,7 +129,14 @@ impl StreamingPatchParser {
 
     pub fn finish(&mut self) -> Result<Vec<Hunk>, ParseError> {
         if !self.line_buffer.is_empty() {
-            self.push_delta("\n")?;
+            let line = std::mem::take(&mut self.line_buffer);
+            self.line_number += 1;
+            if line.trim() == END_PATCH_MARKER {
+                self.ensure_update_hunk_is_not_empty(line.trim())?;
+                self.state.mode = StreamingParserMode::EndedPatch;
+            } else {
+                self.process_line(&line)?;
+            }
         }
 
         if !matches!(self.state.mode, StreamingParserMode::EndedPatch) {
@@ -118,155 +148,127 @@ impl StreamingPatchParser {
         Ok(self.state.hunks.clone())
     }
 
-    fn process_line(
-        state: StreamingParserState,
-        line: &str,
-        line_number: usize,
-    ) -> Result<StreamingParserState, ParseError> {
+    fn process_line(&mut self, line: &str) -> Result<(), ParseError> {
         let trimmed = line.trim();
-        let StreamingParserState {
-            mut mode,
-            mut hunks,
-        } = state;
-        mode = match mode {
+        match self.state.mode.clone() {
             StreamingParserMode::NotStarted => {
                 if trimmed == BEGIN_PATCH_MARKER {
-                    return Ok(StreamingParserState {
-                        mode: StreamingParserMode::StartedPatch,
-                        hunks,
-                    });
+                    self.state.mode = StreamingParserMode::StartedPatch;
+                    return Ok(());
                 }
-                return Err(InvalidPatchError(
+                Err(InvalidPatchError(
                     "The first line of the patch must be '*** Begin Patch'".to_string(),
-                ));
+                ))
             }
             StreamingParserMode::StartedPatch => {
-                if let Some(mode) =
-                    handle_hunk_headers_and_end_patch(trimmed, &mut hunks).map_err(|message| {
-                        InvalidHunkError {
-                            message,
-                            line_number,
-                        }
-                    })?
-                {
-                    return Ok(StreamingParserState { mode, hunks });
+                if self.handle_hunk_headers_and_end_patch(trimmed)? {
+                    return Ok(());
                 }
-                return Err(InvalidHunkError {
+                Err(InvalidHunkError {
                     message: format!(
                         "'{trimmed}' is not a valid hunk header. Valid hunk headers: '*** Add File: {{path}}', '*** Delete File: {{path}}', '*** Update File: {{path}}'"
                     ),
-                    line_number,
-                });
+                    line_number: self.line_number,
+                })
             }
             StreamingParserMode::AddFile => {
-                if let Some(mode) =
-                    handle_hunk_headers_and_end_patch(trimmed, &mut hunks).map_err(|message| {
-                        InvalidHunkError {
-                            message,
-                            line_number,
-                        }
-                    })?
-                {
-                    return Ok(StreamingParserState { mode, hunks });
+                if self.handle_hunk_headers_and_end_patch(trimmed)? {
+                    return Ok(());
                 }
                 if let Some(line_to_add) = line.strip_prefix('+')
-                    && let Some(AddFile { contents, .. }) = hunks.last_mut()
+                    && let Some(AddFile { contents, .. }) = self.state.hunks.last_mut()
                 {
                     contents.push_str(line_to_add);
                     contents.push('\n');
-                    return Ok(StreamingParserState {
-                        mode: StreamingParserMode::AddFile,
-                        hunks,
-                    });
+                    return Ok(());
                 }
-                return Err(InvalidHunkError {
-                    message: format!(
-                        "Unexpected line found in add file hunk: '{line}'. Every line should start with '+'"
-                    ),
-                    line_number,
-                });
-            }
-            StreamingParserMode::DeleteFile => {
-                if let Some(mode) =
-                    handle_hunk_headers_and_end_patch(trimmed, &mut hunks).map_err(|message| {
-                        InvalidHunkError {
-                            message,
-                            line_number,
-                        }
-                    })?
-                {
-                    return Ok(StreamingParserState { mode, hunks });
-                }
-                return Err(InvalidHunkError {
+                Err(InvalidHunkError {
                     message: format!(
                         "'{trimmed}' is not a valid hunk header. Valid hunk headers: '*** Add File: {{path}}', '*** Delete File: {{path}}', '*** Update File: {{path}}'"
                     ),
-                    line_number,
-                });
+                    line_number: self.line_number,
+                })
             }
-            StreamingParserMode::UpdateFile => {
+            StreamingParserMode::DeleteFile => {
+                if self.handle_hunk_headers_and_end_patch(trimmed)? {
+                    return Ok(());
+                }
+                Err(InvalidHunkError {
+                    message: format!(
+                        "'{trimmed}' is not a valid hunk header. Valid hunk headers: '*** Add File: {{path}}', '*** Delete File: {{path}}', '*** Update File: {{path}}'"
+                    ),
+                    line_number: self.line_number,
+                })
+            }
+            StreamingParserMode::UpdateFile { hunk_line_number } => {
                 let update_line = line.trim_end();
-                if let Some(mode) = handle_hunk_headers_and_end_patch(update_line, &mut hunks)
-                    .map_err(|message| InvalidHunkError {
-                        message,
-                        line_number,
-                    })?
-                {
-                    return Ok(StreamingParserState { mode, hunks });
+                if self.handle_hunk_headers_and_end_patch(update_line)? {
+                    return Ok(());
                 }
 
                 if let Some(UpdateFile {
                     move_path, chunks, ..
-                }) = hunks.last_mut()
+                }) = self.state.hunks.last_mut()
                 {
                     if chunks.is_empty()
                         && move_path.is_none()
                         && let Some(move_to_path) = update_line.strip_prefix(MOVE_TO_MARKER)
                     {
                         *move_path = Some(PathBuf::from(move_to_path));
-                        return Ok(StreamingParserState {
-                            mode: StreamingParserMode::UpdateFile,
-                            hunks,
+                        self.state.mode = StreamingParserMode::UpdateFile { hunk_line_number };
+                        return Ok(());
+                    }
+
+                    if (update_line == EMPTY_CHANGE_CONTEXT_MARKER
+                        || update_line.starts_with(CHANGE_CONTEXT_MARKER))
+                        && chunks.last().is_some_and(|chunk| {
+                            chunk.old_lines.is_empty() && chunk.new_lines.is_empty()
+                        })
+                    {
+                        return Err(InvalidHunkError {
+                            message: format!(
+                                "Unexpected line found in update hunk: '{line}'. Every line should start with ' ' (context line), '+' (added line), or '-' (removed line)"
+                            ),
+                            line_number: self.line_number,
                         });
                     }
 
-                    match update_line {
-                        EMPTY_CHANGE_CONTEXT_MARKER => {
-                            chunks.push(UpdateFileChunk {
-                                change_context: None,
-                                old_lines: Vec::new(),
-                                new_lines: Vec::new(),
-                                is_end_of_file: false,
-                            });
-                            return Ok(StreamingParserState {
-                                mode: StreamingParserMode::UpdateFile,
-                                hunks,
-                            });
-                        }
-                        line => {
-                            if let Some(change_context) = line.strip_prefix(CHANGE_CONTEXT_MARKER) {
-                                chunks.push(UpdateFileChunk {
-                                    change_context: Some(change_context.to_string()),
-                                    old_lines: Vec::new(),
-                                    new_lines: Vec::new(),
-                                    is_end_of_file: false,
-                                });
-                                return Ok(StreamingParserState {
-                                    mode: StreamingParserMode::UpdateFile,
-                                    hunks,
-                                });
-                            }
-                        }
+                    if update_line == EMPTY_CHANGE_CONTEXT_MARKER {
+                        chunks.push(UpdateFileChunk {
+                            change_context: None,
+                            old_lines: Vec::new(),
+                            new_lines: Vec::new(),
+                            is_end_of_file: false,
+                        });
+                        self.state.mode = StreamingParserMode::UpdateFile { hunk_line_number };
+                        return Ok(());
+                    }
+
+                    if let Some(change_context) = update_line.strip_prefix(CHANGE_CONTEXT_MARKER) {
+                        chunks.push(UpdateFileChunk {
+                            change_context: Some(change_context.to_string()),
+                            old_lines: Vec::new(),
+                            new_lines: Vec::new(),
+                            is_end_of_file: false,
+                        });
+                        self.state.mode = StreamingParserMode::UpdateFile { hunk_line_number };
+                        return Ok(());
                     }
 
                     if update_line == EOF_MARKER {
+                        if chunks.last().is_some_and(|chunk| {
+                            chunk.old_lines.is_empty() && chunk.new_lines.is_empty()
+                        }) {
+                            return Err(InvalidHunkError {
+                                message: "Update hunk does not contain any lines".to_string(),
+                                line_number: self.line_number,
+                            });
+                        }
                         if let Some(chunk) = chunks.last_mut() {
                             chunk.is_end_of_file = true;
                         }
-                        return Ok(StreamingParserState {
-                            mode: StreamingParserMode::UpdateFile,
-                            hunks,
-                        });
+                        self.state.mode = StreamingParserMode::UpdateFile { hunk_line_number };
+                        return Ok(());
                     }
 
                     if line.is_empty() {
@@ -282,10 +284,8 @@ impl StreamingPatchParser {
                             chunk.old_lines.push(String::new());
                             chunk.new_lines.push(String::new());
                         }
-                        return Ok(StreamingParserState {
-                            mode: StreamingParserMode::UpdateFile,
-                            hunks,
-                        });
+                        self.state.mode = StreamingParserMode::UpdateFile { hunk_line_number };
+                        return Ok(());
                     }
 
                     if let Some(line_to_add) = line.strip_prefix(' ') {
@@ -301,10 +301,8 @@ impl StreamingPatchParser {
                             chunk.old_lines.push(line_to_add.to_string());
                             chunk.new_lines.push(line_to_add.to_string());
                         }
-                        return Ok(StreamingParserState {
-                            mode: StreamingParserMode::UpdateFile,
-                            hunks,
-                        });
+                        self.state.mode = StreamingParserMode::UpdateFile { hunk_line_number };
+                        return Ok(());
                     }
 
                     if let Some(line_to_add) = line.strip_prefix('+') {
@@ -319,10 +317,8 @@ impl StreamingPatchParser {
                         if let Some(chunk) = chunks.last_mut() {
                             chunk.new_lines.push(line_to_add.to_string());
                         }
-                        return Ok(StreamingParserState {
-                            mode: StreamingParserMode::UpdateFile,
-                            hunks,
-                        });
+                        self.state.mode = StreamingParserMode::UpdateFile { hunk_line_number };
+                        return Ok(());
                     }
 
                     if let Some(line_to_remove) = line.strip_prefix('-') {
@@ -337,22 +333,30 @@ impl StreamingPatchParser {
                         if let Some(chunk) = chunks.last_mut() {
                             chunk.old_lines.push(line_to_remove.to_string());
                         }
-                        return Ok(StreamingParserState {
-                            mode: StreamingParserMode::UpdateFile,
-                            hunks,
+                        self.state.mode = StreamingParserMode::UpdateFile { hunk_line_number };
+                        return Ok(());
+                    }
+
+                    if chunks.last().is_some_and(|chunk| {
+                        !chunk.old_lines.is_empty() || !chunk.new_lines.is_empty()
+                    }) {
+                        return Err(InvalidHunkError {
+                            message: format!(
+                                "Expected update hunk to start with a @@ context marker, got: '{line}'"
+                            ),
+                            line_number: self.line_number,
                         });
                     }
                 }
-                return Err(InvalidHunkError {
+                Err(InvalidHunkError {
                     message: format!(
                         "Unexpected line found in update hunk: '{line}'. Every line should start with ' ' (context line), '+' (added line), or '-' (removed line)"
                     ),
-                    line_number,
-                });
+                    line_number: self.line_number,
+                })
             }
-            StreamingParserMode::EndedPatch => mode,
-        };
-        Ok(StreamingParserState { mode, hunks })
+            StreamingParserMode::EndedPatch => Ok(()),
+        }
     }
 }
 
@@ -596,6 +600,39 @@ mod tests {
     }
 
     #[test]
+    fn test_streaming_patch_parser_matches_line_ending_behavior() {
+        let mut parser = StreamingPatchParser::default();
+        assert_eq!(
+            parser.push_delta("*** Begin Patch\r\n*** Update File: file.txt\r\n@@\r\n-old\r\n+new\r\n*** End Patch\r\n"),
+            Ok(vec![UpdateFile {
+                path: PathBuf::from("file.txt"),
+                move_path: None,
+                chunks: vec![UpdateFileChunk {
+                    change_context: None,
+                    old_lines: vec!["old".to_string()],
+                    new_lines: vec!["new".to_string()],
+                    is_end_of_file: false,
+                }],
+            }])
+        );
+
+        let mut parser = StreamingPatchParser::default();
+        assert_eq!(
+            parser.push_delta("*** Begin Patch\r\n*** Update File: file.txt\r\n@@\r\n-old\r\r\n+new\r\n*** End Patch\r\n"),
+            Ok(vec![UpdateFile {
+                path: PathBuf::from("file.txt"),
+                move_path: None,
+                chunks: vec![UpdateFileChunk {
+                    change_context: None,
+                    old_lines: vec!["old\r".to_string()],
+                    new_lines: vec!["new".to_string()],
+                    is_end_of_file: false,
+                }],
+            }])
+        );
+    }
+
+    #[test]
     fn test_streaming_patch_parser_finish_processes_final_line_without_newline() {
         let mut parser = StreamingPatchParser::default();
         assert_eq!(
@@ -610,6 +647,36 @@ mod tests {
             Ok(vec![AddFile {
                 path: PathBuf::from("file.txt"),
                 contents: "hello\n".to_string(),
+            }])
+        );
+
+        let mut parser = StreamingPatchParser::default();
+        assert_eq!(
+            parser.push_delta(
+                "*** Begin Patch\n*** Update File: file.txt\n@@\n-old\n+new\n *** End Patch",
+            ),
+            Ok(vec![UpdateFile {
+                path: PathBuf::from("file.txt"),
+                move_path: None,
+                chunks: vec![UpdateFileChunk {
+                    change_context: None,
+                    old_lines: vec!["old".to_string()],
+                    new_lines: vec!["new".to_string()],
+                    is_end_of_file: false,
+                }],
+            }])
+        );
+        assert_eq!(
+            parser.finish(),
+            Ok(vec![UpdateFile {
+                path: PathBuf::from("file.txt"),
+                move_path: None,
+                chunks: vec![UpdateFileChunk {
+                    change_context: None,
+                    old_lines: vec!["old".to_string()],
+                    new_lines: vec!["new".to_string()],
+                    is_end_of_file: false,
+                }],
             }])
         );
     }
@@ -657,9 +724,8 @@ mod tests {
         assert_eq!(
             parser.push_delta("*** Begin Patch\n*** Add File: file.txt\nbad\n"),
             Err(InvalidHunkError {
-                message:
-                    "Unexpected line found in add file hunk: 'bad'. Every line should start with '+'"
-                        .to_string(),
+                message: "'bad' is not a valid hunk header. Valid hunk headers: '*** Add File: {path}', '*** Delete File: {path}', '*** Update File: {path}'"
+                    .to_string(),
                 line_number: 3,
             })
         );
@@ -678,8 +744,8 @@ mod tests {
         assert_eq!(
             parser.push_delta("*** Begin Patch\n*** Update File: file.txt\n*** End Patch\n"),
             Err(InvalidHunkError {
-                message: "Update hunk does not contain any lines".to_string(),
-                line_number: 3,
+                message: "Update file hunk for path 'file.txt' is empty".to_string(),
+                line_number: 2,
             })
         );
 
@@ -689,8 +755,8 @@ mod tests {
                 "*** Begin Patch\n*** Update File: old.txt\n*** Move to: new.txt\n*** Delete File: other.txt\n",
             ),
             Err(InvalidHunkError {
-                message: "Update hunk does not contain any lines".to_string(),
-                line_number: 4,
+                message: "Update file hunk for path 'old.txt' is empty".to_string(),
+                line_number: 2,
             })
         );
 
@@ -699,6 +765,47 @@ mod tests {
             parser.push_delta("*** Begin Patch\n*** Update File: file.txt\n@@\n*** End Patch\n"),
             Err(InvalidHunkError {
                 message: "Update hunk does not contain any lines".to_string(),
+                line_number: 4,
+            })
+        );
+
+        let mut parser = StreamingPatchParser::default();
+        assert_eq!(
+            parser.push_delta("*** Begin Patch\n*** Update File: file.txt\n@@\n*** End of File\n"),
+            Err(InvalidHunkError {
+                message: "Update hunk does not contain any lines".to_string(),
+                line_number: 4,
+            })
+        );
+
+        let mut parser = StreamingPatchParser::default();
+        assert_eq!(
+            parser.push_delta("*** Begin Patch\n*** Update File: file.txt\n@@\n@@\n"),
+            Err(InvalidHunkError {
+                message: "Unexpected line found in update hunk: '@@'. Every line should start with ' ' (context line), '+' (added line), or '-' (removed line)"
+                    .to_string(),
+                line_number: 4,
+            })
+        );
+
+        let mut parser = StreamingPatchParser::default();
+        assert_eq!(
+            parser.push_delta("*** Begin Patch\n*** Update File: file.txt\n@@\n-old\nbad\n"),
+            Err(InvalidHunkError {
+                message: "Expected update hunk to start with a @@ context marker, got: 'bad'"
+                    .to_string(),
+                line_number: 5,
+            })
+        );
+
+        let mut parser = StreamingPatchParser::default();
+        assert_eq!(
+            parser.push_delta(
+                "*** Begin Patch\n*** Update File: file.txt\n@@\n*** Update File: other.txt\n",
+            ),
+            Err(InvalidHunkError {
+                message: "Unexpected line found in update hunk: '*** Update File: other.txt'. Every line should start with ' ' (context line), '+' (added line), or '-' (removed line)"
+                    .to_string(),
                 line_number: 4,
             })
         );
