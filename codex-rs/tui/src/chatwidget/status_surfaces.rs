@@ -494,7 +494,7 @@ impl ChatWidget {
     /// Resolves a display string for one configured status-line item.
     ///
     /// Returning `None` means "omit this item for now", not "configuration error". Callers rely on
-    /// this to keep partially available status lines readable while waiting for session, token, or
+    /// this to keep partially available status lines readable while waiting for thread, token, or
     /// git metadata.
     pub(super) fn status_line_value_for_item(&mut self, item: &StatusLineItem) -> Option<String> {
         match item {
@@ -558,7 +558,7 @@ impl ChatWidget {
                 "{} out",
                 format_tokens_compact(self.status_line_total_usage().output_tokens)
             )),
-            StatusLineItem::SessionId => self.thread_id.map(|id| id.to_string()),
+            StatusLineItem::ThreadId => self.thread_id.map(|id| id.to_string()),
             StatusLineItem::FastMode => Some(
                 if matches!(self.current_service_tier(), Some(ServiceTier::Fast)) {
                     "Fast on".to_string()
@@ -596,7 +596,7 @@ impl ChatWidget {
             StatusSurfacePreviewItem::UsedTokens => StatusLineItem::UsedTokens,
             StatusSurfacePreviewItem::TotalInputTokens => StatusLineItem::TotalInputTokens,
             StatusSurfacePreviewItem::TotalOutputTokens => StatusLineItem::TotalOutputTokens,
-            StatusSurfacePreviewItem::SessionId => StatusLineItem::SessionId,
+            StatusSurfacePreviewItem::ThreadId => StatusLineItem::ThreadId,
             StatusSurfacePreviewItem::FastMode => StatusLineItem::FastMode,
             StatusSurfacePreviewItem::Model => StatusLineItem::ModelName,
             StatusSurfacePreviewItem::ModelWithReasoning => StatusLineItem::ModelWithReasoning,
@@ -659,8 +659,8 @@ impl ChatWidget {
             TerminalTitleItem::TotalOutputTokens => self
                 .status_line_value_for_item(&StatusLineItem::TotalOutputTokens)
                 .map(|value| Self::truncate_terminal_title_part(value, /*max_chars*/ 32)),
-            TerminalTitleItem::SessionId => self
-                .status_line_value_for_item(&StatusLineItem::SessionId)
+            TerminalTitleItem::ThreadId => self
+                .status_line_value_for_item(&StatusLineItem::ThreadId)
                 .map(|value| Self::truncate_terminal_title_part(value, /*max_chars*/ 32)),
             TerminalTitleItem::FastMode => self
                 .status_line_value_for_item(&StatusLineItem::FastMode)

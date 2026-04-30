@@ -81,6 +81,23 @@ async fn terminal_title_action_required_respects_spinner_setting() {
 }
 
 #[tokio::test]
+async fn terminal_title_thread_id_renders_and_accepts_legacy_session_id() {
+    let (mut chat, _rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
+    let thread_id = ThreadId::new();
+    let expected_title =
+        ChatWidget::truncate_terminal_title_part(thread_id.to_string(), /*max_chars*/ 32);
+    chat.thread_id = Some(thread_id);
+
+    chat.config.tui_terminal_title = Some(vec!["thread-id".to_string()]);
+    chat.refresh_terminal_title();
+    assert_eq!(chat.last_terminal_title, Some(expected_title.clone()));
+
+    chat.config.tui_terminal_title = Some(vec!["session-id".to_string()]);
+    chat.refresh_terminal_title();
+    assert_eq!(chat.last_terminal_title, Some(expected_title));
+}
+
+#[tokio::test]
 async fn terminal_title_action_required_blinks_when_animations_are_enabled() {
     let (mut chat, _rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
     chat.bottom_pane.set_task_running(/*running*/ true);

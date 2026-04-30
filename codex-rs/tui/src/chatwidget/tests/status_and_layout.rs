@@ -1377,6 +1377,25 @@ async fn status_line_legacy_context_usage_renders_context_used_percent() {
 }
 
 #[tokio::test]
+async fn status_line_thread_id_renders_and_accepts_legacy_session_id() {
+    let (mut chat, mut rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
+    let thread_id = ThreadId::new();
+    chat.thread_id = Some(thread_id);
+
+    chat.config.tui_status_line = Some(vec!["thread-id".to_string()]);
+    chat.refresh_status_line();
+    assert_eq!(status_line_text(&chat), Some(thread_id.to_string()));
+
+    chat.config.tui_status_line = Some(vec!["session-id".to_string()]);
+    chat.refresh_status_line();
+    assert_eq!(status_line_text(&chat), Some(thread_id.to_string()));
+    assert!(
+        drain_insert_history(&mut rx).is_empty(),
+        "thread-id and legacy session-id should remain valid status line items"
+    );
+}
+
+#[tokio::test]
 async fn status_line_branch_state_resets_when_git_branch_disabled() {
     let (mut chat, _rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
     chat.status_line_branch = Some("main".to_string());

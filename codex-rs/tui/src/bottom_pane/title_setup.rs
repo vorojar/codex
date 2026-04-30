@@ -65,14 +65,15 @@ pub(crate) enum TerminalTitleItem {
     WeeklyLimit,
     /// Codex application version.
     CodexVersion,
-    /// Total tokens used in the current session.
+    /// Total tokens used in the current thread.
     UsedTokens,
     /// Total input tokens consumed.
     TotalInputTokens,
     /// Total output tokens generated.
     TotalOutputTokens,
-    /// Full session UUID.
-    SessionId,
+    /// Full thread UUID.
+    #[strum(to_string = "thread-id", serialize = "session-id")]
+    ThreadId,
     /// Whether Fast mode is currently active.
     FastMode,
     /// Current model name.
@@ -93,9 +94,7 @@ impl TerminalTitleItem {
             TerminalTitleItem::Spinner => {
                 "Spinner while working, action-required message while blocked."
             }
-            TerminalTitleItem::Status => {
-                "Compact session run-state text (Ready, Working, Thinking)"
-            }
+            TerminalTitleItem::Status => "Compact thread run-state text (Ready, Working, Thinking)",
             TerminalTitleItem::Thread => "Current thread title (omitted when unavailable)",
             TerminalTitleItem::GitBranch => "Current Git branch (omitted when unavailable)",
             TerminalTitleItem::ContextRemaining => {
@@ -111,11 +110,11 @@ impl TerminalTitleItem {
                 "Remaining usage on weekly usage limit (omitted when unavailable)"
             }
             TerminalTitleItem::CodexVersion => "Codex application version",
-            TerminalTitleItem::UsedTokens => "Total tokens used in session (omitted when zero)",
-            TerminalTitleItem::TotalInputTokens => "Total input tokens used in session",
-            TerminalTitleItem::TotalOutputTokens => "Total output tokens used in session",
-            TerminalTitleItem::SessionId => {
-                "Current session identifier (omitted until session starts)"
+            TerminalTitleItem::UsedTokens => "Total tokens used in thread (omitted when zero)",
+            TerminalTitleItem::TotalInputTokens => "Total input tokens used in thread",
+            TerminalTitleItem::TotalOutputTokens => "Total output tokens used in thread",
+            TerminalTitleItem::ThreadId => {
+                "Current thread identifier (omitted until thread starts)"
             }
             TerminalTitleItem::FastMode => "Whether Fast mode is currently active",
             TerminalTitleItem::Model => "Current model name",
@@ -145,7 +144,7 @@ impl TerminalTitleItem {
             TerminalTitleItem::TotalOutputTokens => {
                 Some(StatusSurfacePreviewItem::TotalOutputTokens)
             }
-            TerminalTitleItem::SessionId => Some(StatusSurfacePreviewItem::SessionId),
+            TerminalTitleItem::ThreadId => Some(StatusSurfacePreviewItem::ThreadId),
             TerminalTitleItem::FastMode => Some(StatusSurfacePreviewItem::FastMode),
             TerminalTitleItem::Model => Some(StatusSurfacePreviewItem::Model),
             TerminalTitleItem::ModelWithReasoning => {
@@ -480,6 +479,19 @@ mod tests {
     }
 
     #[test]
+    fn thread_id_is_canonical_and_accepts_session_id_legacy_id() {
+        assert_eq!(TerminalTitleItem::ThreadId.to_string(), "thread-id");
+        assert_eq!(
+            "thread-id".parse::<TerminalTitleItem>(),
+            Ok(TerminalTitleItem::ThreadId)
+        );
+        assert_eq!(
+            "session-id".parse::<TerminalTitleItem>(),
+            Ok(TerminalTitleItem::ThreadId)
+        );
+    }
+
+    #[test]
     fn model_with_reasoning_has_distinct_id() {
         assert_eq!(
             TerminalTitleItem::ModelWithReasoning.to_string(),
@@ -510,7 +522,7 @@ mod tests {
                 "used-tokens",
                 "total-input-tokens",
                 "total-output-tokens",
-                "session-id",
+                "thread-id",
                 "fast-mode",
             ]
             .into_iter(),
@@ -533,7 +545,7 @@ mod tests {
                 TerminalTitleItem::UsedTokens,
                 TerminalTitleItem::TotalInputTokens,
                 TerminalTitleItem::TotalOutputTokens,
-                TerminalTitleItem::SessionId,
+                TerminalTitleItem::ThreadId,
                 TerminalTitleItem::FastMode,
             ])
         );

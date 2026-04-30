@@ -14,7 +14,7 @@
 //! - Git information (branch name)
 //! - Context usage (remaining %, used %, window size)
 //! - Usage limits (5-hour, weekly)
-//! - Session info (thread title, ID, tokens used)
+//! - Thread info (thread title, ID, tokens used)
 //! - Application version
 
 use ratatui::buffer::Buffer;
@@ -44,7 +44,7 @@ use crate::render::renderable::Renderable;
 /// Some items are conditionally displayed based on availability:
 /// - Git-related items only show when in a git repository
 /// - Context/limit items only show when data is available from the API
-/// - Session ID only shows after a session has started
+/// - Thread ID only shows after a thread has started
 #[derive(EnumIter, EnumString, Display, Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 #[strum(serialize_all = "kebab_case")]
 pub(crate) enum StatusLineItem {
@@ -94,7 +94,7 @@ pub(crate) enum StatusLineItem {
     /// Total context window size in tokens.
     ContextWindowSize,
 
-    /// Total tokens used in the current session.
+    /// Total tokens used in the current thread.
     UsedTokens,
 
     /// Total input tokens consumed.
@@ -103,8 +103,9 @@ pub(crate) enum StatusLineItem {
     /// Total output tokens generated.
     TotalOutputTokens,
 
-    /// Full session UUID.
-    SessionId,
+    /// Full thread UUID.
+    #[strum(to_string = "thread-id", serialize = "session-id")]
+    ThreadId,
 
     /// Whether Fast mode is currently active.
     FastMode,
@@ -125,7 +126,7 @@ impl StatusLineItem {
             StatusLineItem::CurrentDir => "Current working directory",
             StatusLineItem::ProjectRoot => "Project name (omitted when unavailable)",
             StatusLineItem::GitBranch => "Current Git branch (omitted when unavailable)",
-            StatusLineItem::Status => "Compact session run-state text (Ready, Working, Thinking)",
+            StatusLineItem::Status => "Compact thread run-state text (Ready, Working, Thinking)",
             StatusLineItem::ContextRemaining => {
                 "Percentage of context window remaining (omitted when unknown)"
             }
@@ -142,12 +143,10 @@ impl StatusLineItem {
             StatusLineItem::ContextWindowSize => {
                 "Total context window size in tokens (omitted when unknown)"
             }
-            StatusLineItem::UsedTokens => "Total tokens used in session (omitted when zero)",
-            StatusLineItem::TotalInputTokens => "Total input tokens used in session",
-            StatusLineItem::TotalOutputTokens => "Total output tokens used in session",
-            StatusLineItem::SessionId => {
-                "Current session identifier (omitted until session starts)"
-            }
+            StatusLineItem::UsedTokens => "Total tokens used in thread (omitted when zero)",
+            StatusLineItem::TotalInputTokens => "Total input tokens used in thread",
+            StatusLineItem::TotalOutputTokens => "Total output tokens used in thread",
+            StatusLineItem::ThreadId => "Current thread identifier (omitted until thread starts)",
             StatusLineItem::FastMode => "Whether Fast mode is currently active",
             StatusLineItem::ThreadTitle => "Current thread title (omitted when unavailable)",
             StatusLineItem::TaskProgress => {
@@ -173,7 +172,7 @@ impl StatusLineItem {
             StatusLineItem::UsedTokens => StatusSurfacePreviewItem::UsedTokens,
             StatusLineItem::TotalInputTokens => StatusSurfacePreviewItem::TotalInputTokens,
             StatusLineItem::TotalOutputTokens => StatusSurfacePreviewItem::TotalOutputTokens,
-            StatusLineItem::SessionId => StatusSurfacePreviewItem::SessionId,
+            StatusLineItem::ThreadId => StatusSurfacePreviewItem::ThreadId,
             StatusLineItem::FastMode => StatusSurfacePreviewItem::FastMode,
             StatusLineItem::ThreadTitle => StatusSurfacePreviewItem::ThreadTitle,
             StatusLineItem::TaskProgress => StatusSurfacePreviewItem::TaskProgress,
@@ -382,6 +381,19 @@ mod tests {
         assert_eq!(
             "status".parse::<StatusLineItem>(),
             Ok(StatusLineItem::Status)
+        );
+    }
+
+    #[test]
+    fn thread_id_is_canonical_and_accepts_session_id_legacy_id() {
+        assert_eq!(StatusLineItem::ThreadId.to_string(), "thread-id");
+        assert_eq!(
+            "thread-id".parse::<StatusLineItem>(),
+            Ok(StatusLineItem::ThreadId)
+        );
+        assert_eq!(
+            "session-id".parse::<StatusLineItem>(),
+            Ok(StatusLineItem::ThreadId)
         );
     }
 
