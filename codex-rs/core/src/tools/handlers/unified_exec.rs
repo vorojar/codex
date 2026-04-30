@@ -152,6 +152,44 @@ impl ToolHandler for UnifiedExecHandler {
             })
     }
 
+    fn with_updated_hook_input(
+        &self,
+        mut invocation: ToolInvocation,
+        updated_input: serde_json::Value,
+    ) -> Result<ToolInvocation, FunctionCallError> {
+        let ToolPayload::Function { arguments } = invocation.payload else {
+            return Err(FunctionCallError::RespondToModel(
+                "hook input rewrite received unsupported unified_exec payload".to_string(),
+            ));
+        };
+        let command = updated_input
+            .get("command")
+            .and_then(serde_json::Value::as_str)
+            .ok_or_else(|| {
+                FunctionCallError::RespondToModel(
+                    "hook returned updatedInput without string field `command`".to_string(),
+                )
+            })?;
+        let mut arguments: serde_json::Value = parse_arguments(&arguments)?;
+        let serde_json::Value::Object(arguments) = &mut arguments else {
+            return Err(FunctionCallError::RespondToModel(
+                "exec_command arguments must be an object".to_string(),
+            ));
+        };
+        arguments.insert(
+            "cmd".to_string(),
+            serde_json::Value::String(command.to_string()),
+        );
+        invocation.payload = ToolPayload::Function {
+            arguments: serde_json::to_string(&arguments).map_err(|err| {
+                FunctionCallError::RespondToModel(format!(
+                    "failed to serialize rewritten exec_command arguments: {err}"
+                ))
+            })?,
+        };
+        Ok(invocation)
+    }
+
     fn post_tool_use_payload(
         &self,
         invocation: &ToolInvocation,
@@ -355,6 +393,9 @@ impl ToolHandler for UnifiedExecHandler {
                     .await
                 {
                     Ok(response) => response,
+                    Err(UnifiedExecError::UpdatedInput(updated_input)) => {
+                        return Err(FunctionCallError::UpdatedInput(updated_input));
+                    }
                     Err(UnifiedExecError::SandboxDenied { output, .. }) => {
                         let output_text = output.aggregated_output.text;
                         let original_token_count = approx_token_count(&output_text);

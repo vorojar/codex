@@ -318,6 +318,47 @@ impl ToolHandler for ApplyPatchHandler {
         })
     }
 
+    fn with_updated_hook_input(
+        &self,
+        mut invocation: ToolInvocation,
+        updated_input: serde_json::Value,
+    ) -> Result<ToolInvocation, FunctionCallError> {
+        let patch = updated_input
+            .get("command")
+            .and_then(serde_json::Value::as_str)
+            .ok_or_else(|| {
+                FunctionCallError::RespondToModel(
+                    "hook returned updatedInput without string field `command`".to_string(),
+                )
+            })?;
+        invocation.payload = match invocation.payload {
+            ToolPayload::Function { arguments } => {
+                let mut arguments: serde_json::Value = parse_arguments(&arguments)?;
+                let serde_json::Value::Object(arguments) = &mut arguments else {
+                    return Err(FunctionCallError::RespondToModel(
+                        "apply_patch arguments must be an object".to_string(),
+                    ));
+                };
+                arguments.insert(
+                    "input".to_string(),
+                    serde_json::Value::String(patch.to_string()),
+                );
+                ToolPayload::Function {
+                    arguments: serde_json::to_string(&arguments).map_err(|err| {
+                        FunctionCallError::RespondToModel(format!(
+                            "failed to serialize rewritten apply_patch arguments: {err}"
+                        ))
+                    })?,
+                }
+            }
+            ToolPayload::Custom { .. } => ToolPayload::Custom {
+                input: patch.to_string(),
+            },
+            payload => payload,
+        };
+        Ok(invocation)
+    }
+
     fn post_tool_use_payload(
         &self,
         invocation: &ToolInvocation,

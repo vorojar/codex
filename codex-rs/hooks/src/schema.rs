@@ -138,9 +138,7 @@ pub(crate) struct PermissionRequestHookSpecificOutputWire {
 #[serde(deny_unknown_fields)]
 pub(crate) struct PermissionRequestDecisionWire {
     pub behavior: PermissionRequestBehaviorWire,
-    /// Reserved for a future input-rewrite capability.
-    ///
-    /// PermissionRequest hooks currently fail closed if this field is present.
+    /// Replaces the entire tool input object when `behavior` is `allow`.
     #[serde(default)]
     pub updated_input: Option<Value>,
     /// Reserved for a future permission-rewrite capability.

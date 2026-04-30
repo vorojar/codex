@@ -192,18 +192,45 @@ pub(crate) async fn handle_mcp_tool_call(
     });
     notify_mcp_tool_call_event(sess.as_ref(), turn_context.as_ref(), tool_call_begin_event).await;
 
-    if let Some(decision) = maybe_request_mcp_tool_approval(
-        &sess,
-        turn_context,
-        &call_id,
-        &invocation,
-        &hook_tool_name,
-        metadata.as_ref(),
-        approval_mode,
-    )
-    .await
-    {
+    let mut invocation = invocation;
+    let mut input_rewrites = 0;
+    loop {
+        let Some(decision) = maybe_request_mcp_tool_approval(
+            &sess,
+            turn_context,
+            &call_id,
+            &invocation,
+            &hook_tool_name,
+            metadata.as_ref(),
+            approval_mode,
+        )
+        .await
+        else {
+            break;
+        };
+        let tool_input = invocation
+            .arguments
+            .clone()
+            .unwrap_or_else(|| JsonValue::Object(serde_json::Map::new()));
         let result = match decision {
+            McpToolApprovalDecision::AcceptWithUpdatedInput(updated_input) => {
+                input_rewrites += 1;
+                if input_rewrites > 8 {
+                    notify_mcp_tool_call_skip(
+                        sess.as_ref(),
+                        turn_context.as_ref(),
+                        &call_id,
+                        invocation,
+                        mcp_app_resource_uri.clone(),
+                        "hook input rewrite limit exceeded".to_string(),
+                        /*already_started*/ true,
+                    )
+                    .await
+                } else {
+                    invocation.arguments = Some(updated_input);
+                    continue;
+                }
+            }
             McpToolApprovalDecision::Accept
             | McpToolApprovalDecision::AcceptForSession
             | McpToolApprovalDecision::AcceptAndRemember => {
@@ -270,8 +297,7 @@ pub(crate) async fn handle_mcp_tool_call(
 
         return HandledMcpToolCall {
             result: CallToolResult::from_result(result),
-            tool_input: arguments_value
-                .unwrap_or_else(|| JsonValue::Object(serde_json::Map::new())),
+            tool_input,
         };
     }
 
@@ -747,6 +773,7 @@ async fn maybe_track_codex_app_used(
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum McpToolApprovalDecision {
     Accept,
+    AcceptWithUpdatedInput(JsonValue),
     AcceptForSession,
     AcceptAndRemember,
     Decline { message: Option<String> },
@@ -1000,21 +1027,34 @@ async fn maybe_request_mcp_tool_approval(
         return Some(McpToolApprovalDecision::Accept);
     }
 
+    let permission_request_tool_input = invocation
+        .arguments
+        .clone()
+        .unwrap_or_else(|| serde_json::Value::Object(serde_json::Map::new()));
     match run_permission_request_hooks(
         sess,
         turn_context,
         call_id,
         PermissionRequestPayload {
             tool_name: HookToolName::new(hook_tool_name),
-            tool_input: invocation
-                .arguments
-                .clone()
-                .unwrap_or_else(|| serde_json::Value::Object(serde_json::Map::new())),
+            tool_input: permission_request_tool_input.clone(),
         },
     )
     .await
     {
-        Some(PermissionRequestDecision::Allow) => {
+        Some(PermissionRequestDecision::Allow {
+            updated_input: Some(updated_input),
+        }) => {
+            if updated_input == permission_request_tool_input {
+                return Some(McpToolApprovalDecision::Accept);
+            }
+            return Some(McpToolApprovalDecision::AcceptWithUpdatedInput(
+                updated_input,
+            ));
+        }
+        Some(PermissionRequestDecision::Allow {
+            updated_input: None,
+        }) => {
             return Some(McpToolApprovalDecision::Accept);
         }
         Some(PermissionRequestDecision::Deny { message }) => {
@@ -1768,6 +1808,7 @@ async fn apply_mcp_tool_approval_decision(
             }
         }
         McpToolApprovalDecision::Accept
+        | McpToolApprovalDecision::AcceptWithUpdatedInput(_)
         | McpToolApprovalDecision::Decline { .. }
         | McpToolApprovalDecision::Cancel
         | McpToolApprovalDecision::BlockedBySafetyMonitor(_) => {}

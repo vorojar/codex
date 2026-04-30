@@ -350,6 +350,7 @@ pub(crate) struct ToolCtx {
 #[derive(Debug)]
 pub(crate) enum ToolError {
     Rejected(String),
+    UpdatedInput(serde_json::Value),
     Codex(CodexErr),
 }
 

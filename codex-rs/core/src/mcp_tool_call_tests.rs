@@ -2070,6 +2070,80 @@ async fn permission_request_hook_allows_mcp_tool_call() {
 }
 
 #[tokio::test]
+async fn permission_request_hook_can_update_mcp_tool_input() {
+    let (mut session, turn_context) = make_session_and_context().await;
+    install_mcp_permission_request_hook(
+        &mut session,
+        &turn_context,
+        "mcp__memory__.*",
+        &serde_json::json!({
+            "hookSpecificOutput": {
+                "hookEventName": "PermissionRequest",
+                "decision": {
+                    "behavior": "allow",
+                    "updatedInput": {
+                        "entities": [{
+                            "name": "Grace",
+                            "entityType": "person"
+                        }]
+                    }
+                }
+            }
+        }),
+    );
+    let session = Arc::new(session);
+    let turn_context = Arc::new(turn_context);
+    let invocation = McpInvocation {
+        server: "memory".to_string(),
+        tool: "create_entities".to_string(),
+        arguments: Some(serde_json::json!({
+            "entities": [{
+                "name": "Ada",
+                "entityType": "person"
+            }]
+        })),
+    };
+    let metadata = McpToolApprovalMetadata {
+        annotations: Some(annotations(
+            Some(false),
+            Some(true),
+            /*open_world*/ None,
+        )),
+        connector_id: None,
+        connector_name: None,
+        connector_description: None,
+        tool_title: Some("Create entities".to_string()),
+        tool_description: None,
+        mcp_app_resource_uri: None,
+        codex_apps_meta: None,
+        openai_file_input_params: None,
+    };
+
+    let decision = maybe_request_mcp_tool_approval(
+        &session,
+        &turn_context,
+        "call-mcp-hook",
+        &invocation,
+        "mcp__memory__create_entities",
+        Some(&metadata),
+        AppToolApproval::Auto,
+    )
+    .await;
+
+    assert_eq!(
+        decision,
+        Some(McpToolApprovalDecision::AcceptWithUpdatedInput(
+            serde_json::json!({
+                "entities": [{
+                    "name": "Grace",
+                    "entityType": "person"
+                }]
+            })
+        ))
+    );
+}
+
+#[tokio::test]
 async fn permission_request_hook_uses_hook_tool_name_without_metadata() {
     let (mut session, turn_context) = make_session_and_context().await;
     let log_path = install_mcp_permission_request_hook(

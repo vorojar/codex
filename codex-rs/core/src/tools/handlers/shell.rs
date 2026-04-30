@@ -75,6 +75,17 @@ fn shell_command_payload_command(payload: &ToolPayload) -> Option<String> {
         .map(|params| params.command)
 }
 
+fn updated_hook_command(updated_input: &JsonValue) -> Result<&str, FunctionCallError> {
+    updated_input
+        .get("command")
+        .and_then(JsonValue::as_str)
+        .ok_or_else(|| {
+            FunctionCallError::RespondToModel(
+                "hook returned updatedInput without string field `command`".to_string(),
+            )
+        })
+}
+
 struct RunExecLikeArgs {
     tool_name: String,
     exec_params: ExecParams,
@@ -212,6 +223,50 @@ impl ToolHandler for ShellHandler {
         })
     }
 
+    fn with_updated_hook_input(
+        &self,
+        mut invocation: ToolInvocation,
+        updated_input: JsonValue,
+    ) -> Result<ToolInvocation, FunctionCallError> {
+        let command = updated_hook_command(&updated_input)?;
+        invocation.payload = match invocation.payload {
+            ToolPayload::Function { arguments } => {
+                let command = shlex::split(command).ok_or_else(|| {
+                    FunctionCallError::RespondToModel(
+                        "hook returned shell input with an invalid command string".to_string(),
+                    )
+                })?;
+                let mut arguments: JsonValue = parse_arguments(&arguments)?;
+                let JsonValue::Object(arguments) = &mut arguments else {
+                    return Err(FunctionCallError::RespondToModel(
+                        "shell arguments must be an object".to_string(),
+                    ));
+                };
+                arguments.insert(
+                    "command".to_string(),
+                    JsonValue::Array(command.into_iter().map(JsonValue::String).collect()),
+                );
+                ToolPayload::Function {
+                    arguments: serde_json::to_string(&arguments).map_err(|err| {
+                        FunctionCallError::RespondToModel(format!(
+                            "failed to serialize rewritten shell arguments: {err}"
+                        ))
+                    })?,
+                }
+            }
+            ToolPayload::LocalShell { mut params } => {
+                params.command = shlex::split(command).ok_or_else(|| {
+                    FunctionCallError::RespondToModel(
+                        "hook returned shell input with an invalid command string".to_string(),
+                    )
+                })?;
+                ToolPayload::LocalShell { params }
+            }
+            payload => payload,
+        };
+        Ok(invocation)
+    }
+
     fn post_tool_use_payload(
         &self,
         invocation: &ToolInvocation,
@@ -324,6 +379,36 @@ impl ToolHandler for ShellCommandHandler {
             tool_name: HookToolName::bash(),
             tool_input: serde_json::json!({ "command": command }),
         })
+    }
+
+    fn with_updated_hook_input(
+        &self,
+        mut invocation: ToolInvocation,
+        updated_input: JsonValue,
+    ) -> Result<ToolInvocation, FunctionCallError> {
+        let ToolPayload::Function { arguments } = invocation.payload else {
+            return Err(FunctionCallError::RespondToModel(
+                "hook input rewrite received unsupported shell_command payload".to_string(),
+            ));
+        };
+        let mut arguments: JsonValue = parse_arguments(&arguments)?;
+        let JsonValue::Object(arguments) = &mut arguments else {
+            return Err(FunctionCallError::RespondToModel(
+                "shell_command arguments must be an object".to_string(),
+            ));
+        };
+        arguments.insert(
+            "command".to_string(),
+            JsonValue::String(updated_hook_command(&updated_input)?.to_string()),
+        );
+        invocation.payload = ToolPayload::Function {
+            arguments: serde_json::to_string(&arguments).map_err(|err| {
+                FunctionCallError::RespondToModel(format!(
+                    "failed to serialize rewritten shell_command arguments: {err}"
+                ))
+            })?,
+        };
+        Ok(invocation)
     }
 
     fn post_tool_use_payload(

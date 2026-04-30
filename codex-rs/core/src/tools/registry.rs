@@ -78,6 +78,20 @@ pub trait ToolHandler: Send + Sync {
         None
     }
 
+    /// Rebuilds a tool invocation from hook-facing `tool_input`.
+    ///
+    /// Tools that opt into input-rewriting hooks should invert the same stable
+    /// hook contract they expose from `pre_tool_use_payload`.
+    fn with_updated_hook_input(
+        &self,
+        _invocation: ToolInvocation,
+        _updated_input: Value,
+    ) -> Result<ToolInvocation, FunctionCallError> {
+        Err(FunctionCallError::RespondToModel(
+            "tool does not support hook input rewriting".to_string(),
+        ))
+    }
+
     /// Creates an optional consumer for streamed tool argument diffs.
     fn create_diff_consumer(&self) -> Option<Box<dyn ToolArgumentDiffConsumer>> {
         None
@@ -166,6 +180,12 @@ trait AnyToolHandler: Send + Sync {
 
     fn pre_tool_use_payload(&self, invocation: &ToolInvocation) -> Option<PreToolUsePayload>;
 
+    fn with_updated_hook_input(
+        &self,
+        invocation: ToolInvocation,
+        updated_input: Value,
+    ) -> Result<ToolInvocation, FunctionCallError>;
+
     fn create_diff_consumer(&self) -> Option<Box<dyn ToolArgumentDiffConsumer>>;
     fn handle_any<'a>(
         &'a self,
@@ -189,6 +209,14 @@ where
         ToolHandler::pre_tool_use_payload(self, invocation)
     }
 
+    fn with_updated_hook_input(
+        &self,
+        invocation: ToolInvocation,
+        updated_input: Value,
+    ) -> Result<ToolInvocation, FunctionCallError> {
+        ToolHandler::with_updated_hook_input(self, invocation, updated_input)
+    }
+
     fn create_diff_consumer(&self) -> Option<Box<dyn ToolArgumentDiffConsumer>> {
         ToolHandler::create_diff_consumer(self)
     }
@@ -197,9 +225,25 @@ where
         invocation: ToolInvocation,
     ) -> BoxFuture<'a, Result<AnyToolResult, FunctionCallError>> {
         Box::pin(async move {
+            let mut invocation = invocation;
+            let mut rewrites = 0;
+            let output = loop {
+                match self.handle(invocation.clone()).await {
+                    Err(FunctionCallError::UpdatedInput(updated_input)) => {
+                        rewrites += 1;
+                        if rewrites > 8 {
+                            return Err(FunctionCallError::RespondToModel(
+                                "hook input rewrite limit exceeded".to_string(),
+                            ));
+                        }
+                        invocation =
+                            ToolHandler::with_updated_hook_input(self, invocation, updated_input)?;
+                    }
+                    result => break result?,
+                }
+            };
             let call_id = invocation.call_id.clone();
             let payload = invocation.payload.clone();
-            let output = self.handle(invocation.clone()).await?;
             let post_tool_use_payload =
                 ToolHandler::post_tool_use_payload(self, &invocation, &output);
             Ok(AnyToolResult {
@@ -264,7 +308,7 @@ impl ToolRegistry {
     )]
     pub(crate) async fn dispatch_any(
         &self,
-        invocation: ToolInvocation,
+        mut invocation: ToolInvocation,
     ) -> Result<AnyToolResult, FunctionCallError> {
         let tool_name = invocation.tool_name.clone();
         let display_name = tool_name.display();
@@ -354,8 +398,8 @@ impl ToolRegistry {
             return Err(err);
         }
 
-        if let Some(pre_tool_use_payload) = handler.pre_tool_use_payload(&invocation)
-            && let Some(message) = run_pre_tool_use_hooks(
+        if let Some(pre_tool_use_payload) = handler.pre_tool_use_payload(&invocation) {
+            match run_pre_tool_use_hooks(
                 &invocation.session,
                 &invocation.turn,
                 invocation.call_id.clone(),
@@ -363,10 +407,21 @@ impl ToolRegistry {
                 &pre_tool_use_payload.tool_input,
             )
             .await
-        {
-            let err = FunctionCallError::RespondToModel(message);
-            dispatch_trace.record_failed(&err);
-            return Err(err);
+            {
+                crate::hook_runtime::PreToolUseHookResult::Blocked(message) => {
+                    let err = FunctionCallError::RespondToModel(message);
+                    dispatch_trace.record_failed(&err);
+                    return Err(err);
+                }
+                crate::hook_runtime::PreToolUseHookResult::Continue {
+                    updated_input: Some(updated_input),
+                } => {
+                    invocation = handler.with_updated_hook_input(invocation, updated_input)?;
+                }
+                crate::hook_runtime::PreToolUseHookResult::Continue {
+                    updated_input: None,
+                } => {}
+            }
         }
 
         let is_mutating = handler.is_mutating(&invocation).await;

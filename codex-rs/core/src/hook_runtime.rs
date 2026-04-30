@@ -43,6 +43,11 @@ pub(crate) struct HookRuntimeOutcome {
     pub additional_contexts: Vec<String>,
 }
 
+pub(crate) enum PreToolUseHookResult {
+    Continue { updated_input: Option<Value> },
+    Blocked(String),
+}
+
 pub(crate) enum PendingInputHookDisposition {
     Accepted(Box<PendingInputRecord>),
     Blocked { additional_contexts: Vec<String> },
@@ -140,7 +145,7 @@ pub(crate) async fn run_pre_tool_use_hooks(
     tool_use_id: String,
     tool_name: &HookToolName,
     tool_input: &Value,
-) -> Option<String> {
+) -> PreToolUseHookResult {
     let request = PreToolUseRequest {
         session_id: sess.conversation_id,
         turn_id: turn_context.sub_id.clone(),
@@ -161,24 +166,32 @@ pub(crate) async fn run_pre_tool_use_hooks(
         hook_events,
         should_block,
         block_reason,
+        updated_input,
     } = hooks.run_pre_tool_use(request).await;
     emit_hook_completed_events(sess, turn_context, hook_events).await;
 
     if should_block {
-        block_reason.map(|reason| {
-            if (tool_name.name() == "Bash" || tool_name.name() == "apply_patch")
-                && let Some(command) = tool_input.get("command").and_then(Value::as_str)
-            {
-                format!("Command blocked by PreToolUse hook: {reason}. Command: {command}")
-            } else {
-                format!(
-                    "Tool call blocked by PreToolUse hook: {reason}. Tool: {}",
-                    tool_name.name()
-                )
-            }
-        })
+        block_reason.map_or(
+            PreToolUseHookResult::Continue {
+                updated_input: None,
+            },
+            |reason| {
+                if (tool_name.name() == "Bash" || tool_name.name() == "apply_patch")
+                    && let Some(command) = tool_input.get("command").and_then(Value::as_str)
+                {
+                    PreToolUseHookResult::Blocked(format!(
+                        "Command blocked by PreToolUse hook: {reason}. Command: {command}"
+                    ))
+                } else {
+                    PreToolUseHookResult::Blocked(format!(
+                        "Tool call blocked by PreToolUse hook: {reason}. Tool: {}",
+                        tool_name.name()
+                    ))
+                }
+            },
+        )
     } else {
-        None
+        PreToolUseHookResult::Continue { updated_input }
     }
 }
 
