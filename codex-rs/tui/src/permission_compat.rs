@@ -4,8 +4,20 @@
 use codex_protocol::models::PermissionProfile;
 use codex_protocol::permissions::FileSystemSandboxPolicy;
 use codex_protocol::permissions::NetworkSandboxPolicy;
+use codex_protocol::protocol::SandboxPolicy;
 use codex_utils_absolute_path::AbsolutePathBuf;
 use std::path::Path;
+
+pub(crate) fn legacy_compatible_sandbox_policy(
+    permission_profile: &PermissionProfile,
+    cwd: &Path,
+) -> SandboxPolicy {
+    legacy_compatible_permission_profile(permission_profile, cwd)
+        .to_legacy_sandbox_policy(cwd)
+        .unwrap_or_else(|err| {
+            unreachable!("legacy-compatible permissions must project to legacy policy: {err}")
+        })
+}
 
 pub(crate) fn legacy_compatible_permission_profile(
     permission_profile: &PermissionProfile,

@@ -746,18 +746,10 @@ impl App {
                     self.chat_widget.show_windows_sandbox_setup_status();
                     self.windows_sandbox.setup_started_at = Some(Instant::now());
                     let session_telemetry = self.session_telemetry.clone();
-                    let Ok(policy) = permission_profile
-                        .to_legacy_sandbox_policy(policy_cwd.as_path())
-                        .inspect_err(|err| {
-                            tracing::error!(
-                                %err,
-                                "approval preset permissions cannot be projected for elevated Windows sandbox setup"
-                            );
-                        })
-                    else {
-                        tx.send(AppEvent::OpenWindowsSandboxFallbackPrompt { preset });
-                        return Ok(AppRunControl::Continue);
-                    };
+                    let policy = crate::permission_compat::legacy_compatible_sandbox_policy(
+                        &permission_profile,
+                        policy_cwd.as_path(),
+                    );
                     tokio::task::spawn_blocking(move || {
                         let result = crate::legacy_core::windows_sandbox::run_elevated_setup(
                             &policy,
@@ -831,18 +823,10 @@ impl App {
                     let session_telemetry = self.session_telemetry.clone();
 
                     self.chat_widget.show_windows_sandbox_setup_status();
-                    let Ok(policy) = permission_profile
-                        .to_legacy_sandbox_policy(policy_cwd.as_path())
-                        .inspect_err(|err| {
-                            tracing::error!(
-                                %err,
-                                "approval preset permissions cannot be projected for legacy Windows sandbox setup"
-                            );
-                        })
-                    else {
-                        tx.send(AppEvent::OpenWindowsSandboxFallbackPrompt { preset });
-                        return Ok(AppRunControl::Continue);
-                    };
+                    let policy = crate::permission_compat::legacy_compatible_sandbox_policy(
+                        &permission_profile,
+                        policy_cwd.as_path(),
+                    );
                     tokio::task::spawn_blocking(move || {
                         if let Err(err) =
                             crate::legacy_core::windows_sandbox::run_legacy_setup_preflight(

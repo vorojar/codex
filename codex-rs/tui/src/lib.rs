@@ -2210,9 +2210,10 @@ mod tests {
             .clone()
             .unwrap_or_else(|| "gpt-5.1".to_string());
         let permission_profile = config.permissions.permission_profile();
-        let sandbox_policy = permission_profile
-            .to_legacy_sandbox_policy(config.cwd.as_path())
-            .expect("configured permissions must have a legacy compatibility projection");
+        let sandbox_policy = permission_compat::legacy_compatible_sandbox_policy(
+            &permission_profile,
+            config.cwd.as_path(),
+        );
         TurnContextItem {
             turn_id: None,
             trace_id: None,

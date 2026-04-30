@@ -3,7 +3,7 @@ use crate::bottom_pane::FeedbackAudience;
 use crate::legacy_core::append_message_history_entry;
 use crate::legacy_core::config::Config;
 use crate::legacy_core::message_history_metadata;
-use crate::permission_compat::legacy_compatible_permission_profile;
+use crate::permission_compat::legacy_compatible_sandbox_policy;
 use crate::status::StatusAccountDisplay;
 use crate::status::plan_type_display_name;
 use codex_app_server_client::AppServerClient;
@@ -1159,15 +1159,7 @@ fn turn_permissions_overrides(
     };
     let sandbox_policy = (matches!(thread_params_mode, ThreadParamsMode::Remote)
         || permissions.is_none())
-    .then(|| {
-        let legacy_profile = legacy_compatible_permission_profile(permission_profile, cwd);
-        let policy = legacy_profile
-            .to_legacy_sandbox_policy(cwd)
-            .unwrap_or_else(|err| {
-                unreachable!("legacy-compatible permissions must project to legacy policy: {err}")
-            });
-        policy.into()
-    });
+    .then(|| legacy_compatible_sandbox_policy(permission_profile, cwd).into());
     (sandbox_policy, permissions)
 }
 
