@@ -528,6 +528,7 @@ async fn status_snapshot_shows_auto_review_permissions() {
 async fn status_permissions_full_disk_managed_with_network_is_danger_full_access() {
     let temp_home = TempDir::new().expect("temp home");
     let mut config = test_config(&temp_home).await;
+    config.approvals_reviewer = ApprovalsReviewer::User;
     config
         .permissions
         .approval_policy
@@ -548,9 +549,10 @@ async fn status_permissions_full_disk_managed_with_network_is_danger_full_access
 }
 
 #[tokio::test]
-async fn status_permissions_full_disk_managed_without_network_is_external_sandbox() {
+async fn status_permissions_full_disk_managed_without_network_is_custom_permissions() {
     let temp_home = TempDir::new().expect("temp home");
     let mut config = test_config(&temp_home).await;
+    config.approvals_reviewer = ApprovalsReviewer::User;
     config
         .permissions
         .approval_policy
@@ -566,7 +568,7 @@ async fn status_permissions_full_disk_managed_without_network_is_external_sandbo
 
     assert_eq!(
         permissions_text_for(&config).as_deref(),
-        Some("Custom (external-sandbox, on-request)")
+        Some("Custom (custom permissions, on-request)")
     );
 }
 
