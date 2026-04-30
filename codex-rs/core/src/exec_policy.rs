@@ -258,80 +258,88 @@ impl ExecPolicyManager {
         .filter(|commands| !commands.is_empty());
         #[cfg(not(windows))]
         let powershell_commands: Option<Vec<Vec<String>>> = None;
-        let (commands, used_complex_parsing) = if let Some(commands) = powershell_commands.clone() {
-            (commands, false)
-        } else {
-            commands_for_exec_policy(original_command)
-        };
-        // Keep heredoc prefix parsing for rule evaluation so existing
-        // allow/prompt/forbidden rules still apply, but avoid auto-derived
-        // amendments when only the heredoc fallback parser matched.
-        let auto_amendment_allowed = !used_complex_parsing;
-        let exec_policy_fallback = |parsed_command: &[String]| {
-            #[cfg(windows)]
-            let command_for_heuristics = if powershell_commands.is_some() {
-                original_command
-            } else {
-                parsed_command
-            };
-            #[cfg(not(windows))]
-            let command_for_heuristics = parsed_command;
-            render_decision_for_unmatched_command(
-                approval_policy,
-                &permission_profile,
-                file_system_sandbox_policy,
-                sandbox_cwd,
-                command_for_heuristics,
-                sandbox_permissions,
-                used_complex_parsing,
-            )
-        };
         let match_options = MatchOptions {
             resolve_host_executables: true,
         };
-        let mut evaluation = exec_policy.check_multiple_with_options(
-            commands.iter(),
-            &exec_policy_fallback,
-            &match_options,
-        );
-
-        #[cfg(windows)]
-        if powershell_commands.is_some() {
-            let outer_policy_matches = exec_policy.matches_for_command_with_options(
-                original_command,
-                /*heuristics_fallback*/ None,
-                &match_options,
-            );
-            if outer_policy_matches.is_empty() {
-                for rule_match in &mut evaluation.matched_rules {
-                    if let RuleMatch::HeuristicsRuleMatch {
-                        command: matched_command,
-                        ..
-                    } = rule_match
-                    {
-                        *matched_command = original_command.to_vec();
-                    }
-                }
-            } else {
-                evaluation.matched_rules.retain(is_policy_match);
-                evaluation.matched_rules.extend(outer_policy_matches);
+        let (evaluation, requested_amendment, used_complex_parsing) =
+            if let Some(powershell_commands) = powershell_commands.as_ref() {
+                // PowerShell wrappers have two useful views: the outer argv for
+                // heuristics and wrapper-targeted rules, and the recovered
+                // inner commands for explicit prefix matching.
+                let exec_policy_fallback = |_: &[String]| {
+                    render_decision_for_unmatched_command(
+                        approval_policy,
+                        &permission_profile,
+                        file_system_sandbox_policy,
+                        sandbox_cwd,
+                        original_command,
+                        sandbox_permissions,
+                        /*used_complex_parsing*/ false,
+                    )
+                };
+                let mut evaluation = exec_policy.check_multiple_with_options(
+                    powershell_commands.iter(),
+                    &exec_policy_fallback,
+                    &match_options,
+                );
+                evaluation
+                    .matched_rules
+                    .extend(exec_policy.matches_for_command_with_options(
+                        original_command,
+                        /*heuristics_fallback*/ None,
+                        &match_options,
+                    ));
                 evaluation.decision = evaluation
                     .matched_rules
                     .iter()
                     .map(RuleMatch::decision)
                     .max()
                     .expect("invariant failed: matched_rules must be non-empty");
-            }
-        }
 
-        let requested_amendment = derive_requested_execpolicy_amendment_from_prefix_rule(
-            prefix_rule.as_ref(),
-            &evaluation.matched_rules,
-            exec_policy.as_ref(),
-            &commands,
-            &exec_policy_fallback,
-            &match_options,
-        );
+                let requested_amendment =
+                    derive_requested_execpolicy_amendment_from_prefix_rule_for_powershell(
+                        prefix_rule.as_ref(),
+                        &evaluation.matched_rules,
+                        exec_policy.as_ref(),
+                        powershell_commands,
+                        &match_options,
+                    );
+                (evaluation, requested_amendment, false)
+            } else {
+                let (commands, used_complex_parsing) = commands_for_exec_policy(original_command);
+                let exec_policy_fallback = |parsed_command: &[String]| {
+                    render_decision_for_unmatched_command(
+                        approval_policy,
+                        &permission_profile,
+                        file_system_sandbox_policy,
+                        sandbox_cwd,
+                        parsed_command,
+                        sandbox_permissions,
+                        used_complex_parsing,
+                    )
+                };
+                let evaluation = exec_policy.check_multiple_with_options(
+                    commands.iter(),
+                    &exec_policy_fallback,
+                    &match_options,
+                );
+                let requested_amendment = derive_requested_execpolicy_amendment_from_prefix_rule(
+                    prefix_rule.as_ref(),
+                    &evaluation.matched_rules,
+                    exec_policy.as_ref(),
+                    &commands,
+                    &exec_policy_fallback,
+                    &match_options,
+                );
+                (evaluation, requested_amendment, used_complex_parsing)
+            };
+        // Keep heredoc prefix parsing for rule evaluation so existing
+        // allow/prompt/forbidden rules still apply, but avoid auto-derived
+        // amendments when only the heredoc fallback parser matched.
+        let auto_amendment_allowed = !used_complex_parsing;
+        let auto_prompt_amendment_allowed = auto_amendment_allowed
+            && !(powershell_commands.is_some()
+                && evaluation.matched_rules.iter().any(is_policy_match));
 
         match evaluation.decision {
             Decision::Forbidden => ExecApprovalRequirement::Forbidden {
@@ -348,7 +356,7 @@ impl ExecPolicyManager {
                     None => ExecApprovalRequirement::NeedsApproval {
                         reason: derive_prompt_reason(original_command, &evaluation),
                         proposed_execpolicy_amendment: requested_amendment.or_else(|| {
-                            if auto_amendment_allowed {
+                            if auto_prompt_amendment_allowed {
                                 try_derive_execpolicy_amendment_for_prompt_rules(
                                     &evaluation.matched_rules,
                                 )
@@ -808,6 +816,16 @@ fn try_derive_execpolicy_amendment_for_allow_rules(
         })
 }
 
+fn prefix_rule_is_banned(prefix_rule: &[String]) -> bool {
+    BANNED_PREFIX_SUGGESTIONS.iter().any(|banned| {
+        prefix_rule.len() == banned.len()
+            && prefix_rule
+                .iter()
+                .map(String::as_str)
+                .eq(banned.iter().copied())
+    })
+}
+
 fn derive_requested_execpolicy_amendment_from_prefix_rule(
     prefix_rule: Option<&Vec<String>>,
     matched_rules: &[RuleMatch],
@@ -820,13 +838,7 @@ fn derive_requested_execpolicy_amendment_from_prefix_rule(
     if prefix_rule.is_empty() {
         return None;
     }
-    if BANNED_PREFIX_SUGGESTIONS.iter().any(|banned| {
-        prefix_rule.len() == banned.len()
-            && prefix_rule
-                .iter()
-                .map(String::as_str)
-                .eq(banned.iter().copied())
-    }) {
+    if prefix_rule_is_banned(prefix_rule) {
         return None;
     }
 
@@ -847,6 +859,48 @@ fn derive_requested_execpolicy_amendment_from_prefix_rule(
     } else {
         None
     }
+}
+
+fn derive_requested_execpolicy_amendment_from_prefix_rule_for_powershell(
+    prefix_rule: Option<&Vec<String>>,
+    matched_rules: &[RuleMatch],
+    exec_policy: &Policy,
+    powershell_commands: &[Vec<String>],
+    match_options: &MatchOptions,
+) -> Option<ExecPolicyAmendment> {
+    let prefix_rule = prefix_rule?;
+    if prefix_rule.is_empty() {
+        return None;
+    }
+    if prefix_rule_is_banned(prefix_rule) {
+        return None;
+    }
+
+    if matched_rules.iter().any(is_policy_match) {
+        return None;
+    }
+
+    let amendment = ExecPolicyAmendment::new(prefix_rule.clone());
+    let mut policy_with_prefix_rule = exec_policy.clone();
+    if policy_with_prefix_rule
+        .add_prefix_rule(&amendment.command, Decision::Allow)
+        .is_err()
+    {
+        return None;
+    }
+
+    powershell_commands
+        .iter()
+        .all(|command| {
+            let matched_rules = policy_with_prefix_rule.matches_for_command_with_options(
+                command,
+                /*heuristics_fallback*/ None,
+                match_options,
+            );
+            !matched_rules.is_empty()
+                && matched_rules.iter().map(RuleMatch::decision).max() == Some(Decision::Allow)
+        })
+        .then_some(amendment)
 }
 
 fn prefix_rule_would_approve_all_commands(

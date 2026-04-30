@@ -91,8 +91,7 @@ pub fn try_parse_powershell_command_sequence(
 ) -> Option<Vec<Vec<String>>> {
     let (executable, args) = command.split_first()?;
     if is_powershell_executable(executable) {
-        let parser_executable = trusted_powershell_parser_executable(executable)?;
-        parse_powershell_invocation(&parser_executable, args, mode)
+        parse_powershell_invocation(executable, args, mode)
     } else {
         None
     }
@@ -177,22 +176,6 @@ pub(crate) fn parse_powershell_script_to_commands(
     script: &str,
 ) -> Option<Vec<Vec<String>>> {
     try_parse_powershell_ast_commands(executable, script)
-}
-
-fn trusted_powershell_parser_executable(exe: &str) -> Option<String> {
-    let executable_name = std::path::Path::new(exe)
-        .file_name()
-        .and_then(|osstr| osstr.to_str())
-        .unwrap_or(exe)
-        .to_ascii_lowercase();
-
-    let parser_executable = match executable_name.as_str() {
-        "powershell" | "powershell.exe" => try_find_powershell_executable_blocking()?,
-        "pwsh" | "pwsh.exe" => try_find_pwsh_executable_blocking()?,
-        _ => return None,
-    };
-
-    Some(parser_executable.as_path().to_string_lossy().into_owned())
 }
 
 pub(crate) fn is_powershell_executable(exe: &str) -> bool {
@@ -431,28 +414,6 @@ mod tests {
             Some(vec![
                 vec!["Get-Content".to_string(), "foo bar".to_string(),]
             ]),
-        );
-    }
-
-    #[cfg(windows)]
-    #[test]
-    fn uses_trusted_system_powershell_for_ast_parsing() {
-        let command = vec![
-            r"C:\repo\powershell.exe".to_string(),
-            "-NoExit".to_string(),
-            "-Command".to_string(),
-            "Get-Content Cargo.toml".to_string(),
-        ];
-
-        assert_eq!(
-            try_parse_powershell_command_sequence(
-                &command,
-                PowershellCommandSequenceParseMode::ExecPolicy,
-            ),
-            Some(vec![vec![
-                "Get-Content".to_string(),
-                "Cargo.toml".to_string(),
-            ]]),
         );
     }
 }

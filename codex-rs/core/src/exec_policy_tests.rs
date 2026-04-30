@@ -837,6 +837,35 @@ async fn allow_rule_matches_powershell_wrapped_inner_commands() {
     .await;
 }
 
+#[cfg(windows)]
+#[tokio::test]
+async fn powershell_outer_allow_does_not_override_unmatched_wrapper_prompt() {
+    assert_exec_approval_requirement_for_command(
+        ExecApprovalRequirementScenario {
+            policy_src: Some(
+                r#"prefix_rule(pattern=["powershell.exe"], decision="allow")"#.to_string(),
+            ),
+            command: vec_str(&[
+                "powershell.exe",
+                "-WindowStyle",
+                "Hidden",
+                "-Command",
+                "Get-Content Cargo.toml",
+            ]),
+            approval_policy: AskForApproval::OnRequest,
+            sandbox_policy: SandboxPolicy::new_read_only_policy(),
+            file_system_sandbox_policy: read_only_file_system_sandbox_policy(),
+            sandbox_permissions: SandboxPermissions::UseDefault,
+            prefix_rule: None,
+        },
+        ExecApprovalRequirement::NeedsApproval {
+            reason: None,
+            proposed_execpolicy_amendment: None,
+        },
+    )
+    .await;
+}
+
 #[test]
 fn commands_for_exec_policy_falls_back_for_empty_shell_script() {
     let command = vec!["bash".to_string(), "-lc".to_string(), "".to_string()];
@@ -1917,6 +1946,53 @@ fn derive_requested_execpolicy_amendment_allows_non_exact_banned_prefix_rule_mat
     assert_eq!(
         Some(ExecPolicyAmendment::new(prefix_rule.clone())),
         derive_requested_execpolicy_amendment_for_test(Some(&prefix_rule), &[])
+    );
+}
+
+#[test]
+fn derive_requested_execpolicy_amendment_for_powershell_uses_inner_commands() {
+    let prefix_rule = vec!["git".to_string(), "push".to_string()];
+    let powershell_commands = vec![vec![
+        "git".to_string(),
+        "push".to_string(),
+        "origin".to_string(),
+        "main".to_string(),
+    ]];
+
+    assert_eq!(
+        Some(ExecPolicyAmendment::new(prefix_rule.clone())),
+        derive_requested_execpolicy_amendment_from_prefix_rule_for_powershell(
+            Some(&prefix_rule),
+            &[],
+            &Policy::empty(),
+            &powershell_commands,
+            &MatchOptions::default(),
+        )
+    );
+}
+
+#[test]
+fn derive_requested_execpolicy_amendment_for_powershell_requires_all_inner_commands_to_match() {
+    let prefix_rule = vec!["git".to_string(), "push".to_string()];
+    let powershell_commands = vec![
+        vec![
+            "git".to_string(),
+            "push".to_string(),
+            "origin".to_string(),
+            "main".to_string(),
+        ],
+        vec!["whoami".to_string()],
+    ];
+
+    assert_eq!(
+        None,
+        derive_requested_execpolicy_amendment_from_prefix_rule_for_powershell(
+            Some(&prefix_rule),
+            &[],
+            &Policy::empty(),
+            &powershell_commands,
+            &MatchOptions::default(),
+        )
     );
 }
 
