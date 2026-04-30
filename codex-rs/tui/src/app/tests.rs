@@ -2746,9 +2746,7 @@ async fn inactive_thread_started_notification_initializes_replay_session() -> Re
         current_date: None,
         timezone: None,
         approval_policy: primary_session.approval_policy,
-        sandbox_policy: permission_profile
-            .to_legacy_sandbox_policy(test_path_buf("/tmp/agent").as_path())
-            .expect("workspace profile must be legacy-compatible"),
+        sandbox_policy: None,
         permission_profile: Some(permission_profile),
         network: None,
         file_system_sandbox_policy: None,

@@ -2210,10 +2210,6 @@ mod tests {
             .clone()
             .unwrap_or_else(|| "gpt-5.1".to_string());
         let permission_profile = config.permissions.permission_profile();
-        let sandbox_policy = permission_compat::legacy_compatible_sandbox_policy(
-            &permission_profile,
-            config.cwd.as_path(),
-        );
         TurnContextItem {
             turn_id: None,
             trace_id: None,
@@ -2221,7 +2217,7 @@ mod tests {
             current_date: None,
             timezone: None,
             approval_policy: config.permissions.approval_policy.value(),
-            sandbox_policy,
+            sandbox_policy: None,
             permission_profile: Some(permission_profile),
             network: None,
             file_system_sandbox_policy: None,

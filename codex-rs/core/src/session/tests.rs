@@ -1745,7 +1745,7 @@ async fn record_initial_history_forked_hydrates_previous_turn_settings() {
         current_date: turn_context.current_date.clone(),
         timezone: turn_context.timezone.clone(),
         approval_policy: turn_context.approval_policy.value(),
-        sandbox_policy: turn_context.sandbox_policy(),
+        sandbox_policy: Some(turn_context.sandbox_policy()),
         permission_profile: None,
         network: None,
         file_system_sandbox_policy: None,
@@ -5926,6 +5926,7 @@ async fn turn_context_item_omits_legacy_equivalent_file_system_sandbox_policy() 
 
     let item = turn_context.to_turn_context_item();
 
+    assert_eq!(item.sandbox_policy, None);
     assert_eq!(item.file_system_sandbox_policy, None);
     assert_eq!(
         item.permission_profile,
@@ -5934,7 +5935,7 @@ async fn turn_context_item_omits_legacy_equivalent_file_system_sandbox_policy() 
 }
 
 #[tokio::test]
-async fn turn_context_item_stores_split_file_system_sandbox_policy_when_different() {
+async fn turn_context_item_stores_split_file_system_policy_in_permission_profile() {
     let (_session, mut turn_context) = make_session_and_context().await;
     let file_system_sandbox_policy = file_system_policy_with_unreadable_glob(&turn_context);
     turn_context.permission_profile = PermissionProfile::from_runtime_permissions_with_enforcement(
@@ -5945,10 +5946,8 @@ async fn turn_context_item_stores_split_file_system_sandbox_policy_when_differen
 
     let item = turn_context.to_turn_context_item();
 
-    assert_eq!(
-        item.file_system_sandbox_policy,
-        Some(file_system_sandbox_policy)
-    );
+    assert_eq!(item.sandbox_policy, None);
+    assert_eq!(item.file_system_sandbox_policy, None);
     assert_eq!(
         item.permission_profile,
         Some(turn_context.permission_profile())
@@ -6073,8 +6072,7 @@ async fn record_context_updates_and_set_reference_context_item_persists_baseline
 }
 
 #[tokio::test]
-async fn record_context_updates_and_set_reference_context_item_persists_split_file_system_policy_to_rollout()
- {
+async fn record_context_updates_and_set_reference_context_item_persists_profile_to_rollout() {
     let (mut session, mut turn_context) = make_session_and_context().await;
     let file_system_sandbox_policy = file_system_policy_with_unreadable_glob(&turn_context);
     turn_context.permission_profile = PermissionProfile::from_runtime_permissions_with_enforcement(
@@ -6096,12 +6094,12 @@ async fn record_context_updates_and_set_reference_context_item_persists_split_fi
     else {
         panic!("expected resumed rollout history");
     };
-    let persisted_file_system_sandbox_policy = resumed.history.iter().find_map(|item| match item {
-        RolloutItem::TurnContext(ctx) => ctx.file_system_sandbox_policy.clone(),
+    let persisted_permission_profile = resumed.history.iter().find_map(|item| match item {
+        RolloutItem::TurnContext(ctx) => ctx.permission_profile.clone(),
         _ => None,
     });
     assert_eq!(
-        persisted_file_system_sandbox_policy,
+        persisted_permission_profile.map(|profile| profile.file_system_sandbox_policy()),
         Some(file_system_sandbox_policy)
     );
 }

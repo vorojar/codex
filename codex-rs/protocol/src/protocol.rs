@@ -2856,7 +2856,8 @@ pub struct TurnContextItem {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub timezone: Option<String>,
     pub approval_policy: AskForApproval,
-    pub sandbox_policy: SandboxPolicy,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sandbox_policy: Option<SandboxPolicy>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub permission_profile: Option<PermissionProfile>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -2886,17 +2887,22 @@ pub struct TurnContextItem {
 impl TurnContextItem {
     pub fn permission_profile(&self) -> PermissionProfile {
         self.permission_profile.clone().unwrap_or_else(|| {
+            let Some(sandbox_policy) = self.sandbox_policy.as_ref() else {
+                panic!(
+                    "turn context item must contain permission_profile or legacy sandbox_policy"
+                );
+            };
             let file_system_sandbox_policy =
                 self.file_system_sandbox_policy.clone().unwrap_or_else(|| {
                     FileSystemSandboxPolicy::from_legacy_sandbox_policy_for_cwd(
-                        &self.sandbox_policy,
+                        sandbox_policy,
                         &self.cwd,
                     )
                 });
             PermissionProfile::from_runtime_permissions_with_enforcement(
-                SandboxEnforcement::from_legacy_sandbox_policy(&self.sandbox_policy),
+                SandboxEnforcement::from_legacy_sandbox_policy(sandbox_policy),
                 &file_system_sandbox_policy,
-                NetworkSandboxPolicy::from(&self.sandbox_policy),
+                NetworkSandboxPolicy::from(sandbox_policy),
             )
         })
     }
@@ -5101,7 +5107,7 @@ mod tests {
             current_date: None,
             timezone: None,
             approval_policy: AskForApproval::Never,
-            sandbox_policy: SandboxPolicy::DangerFullAccess,
+            sandbox_policy: Some(SandboxPolicy::DangerFullAccess),
             permission_profile: None,
             network: Some(TurnContextNetworkItem {
                 allowed_domains: vec!["api.example.com".to_string()],

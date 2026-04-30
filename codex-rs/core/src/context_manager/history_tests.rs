@@ -121,9 +121,6 @@ fn developer_msg_with_fragments(texts: &[&str]) -> ResponseItem {
 fn reference_context_item() -> TurnContextItem {
     let cwd = PathBuf::from("/tmp/reference-cwd");
     let permission_profile = PermissionProfile::read_only();
-    let sandbox_policy = permission_profile
-        .to_legacy_sandbox_policy(cwd.as_path())
-        .expect("read-only permission profile should have a legacy projection");
 
     TurnContextItem {
         turn_id: Some("reference-turn".to_string()),
@@ -132,7 +129,7 @@ fn reference_context_item() -> TurnContextItem {
         current_date: Some("2026-03-23".to_string()),
         timezone: Some("America/Los_Angeles".to_string()),
         approval_policy: AskForApproval::OnRequest,
-        sandbox_policy,
+        sandbox_policy: None,
         permission_profile: Some(permission_profile),
         network: None,
         file_system_sandbox_policy: None,
