@@ -1,6 +1,14 @@
 use std::sync::Arc;
+#[cfg(not(target_os = "windows"))]
+use std::time::Duration;
 
+#[cfg(not(target_os = "windows"))]
+use anyhow::Context;
+#[cfg(not(target_os = "windows"))]
+use anyhow::Result;
 use codex_core::CodexThread;
+#[cfg(not(target_os = "windows"))]
+use codex_features::Feature;
 use codex_protocol::AgentPath;
 use codex_protocol::items::TurnItem;
 use codex_protocol::models::PermissionProfile;
@@ -20,6 +28,8 @@ use core_test_support::responses::ev_output_text_delta;
 use core_test_support::responses::ev_reasoning_item;
 use core_test_support::responses::ev_reasoning_item_added;
 use core_test_support::responses::ev_response_created;
+#[cfg(not(target_os = "windows"))]
+use core_test_support::skip_if_no_network;
 use core_test_support::streaming_sse::StreamingSseChunk;
 use core_test_support::streaming_sse::StreamingSseServer;
 use core_test_support::streaming_sse::start_streaming_sse_server;
@@ -32,6 +42,14 @@ use serde_json::Value;
 use serde_json::from_slice;
 use serde_json::json;
 use tokio::sync::oneshot;
+#[cfg(not(target_os = "windows"))]
+use tokio::time::sleep;
+
+#[cfg(not(target_os = "windows"))]
+const BLOCKED_PROMPT_CONTEXT: &str = "Remember the blocked lighthouse note.";
+#[cfg(not(target_os = "windows"))]
+const HOOK_PROMPT_XML_USER_TEXT: &str =
+    r#"<hook_prompt hook_run_id="hook-run-1">blocked xml prompt</hook_prompt>"#;
 
 fn ev_message_item_done(id: &str, text: &str) -> Value {
     serde_json::json!({
@@ -82,6 +100,66 @@ fn response_completed_chunks(response_id: &str) -> Vec<StreamingSseChunk> {
         chunk(ev_response_created(response_id)),
         chunk(ev_completed(response_id)),
     ]
+}
+
+#[cfg(not(target_os = "windows"))]
+fn write_user_prompt_submit_hook(
+    home: &std::path::Path,
+    blocked_prompt: &str,
+    additional_context: &str,
+) -> Result<()> {
+    let script_path = home.join("user_prompt_submit_hook.py");
+    let log_path = home.join("user_prompt_submit_hook_log.jsonl");
+    let log_path = log_path.display();
+    let blocked_prompt_json =
+        serde_json::to_string(blocked_prompt).context("serialize blocked prompt for test")?;
+    let additional_context_json = serde_json::to_string(additional_context)
+        .context("serialize user prompt submit additional context for test")?;
+    let script = format!(
+        r#"import json
+from pathlib import Path
+import sys
+
+payload = json.load(sys.stdin)
+with Path(r"{log_path}").open("a", encoding="utf-8") as handle:
+    handle.write(json.dumps(payload) + "\n")
+
+if payload.get("prompt") == {blocked_prompt_json}:
+    print(json.dumps({{
+        "decision": "block",
+        "reason": "blocked by hook",
+        "hookSpecificOutput": {{
+            "hookEventName": "UserPromptSubmit",
+            "additionalContext": {additional_context_json}
+        }}
+    }}))
+"#,
+    );
+    let hooks = serde_json::json!({
+        "hooks": {
+            "UserPromptSubmit": [{
+                "hooks": [{
+                    "type": "command",
+                    "command": format!("python3 {}", script_path.display()),
+                    "statusMessage": "running user prompt submit hook",
+                }]
+            }]
+        }
+    });
+
+    std::fs::write(&script_path, script).context("write user prompt submit hook script")?;
+    std::fs::write(home.join("hooks.json"), hooks.to_string()).context("write hooks.json")?;
+    Ok(())
+}
+
+#[cfg(not(target_os = "windows"))]
+fn read_user_prompt_submit_hook_inputs(home: &std::path::Path) -> Result<Vec<Value>> {
+    std::fs::read_to_string(home.join("user_prompt_submit_hook_log.jsonl"))
+        .context("read user prompt submit hook log")?
+        .lines()
+        .filter(|line| !line.trim().is_empty())
+        .map(|line| serde_json::from_str(line).context("parse user prompt submit hook log line"))
+        .collect()
 }
 
 async fn build_codex(server: &StreamingSseServer) -> Arc<CodexThread> {
@@ -485,6 +563,149 @@ async fn user_input_does_not_preempt_after_reasoning_item() {
     );
 
     server.shutdown().await;
+}
+
+#[cfg(not(target_os = "windows"))]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn queued_hook_prompt_xml_text_still_runs_user_prompt_submit() -> Result<()> {
+    skip_if_no_network!(Ok(()));
+
+    let (gate_completed_tx, gate_completed_rx) = oneshot::channel();
+    let first_chunks = vec![
+        StreamingSseChunk {
+            gate: None,
+            body: sse_event(ev_response_created("resp-1")),
+        },
+        StreamingSseChunk {
+            gate: None,
+            body: sse_event(ev_message_item_added("msg-1", "")),
+        },
+        StreamingSseChunk {
+            gate: None,
+            body: sse_event(ev_output_text_delta("first ")),
+        },
+        StreamingSseChunk {
+            gate: None,
+            body: sse_event(ev_message_item_done("msg-1", "first response")),
+        },
+        StreamingSseChunk {
+            gate: Some(gate_completed_rx),
+            body: sse_event(ev_completed("resp-1")),
+        },
+    ];
+    let second_chunks = vec![StreamingSseChunk {
+        gate: None,
+        body: responses::sse(vec![
+            ev_response_created("resp-2"),
+            responses::ev_assistant_message("msg-2", "accepted queued prompt handled"),
+            ev_completed("resp-2"),
+        ]),
+    }];
+    let (server, _completions) =
+        start_streaming_sse_server(vec![first_chunks, second_chunks]).await;
+
+    let mut builder = test_codex()
+        .with_model("gpt-5.4")
+        .with_pre_build_hook(|home| {
+            if let Err(error) = write_user_prompt_submit_hook(
+                home,
+                HOOK_PROMPT_XML_USER_TEXT,
+                BLOCKED_PROMPT_CONTEXT,
+            ) {
+                panic!("failed to write user prompt submit hook test fixture: {error}");
+            }
+        })
+        .with_config(|config| {
+            config
+                .features
+                .enable(Feature::CodexHooks)
+                .expect("test config should allow feature update");
+        });
+    let test = builder.build_with_streaming_server(&server).await?;
+
+    test.codex
+        .submit(Op::UserInput {
+            environments: None,
+            items: vec![UserInput::Text {
+                text: "initial prompt".to_string(),
+                text_elements: Vec::new(),
+            }],
+            final_output_json_schema: None,
+            responsesapi_client_metadata: None,
+        })
+        .await?;
+
+    wait_for_event(&test.codex, |event| {
+        matches!(event, EventMsg::AgentMessageContentDelta(_))
+    })
+    .await;
+
+    for text in ["accepted queued prompt", HOOK_PROMPT_XML_USER_TEXT] {
+        test.codex
+            .submit(Op::UserInput {
+                environments: None,
+                items: vec![UserInput::Text {
+                    text: text.to_string(),
+                    text_elements: Vec::new(),
+                }],
+                final_output_json_schema: None,
+                responsesapi_client_metadata: None,
+            })
+            .await?;
+    }
+
+    sleep(Duration::from_millis(100)).await;
+    let _ = gate_completed_tx.send(());
+
+    let requests = tokio::time::timeout(Duration::from_secs(30), async {
+        loop {
+            let requests = server.requests().await;
+            if requests.len() >= 2 {
+                break requests;
+            }
+            sleep(Duration::from_millis(50)).await;
+        }
+    })
+    .await
+    .expect("second request should arrive")
+    .into_iter()
+    .collect::<Vec<_>>();
+
+    sleep(Duration::from_millis(100)).await;
+
+    assert_eq!(requests.len(), 2);
+    let second_body: Value =
+        from_slice(&requests[1]).unwrap_or_else(|err| panic!("parse second request: {err}"));
+    let second_user_texts = message_input_texts(&second_body, "user");
+    assert!(
+        second_user_texts.contains(&"accepted queued prompt".to_string()),
+        "second request should include the accepted queued prompt",
+    );
+    assert!(
+        !second_user_texts.contains(&HOOK_PROMPT_XML_USER_TEXT.to_string()),
+        "second request should not include the blocked XML-shaped queued prompt",
+    );
+
+    let hook_inputs = read_user_prompt_submit_hook_inputs(test.codex_home_path())?;
+    assert_eq!(
+        hook_inputs
+            .iter()
+            .map(|input| {
+                input["prompt"]
+                    .as_str()
+                    .expect("queued prompt hook prompt")
+                    .to_string()
+            })
+            .collect::<Vec<_>>(),
+        vec![
+            "initial prompt".to_string(),
+            "accepted queued prompt".to_string(),
+            HOOK_PROMPT_XML_USER_TEXT.to_string(),
+        ],
+    );
+
+    server.shutdown().await;
+    Ok(())
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

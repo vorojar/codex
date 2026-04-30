@@ -91,16 +91,6 @@ pub(crate) enum PendingInputItem {
     ResponseInput(ResponseInputItem),
 }
 
-impl PendingInputItem {
-    #[cfg(test)]
-    pub(crate) fn into_response_input_item(self) -> ResponseInputItem {
-        match self {
-            Self::UserInput(input) => input.into(),
-            Self::ResponseInput(input) => input,
-        }
-    }
-}
-
 impl ActiveTurn {
     pub(crate) fn add_task(&mut self, task: RunningTask) {
         let sub_id = task.turn_context.sub_id.clone();
@@ -240,10 +230,6 @@ impl TurnState {
             .push(PendingInputItem::ResponseInput(input));
     }
 
-    pub(crate) fn push_pending_user_input(&mut self, input: Vec<UserInput>) {
-        self.pending_input.push(PendingInputItem::UserInput(input));
-    }
-
     pub(crate) fn push_pending_input_item(&mut self, input: PendingInputItem) {
         self.pending_input.push(input);
     }
@@ -271,7 +257,10 @@ impl TurnState {
     pub(crate) fn take_pending_input(&mut self) -> Vec<ResponseInputItem> {
         self.take_pending_input_items()
             .into_iter()
-            .map(PendingInputItem::into_response_input_item)
+            .map(|item| match item {
+                PendingInputItem::UserInput(input) => input.into(),
+                PendingInputItem::ResponseInput(input) => input,
+            })
             .collect()
     }
 

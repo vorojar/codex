@@ -23,10 +23,10 @@ use tracing::warn;
 use crate::config::Config;
 use crate::context::ContextualUserFragment;
 use crate::goals::GoalRuntimeEvent;
-use crate::hook_runtime::InputItemHookDisposition;
-use crate::hook_runtime::inspect_input_item;
+use crate::hook_runtime::PendingInputHookDisposition;
+use crate::hook_runtime::inspect_pending_input;
 use crate::hook_runtime::record_additional_contexts;
-use crate::hook_runtime::record_input_item;
+use crate::hook_runtime::record_pending_input;
 use crate::session::session::Session;
 use crate::session::turn_context::TurnContext;
 use crate::state::ActiveTurn;
@@ -594,11 +594,11 @@ impl Session {
         }
         if !pending_input.is_empty() {
             for pending_input_item in pending_input {
-                match inspect_input_item(self, &turn_context, pending_input_item).await {
-                    InputItemHookDisposition::Accepted(pending_input) => {
-                        record_input_item(self, &turn_context, *pending_input).await;
+                match inspect_pending_input(self, &turn_context, pending_input_item).await {
+                    PendingInputHookDisposition::Accepted(pending_input) => {
+                        record_pending_input(self, &turn_context, *pending_input).await;
                     }
-                    InputItemHookDisposition::Blocked {
+                    PendingInputHookDisposition::Blocked {
                         additional_contexts,
                     } => {
                         record_additional_contexts(self, &turn_context, additional_contexts).await;

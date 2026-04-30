@@ -45,14 +45,14 @@ pub(crate) struct HookRuntimeOutcome {
     pub additional_contexts: Vec<String>,
 }
 
-pub(crate) enum InputItemHookDisposition {
-    Accepted(Box<AcceptedInputItem>),
+pub(crate) enum PendingInputHookDisposition {
+    Accepted(Box<PendingInputRecord>),
     Blocked { additional_contexts: Vec<String> },
 }
 
-pub(crate) enum AcceptedInputItem {
+pub(crate) enum PendingInputRecord {
     UserMessage {
-        // Fresh-turn user input still carries UI-only text spans. Preserve that
+        // Queued user input still carries UI-only text spans. Preserve that
         // payload when the caller has it instead of rebuilding from model input.
         content: Vec<UserInput>,
         response_item: ResponseItem,
@@ -278,61 +278,63 @@ pub(crate) async fn run_user_prompt_submit_hooks(
     .await
 }
 
-pub(crate) async fn inspect_input_item(
+pub(crate) async fn inspect_pending_input(
     sess: &Arc<Session>,
     turn_context: &Arc<TurnContext>,
-    input_item: PendingInputItem,
-) -> InputItemHookDisposition {
-    let input_item = match input_item {
+    pending_input_item: PendingInputItem,
+) -> PendingInputHookDisposition {
+    let pending_input_item = match pending_input_item {
         PendingInputItem::UserInput(content) => {
             let prompt = UserMessageItem::new(&content).message();
             let response_item = ResponseItem::from(ResponseInputItem::from(content.clone()));
             let user_prompt_submit_outcome =
                 run_user_prompt_submit_hooks(sess, turn_context, prompt).await;
             if user_prompt_submit_outcome.should_stop {
-                return InputItemHookDisposition::Blocked {
+                return PendingInputHookDisposition::Blocked {
                     additional_contexts: user_prompt_submit_outcome.additional_contexts,
                 };
             }
 
-            return InputItemHookDisposition::Accepted(Box::new(AcceptedInputItem::UserMessage {
-                content,
-                response_item,
-                additional_contexts: user_prompt_submit_outcome.additional_contexts,
-            }));
+            return PendingInputHookDisposition::Accepted(Box::new(
+                PendingInputRecord::UserMessage {
+                    content,
+                    response_item,
+                    additional_contexts: user_prompt_submit_outcome.additional_contexts,
+                },
+            ));
         }
         PendingInputItem::ResponseInput(input_item) => input_item,
     };
 
-    let response_item = ResponseItem::from(input_item);
+    let response_item = ResponseItem::from(pending_input_item);
     if let Some(TurnItem::UserMessage(user_message)) = parse_turn_item(&response_item) {
         let user_prompt_submit_outcome =
             run_user_prompt_submit_hooks(sess, turn_context, user_message.message()).await;
         if user_prompt_submit_outcome.should_stop {
-            InputItemHookDisposition::Blocked {
+            PendingInputHookDisposition::Blocked {
                 additional_contexts: user_prompt_submit_outcome.additional_contexts,
             }
         } else {
-            InputItemHookDisposition::Accepted(Box::new(AcceptedInputItem::UserMessage {
+            PendingInputHookDisposition::Accepted(Box::new(PendingInputRecord::UserMessage {
                 content: user_message.content,
                 response_item,
                 additional_contexts: user_prompt_submit_outcome.additional_contexts,
             }))
         }
     } else {
-        InputItemHookDisposition::Accepted(Box::new(AcceptedInputItem::ConversationItem {
+        PendingInputHookDisposition::Accepted(Box::new(PendingInputRecord::ConversationItem {
             response_item,
         }))
     }
 }
 
-pub(crate) async fn record_input_item(
+pub(crate) async fn record_pending_input(
     sess: &Arc<Session>,
     turn_context: &Arc<TurnContext>,
-    input_item: AcceptedInputItem,
+    pending_input: PendingInputRecord,
 ) {
-    match input_item {
-        AcceptedInputItem::UserMessage {
+    match pending_input {
+        PendingInputRecord::UserMessage {
             content,
             response_item,
             additional_contexts,
@@ -345,7 +347,7 @@ pub(crate) async fn record_input_item(
             .await;
             record_additional_contexts(sess, turn_context, additional_contexts).await;
         }
-        AcceptedInputItem::ConversationItem { response_item } => {
+        PendingInputRecord::ConversationItem { response_item } => {
             sess.record_conversation_items(turn_context, std::slice::from_ref(&response_item))
                 .await;
         }

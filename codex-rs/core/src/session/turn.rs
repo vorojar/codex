@@ -19,12 +19,13 @@ use crate::compact_remote::run_inline_remote_auto_compact_task;
 use crate::connectors;
 use crate::context::ContextualUserFragment;
 use crate::feedback_tags;
-use crate::hook_runtime::InputItemHookDisposition;
+use crate::hook_runtime::PendingInputHookDisposition;
 use crate::hook_runtime::emit_hook_completed_events;
-use crate::hook_runtime::inspect_input_item;
+use crate::hook_runtime::inspect_pending_input;
 use crate::hook_runtime::record_additional_contexts;
-use crate::hook_runtime::record_input_item;
+use crate::hook_runtime::record_pending_input;
 use crate::hook_runtime::run_pending_session_start_hooks;
+use crate::hook_runtime::run_user_prompt_submit_hooks;
 use crate::injection::ToolMentionKind;
 use crate::injection::app_id_from_path;
 use crate::injection::tool_kind_for_path;
@@ -41,7 +42,6 @@ use crate::resolve_skill_dependencies_for_turn;
 use crate::session::PreviousTurnSettings;
 use crate::session::session::Session;
 use crate::session::turn_context::TurnContext;
-use crate::state::PendingInputItem;
 use crate::stream_events_utils::HandleOutputCtx;
 use crate::stream_events_utils::handle_non_tool_response_item;
 use crate::stream_events_utils::handle_output_item_done;
@@ -76,6 +76,7 @@ use codex_protocol::error::CodexErr;
 use codex_protocol::error::Result as CodexResult;
 use codex_protocol::items::PlanItem;
 use codex_protocol::items::TurnItem;
+use codex_protocol::items::UserMessageItem;
 use codex_protocol::items::build_hook_prompt_message;
 use codex_protocol::models::BaseInstructions;
 use codex_protocol::models::ContentItem;
@@ -300,25 +301,30 @@ pub(crate) async fn run_turn(
     if run_pending_session_start_hooks(&sess, &turn_context).await {
         return None;
     }
-    if !input.is_empty() {
-        match inspect_input_item(
+    let additional_contexts = if input.is_empty() {
+        Vec::new()
+    } else {
+        let initial_input_for_turn: ResponseInputItem = ResponseInputItem::from(input.clone());
+        let response_item: ResponseItem = initial_input_for_turn.into();
+        let user_prompt_submit_outcome = run_user_prompt_submit_hooks(
             &sess,
             &turn_context,
-            PendingInputItem::UserInput(input.clone()),
+            UserMessageItem::new(&input).message(),
         )
-        .await
-        {
-            InputItemHookDisposition::Accepted(input_item) => {
-                record_input_item(&sess, &turn_context, *input_item).await;
-            }
-            InputItemHookDisposition::Blocked {
-                additional_contexts,
-            } => {
-                record_additional_contexts(&sess, &turn_context, additional_contexts).await;
-                return None;
-            }
+        .await;
+        if user_prompt_submit_outcome.should_stop {
+            record_additional_contexts(
+                &sess,
+                &turn_context,
+                user_prompt_submit_outcome.additional_contexts,
+            )
+            .await;
+            return None;
         }
-    }
+        sess.record_user_prompt_and_emit_turn_item(turn_context.as_ref(), &input, response_item)
+            .await;
+        user_prompt_submit_outcome.additional_contexts
+    };
     sess.services
         .analytics_events_client
         .track_app_mentioned(tracking.clone(), mentioned_app_invocations);
@@ -329,6 +335,7 @@ pub(crate) async fn run_turn(
     }
     sess.merge_connector_selection(explicitly_enabled_connectors.clone())
         .await;
+    record_additional_contexts(&sess, &turn_context, additional_contexts).await;
     if !input.is_empty() {
         // Track the previous-turn baseline from the regular user-turn path only so
         // standalone tasks (compact/shell/review/undo) cannot suppress future
@@ -384,11 +391,11 @@ pub(crate) async fn run_turn(
         if !pending_input.is_empty() {
             let mut pending_input_iter = pending_input.into_iter();
             while let Some(pending_input_item) = pending_input_iter.next() {
-                match inspect_input_item(&sess, &turn_context, pending_input_item).await {
-                    InputItemHookDisposition::Accepted(pending_input) => {
+                match inspect_pending_input(&sess, &turn_context, pending_input_item).await {
+                    PendingInputHookDisposition::Accepted(pending_input) => {
                         accepted_pending_input.push(*pending_input);
                     }
-                    InputItemHookDisposition::Blocked {
+                    PendingInputHookDisposition::Blocked {
                         additional_contexts,
                     } => {
                         let remaining_pending_input = pending_input_iter.collect::<Vec<_>>();
@@ -408,7 +415,7 @@ pub(crate) async fn run_turn(
 
         let has_accepted_pending_input = !accepted_pending_input.is_empty();
         for pending_input in accepted_pending_input {
-            record_input_item(&sess, &turn_context, pending_input).await;
+            record_pending_input(&sess, &turn_context, pending_input).await;
         }
         record_additional_contexts(&sess, &turn_context, blocked_pending_input_contexts).await;
 
