@@ -278,17 +278,9 @@ impl AnalyticsReducer {
         input: SubAgentThreadStartedInput,
         out: &mut Vec<TrackEventRequest>,
     ) {
-        let parent_thread_id = input
-            .parent_thread_id
-            .clone()
-            .or_else(|| subagent_parent_thread_id(&input.subagent_source));
-        let execution_environment = parent_thread_id
-            .as_ref()
-            .and_then(|parent_thread_id| self.thread_metadata.get(parent_thread_id))
-            .and_then(|thread_metadata| thread_metadata.execution_environment);
-        let mut event = subagent_thread_started_event_request(input);
-        event.event_params.execution_environment = execution_environment;
-        out.push(TrackEventRequest::ThreadInitialized(event));
+        out.push(TrackEventRequest::ThreadInitialized(
+            subagent_thread_started_event_request(input),
+        ));
     }
 
     fn ingest_guardian_review(

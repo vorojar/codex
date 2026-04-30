@@ -2228,32 +2228,6 @@ async fn thread_execution_environment_flows_to_thread_turn_and_steer_events() {
     );
     out.clear();
 
-    reducer
-        .ingest(
-            AnalyticsFact::Custom(CustomAnalyticsFact::SubAgentThreadStarted(
-                SubAgentThreadStartedInput {
-                    thread_id: "thread-subagent".to_string(),
-                    parent_thread_id: Some("thread-2".to_string()),
-                    product_client_id: "codex-tui".to_string(),
-                    client_name: "codex-tui".to_string(),
-                    client_version: "1.0.0".to_string(),
-                    model: "gpt-5".to_string(),
-                    ephemeral: false,
-                    subagent_source: SubAgentSource::Review,
-                    created_at: 123,
-                },
-            )),
-            &mut out,
-        )
-        .await;
-
-    let subagent_payload = serde_json::to_value(&out[0]).expect("serialize subagent thread event");
-    assert_eq!(
-        subagent_payload["event_params"]["execution_environment"],
-        json!("remote")
-    );
-    out.clear();
-
     ingest_turn_prerequisites(
         &mut reducer,
         &mut out,
