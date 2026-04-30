@@ -1198,8 +1198,7 @@ mod tests {
     use codex_execpolicy::Decision;
     use codex_execpolicy::Evaluation;
     use codex_execpolicy::RuleMatch;
-    use codex_protocol::protocol::NetworkAccess;
-    use codex_protocol::protocol::SandboxPolicy;
+    use codex_protocol::permissions::NetworkSandboxPolicy;
     use codex_utils_absolute_path::AbsolutePathBuf;
     use codex_utils_absolute_path::AbsolutePathBufGuard;
     use pretty_assertions::assert_eq;
@@ -1213,10 +1212,6 @@ mod tests {
         Ok(AbsolutePathBuf::try_from(
             std::env::temp_dir().join("requirements.toml"),
         )?)
-    }
-
-    fn profile_from_sandbox_policy(sandbox_policy: &SandboxPolicy) -> PermissionProfile {
-        PermissionProfile::from_legacy_sandbox_policy(sandbox_policy)
     }
 
     fn with_unknown_source(toml: ConfigRequirementsToml) -> ConfigRequirementsWithSources {
@@ -1767,9 +1762,7 @@ allowed_approvals_reviewers = ["user"]
         assert_eq!(
             requirements
                 .permission_profile
-                .can_set(&profile_from_sandbox_policy(
-                    &SandboxPolicy::DangerFullAccess,
-                )),
+                .can_set(&PermissionProfile::Disabled),
             Err(ConstraintError::InvalidValue {
                 field_name: "sandbox_mode",
                 candidate: "DangerFullAccess".into(),
@@ -1914,9 +1907,7 @@ allowed_approvals_reviewers = ["user"]
         assert!(
             requirements
                 .permission_profile
-                .can_set(&profile_from_sandbox_policy(
-                    &SandboxPolicy::new_read_only_policy()
-                ))
+                .can_set(&PermissionProfile::read_only())
                 .is_ok()
         );
 
@@ -1999,29 +1990,25 @@ allowed_approvals_reviewers = ["user"]
         assert!(
             requirements
                 .permission_profile
-                .can_set(&profile_from_sandbox_policy(
-                    &SandboxPolicy::new_read_only_policy()
-                ))
+                .can_set(&PermissionProfile::read_only())
                 .is_ok()
         );
-        let workspace_write_policy = SandboxPolicy::WorkspaceWrite {
-            writable_roots: vec![AbsolutePathBuf::from_absolute_path(root)?],
-            network_access: false,
-            exclude_tmpdir_env_var: false,
-            exclude_slash_tmp: false,
-        };
+        let workspace_write_profile = PermissionProfile::workspace_write_with(
+            &[AbsolutePathBuf::from_absolute_path(root)?],
+            NetworkSandboxPolicy::Restricted,
+            /*exclude_tmpdir_env_var*/ false,
+            /*exclude_slash_tmp*/ false,
+        );
         assert!(
             requirements
                 .permission_profile
-                .can_set(&profile_from_sandbox_policy(&workspace_write_policy))
+                .can_set(&workspace_write_profile)
                 .is_ok()
         );
         assert_eq!(
             requirements
                 .permission_profile
-                .can_set(&profile_from_sandbox_policy(
-                    &SandboxPolicy::DangerFullAccess,
-                )),
+                .can_set(&PermissionProfile::Disabled),
             Err(ConstraintError::InvalidValue {
                 field_name: "sandbox_mode",
                 candidate: "DangerFullAccess".into(),
@@ -2032,11 +2019,9 @@ allowed_approvals_reviewers = ["user"]
         assert_eq!(
             requirements
                 .permission_profile
-                .can_set(&profile_from_sandbox_policy(
-                    &SandboxPolicy::ExternalSandbox {
-                        network_access: NetworkAccess::Restricted,
-                    }
-                )),
+                .can_set(&PermissionProfile::External {
+                    network: NetworkSandboxPolicy::Restricted,
+                }),
             Err(ConstraintError::InvalidValue {
                 field_name: "sandbox_mode",
                 candidate: "ExternalSandbox".into(),
@@ -2117,24 +2102,22 @@ allowed_approvals_reviewers = ["user"]
 
         let requirements = ConfigRequirements::try_from(requirements_with_sources)?;
         let root = if cfg!(windows) { "C:\\repo" } else { "/repo" };
-        let workspace_write_policy = SandboxPolicy::WorkspaceWrite {
-            writable_roots: vec![AbsolutePathBuf::from_absolute_path(root)?],
-            network_access: false,
-            exclude_tmpdir_env_var: false,
-            exclude_slash_tmp: false,
-        };
+        let workspace_write_profile = PermissionProfile::workspace_write_with(
+            &[AbsolutePathBuf::from_absolute_path(root)?],
+            NetworkSandboxPolicy::Restricted,
+            /*exclude_tmpdir_env_var*/ false,
+            /*exclude_slash_tmp*/ false,
+        );
         assert!(
             requirements
                 .permission_profile
-                .can_set(&profile_from_sandbox_policy(&workspace_write_policy))
+                .can_set(&workspace_write_profile)
                 .is_ok()
         );
         assert_eq!(
             requirements
                 .permission_profile
-                .can_set(&profile_from_sandbox_policy(
-                    &SandboxPolicy::DangerFullAccess,
-                )),
+                .can_set(&PermissionProfile::Disabled),
             Err(ConstraintError::InvalidValue {
                 field_name: "sandbox_mode",
                 candidate: "DangerFullAccess".into(),
@@ -2165,9 +2148,7 @@ allowed_approvals_reviewers = ["user"]
         assert_eq!(
             requirements
                 .permission_profile
-                .can_set(&profile_from_sandbox_policy(
-                    &SandboxPolicy::DangerFullAccess,
-                )),
+                .can_set(&PermissionProfile::Disabled),
             Err(ConstraintError::InvalidValue {
                 field_name: "sandbox_mode",
                 candidate: "DangerFullAccess".into(),
@@ -2206,9 +2187,7 @@ allowed_approvals_reviewers = ["user"]
         assert_eq!(
             requirements
                 .permission_profile
-                .can_set(&profile_from_sandbox_policy(
-                    &SandboxPolicy::new_workspace_write_policy(),
-                )),
+                .can_set(&PermissionProfile::workspace_write()),
             Err(ConstraintError::InvalidValue {
                 field_name: "sandbox_mode",
                 candidate: "WorkspaceWrite".into(),
