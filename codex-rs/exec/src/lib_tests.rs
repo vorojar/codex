@@ -460,6 +460,13 @@ async fn session_configured_from_thread_response_uses_permission_profile_from_re
 }
 
 fn sample_thread_start_response() -> ThreadStartResponse {
+    let cwd = test_path_buf("/tmp").abs();
+    let permission_profile = PermissionProfile::workspace_write();
+    let sandbox = permission_profile
+        .to_legacy_sandbox_policy(cwd.as_path())
+        .expect("workspace profile should have a legacy projection")
+        .into();
+
     ThreadStartResponse {
         thread: codex_app_server_protocol::Thread {
             id: "67e55044-10b1-426f-9247-bb680e5fe0c8".to_string(),
@@ -471,7 +478,7 @@ fn sample_thread_start_response() -> ThreadStartResponse {
             updated_at: 0,
             status: codex_app_server_protocol::ThreadStatus::Idle,
             path: Some(PathBuf::from("/tmp/rollout.jsonl")),
-            cwd: test_path_buf("/tmp").abs(),
+            cwd: cwd.clone(),
             cli_version: "0.0.0".to_string(),
             source: codex_app_server_protocol::SessionSource::Cli,
             agent_nickname: None,
@@ -483,16 +490,11 @@ fn sample_thread_start_response() -> ThreadStartResponse {
         model: "gpt-5.4".to_string(),
         model_provider: "openai".to_string(),
         service_tier: None,
-        cwd: test_path_buf("/tmp").abs(),
+        cwd,
         instruction_sources: Vec::new(),
         approval_policy: codex_app_server_protocol::AskForApproval::OnRequest,
         approvals_reviewer: codex_app_server_protocol::ApprovalsReviewer::AutoReview,
-        sandbox: codex_app_server_protocol::SandboxPolicy::WorkspaceWrite {
-            writable_roots: vec![],
-            network_access: false,
-            exclude_tmpdir_env_var: false,
-            exclude_slash_tmp: false,
-        },
+        sandbox,
         permission_profile: None,
         active_permission_profile: None,
         reasoning_effort: None,
