@@ -7,7 +7,6 @@ use codex_protocol::AgentPath;
 use codex_protocol::ThreadId;
 use codex_protocol::protocol::AgentStatus;
 use codex_protocol::protocol::EventMsg;
-use codex_protocol::protocol::SandboxPolicy;
 use codex_protocol::protocol::SessionSource;
 use codex_protocol::protocol::SubAgentSource;
 use tempfile::TempDir;
@@ -38,7 +37,7 @@ fn create_in_root_writes_replayable_lifecycle_events() -> anyhow::Result<()> {
             model: "gpt-test".to_string(),
             provider_name: "test-provider".to_string(),
             approval_policy: "never".to_string(),
-            sandbox_policy: format!("{:?}", SandboxPolicy::DangerFullAccess),
+            sandbox_policy: "DangerFullAccess".to_string(),
         },
     )?;
 
@@ -85,7 +84,7 @@ fn spawned_thread_start_appends_to_root_bundle() -> anyhow::Result<()> {
         model: "gpt-test".to_string(),
         provider_name: "test-provider".to_string(),
         approval_policy: "never".to_string(),
-        sandbox_policy: format!("{:?}", SandboxPolicy::DangerFullAccess),
+        sandbox_policy: "DangerFullAccess".to_string(),
     });
     child_trace.record_ended(RolloutStatus::Completed);
     let bundle_dir = single_bundle_dir(temp.path())?;
