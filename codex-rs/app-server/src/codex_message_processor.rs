@@ -3454,7 +3454,7 @@ impl CodexMessageProcessor {
             builder.model_provider = Some(model_provider.clone());
             builder.cwd = config_snapshot.cwd.to_path_buf();
             builder.cli_version = Some(env!("CARGO_PKG_VERSION").to_string());
-            builder.sandbox_policy = config_snapshot.sandbox_policy();
+            builder.permission_profile = config_snapshot.permission_profile;
             builder.approval_mode = config_snapshot.approval_policy;
             let metadata = builder.build(model_provider.as_str());
             if let Err(err) = state_db_ctx.insert_thread_if_absent(&metadata).await {
