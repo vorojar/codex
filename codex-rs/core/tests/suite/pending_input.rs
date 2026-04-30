@@ -1,13 +1,9 @@
 use std::sync::Arc;
-#[cfg(not(target_os = "windows"))]
 use std::time::Duration;
 
-#[cfg(not(target_os = "windows"))]
 use anyhow::Context;
-#[cfg(not(target_os = "windows"))]
 use anyhow::Result;
 use codex_core::CodexThread;
-#[cfg(not(target_os = "windows"))]
 use codex_features::Feature;
 use codex_protocol::AgentPath;
 use codex_protocol::items::TurnItem;
@@ -28,8 +24,8 @@ use core_test_support::responses::ev_output_text_delta;
 use core_test_support::responses::ev_reasoning_item;
 use core_test_support::responses::ev_reasoning_item_added;
 use core_test_support::responses::ev_response_created;
-#[cfg(not(target_os = "windows"))]
 use core_test_support::skip_if_no_network;
+use core_test_support::skip_if_windows;
 use core_test_support::streaming_sse::StreamingSseChunk;
 use core_test_support::streaming_sse::StreamingSseServer;
 use core_test_support::streaming_sse::start_streaming_sse_server;
@@ -42,12 +38,9 @@ use serde_json::Value;
 use serde_json::from_slice;
 use serde_json::json;
 use tokio::sync::oneshot;
-#[cfg(not(target_os = "windows"))]
 use tokio::time::sleep;
 
-#[cfg(not(target_os = "windows"))]
 const BLOCKED_PROMPT_CONTEXT: &str = "Remember the blocked lighthouse note.";
-#[cfg(not(target_os = "windows"))]
 const HOOK_PROMPT_XML_USER_TEXT: &str =
     r#"<hook_prompt hook_run_id="hook-run-1">blocked xml prompt</hook_prompt>"#;
 
@@ -102,7 +95,6 @@ fn response_completed_chunks(response_id: &str) -> Vec<StreamingSseChunk> {
     ]
 }
 
-#[cfg(not(target_os = "windows"))]
 fn write_user_prompt_submit_hook(
     home: &std::path::Path,
     blocked_prompt: &str,
@@ -152,7 +144,6 @@ if payload.get("prompt") == {blocked_prompt_json}:
     Ok(())
 }
 
-#[cfg(not(target_os = "windows"))]
 fn read_user_prompt_submit_hook_inputs(home: &std::path::Path) -> Result<Vec<Value>> {
     std::fs::read_to_string(home.join("user_prompt_submit_hook_log.jsonl"))
         .context("read user prompt submit hook log")?
@@ -565,9 +556,9 @@ async fn user_input_does_not_preempt_after_reasoning_item() {
     server.shutdown().await;
 }
 
-#[cfg(not(target_os = "windows"))]
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[tokio::test]
 async fn queued_hook_prompt_xml_text_still_runs_user_prompt_submit() -> Result<()> {
+    skip_if_windows!(Ok(()));
     skip_if_no_network!(Ok(()));
 
     let (gate_completed_tx, gate_completed_rx) = oneshot::channel();
