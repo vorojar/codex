@@ -1943,9 +1943,9 @@ print(json.dumps({{
         fs::remove_file(&marker).context("remove leftover plugin pre tool use marker")?;
     }
 
-    test.submit_turn_with_policy(
+    test.submit_turn_with_permission_profile(
         "run the shell command blocked by a plugin hook",
-        codex_protocol::protocol::SandboxPolicy::DangerFullAccess,
+        PermissionProfile::Disabled,
     )
     .await?;
 
