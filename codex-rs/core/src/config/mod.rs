@@ -1698,6 +1698,21 @@ fn apply_managed_filesystem_constraints(
     }
 }
 
+fn accepts_legacy_additional_writable_roots(
+    permission_profile: &PermissionProfile,
+    file_system_sandbox_policy: &FileSystemSandboxPolicy,
+    cwd: &Path,
+) -> bool {
+    // `writable_roots` and memory roots are legacy workspace-write knobs. They
+    // should only extend managed profiles that already grant write access to
+    // the active workspace, and never disabled/external/full-disk profiles.
+    matches!(
+        permission_profile.enforcement(),
+        SandboxEnforcement::Managed
+    ) && file_system_sandbox_policy.can_write_path_with_cwd(cwd, cwd)
+        && !file_system_sandbox_policy.has_full_disk_write_access()
+}
+
 /// Optional overrides for user configuration (e.g., from CLI flags).
 #[derive(Default, Debug, Clone)]
 pub struct ConfigOverrides {
@@ -2166,13 +2181,11 @@ impl Config {
                 } else {
                     NetworkProxyConfig::default()
                 };
-            let sandbox_policy = compatibility_sandbox_policy_for_permission_profile(
+            if accepts_legacy_additional_writable_roots(
                 &permission_profile,
                 &file_system_sandbox_policy,
-                network_sandbox_policy,
                 resolved_cwd.as_path(),
-            );
-            if matches!(sandbox_policy, SandboxPolicy::WorkspaceWrite { .. }) {
+            ) {
                 file_system_sandbox_policy = file_system_sandbox_policy
                     .with_additional_writable_roots(
                         resolved_cwd.as_path(),
@@ -2221,13 +2234,11 @@ impl Config {
                     network_sandbox_policy,
                 )
             };
-            let sandbox_policy = compatibility_sandbox_policy_for_permission_profile(
+            if accepts_legacy_additional_writable_roots(
                 &permission_profile,
                 &file_system_sandbox_policy,
-                network_sandbox_policy,
                 resolved_cwd.as_path(),
-            );
-            if matches!(sandbox_policy, SandboxPolicy::WorkspaceWrite { .. }) {
+            ) {
                 file_system_sandbox_policy = if using_implicit_builtin_profile {
                     file_system_sandbox_policy
                         .with_additional_legacy_workspace_writable_roots(
@@ -2325,13 +2336,11 @@ impl Config {
             // write access to the project roots; read-only, disabled, external,
             // and future non-workspace profiles must not silently grow extra
             // write access.
-            if matches!(permission_profile.enforcement(), SandboxEnforcement::Managed)
-                && file_system_sandbox_policy.can_write_path_with_cwd(
-                    resolved_cwd.as_path(),
-                    resolved_cwd.as_path(),
-                )
-                && !file_system_sandbox_policy.has_full_disk_write_access()
-            {
+            if accepts_legacy_additional_writable_roots(
+                &permission_profile,
+                &file_system_sandbox_policy,
+                resolved_cwd.as_path(),
+            ) {
                 // Keep legacy behavior for extra writable roots while storing
                 // the result as the canonical permission profile. Explicit
                 // extra roots are concrete paths, so their metadata carveouts
