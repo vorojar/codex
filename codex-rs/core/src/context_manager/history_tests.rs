@@ -13,13 +13,13 @@ use codex_protocol::models::ImageDetail;
 use codex_protocol::models::LocalShellAction;
 use codex_protocol::models::LocalShellExecAction;
 use codex_protocol::models::LocalShellStatus;
+use codex_protocol::models::PermissionProfile;
 use codex_protocol::models::ReasoningItemContent;
 use codex_protocol::models::ReasoningItemReasoningSummary;
 use codex_protocol::openai_models::InputModality;
 use codex_protocol::openai_models::default_input_modalities;
 use codex_protocol::protocol::AskForApproval;
 use codex_protocol::protocol::InterAgentCommunication;
-use codex_protocol::protocol::SandboxPolicy;
 use codex_protocol::protocol::TurnContextItem;
 use codex_utils_output_truncation::TruncationPolicy;
 use codex_utils_output_truncation::truncate_text;
@@ -119,15 +119,21 @@ fn developer_msg_with_fragments(texts: &[&str]) -> ResponseItem {
 }
 
 fn reference_context_item() -> TurnContextItem {
+    let cwd = PathBuf::from("/tmp/reference-cwd");
+    let permission_profile = PermissionProfile::read_only();
+    let sandbox_policy = permission_profile
+        .to_legacy_sandbox_policy(cwd.as_path())
+        .expect("read-only permission profile should have a legacy projection");
+
     TurnContextItem {
         turn_id: Some("reference-turn".to_string()),
         trace_id: None,
-        cwd: PathBuf::from("/tmp/reference-cwd"),
+        cwd,
         current_date: Some("2026-03-23".to_string()),
         timezone: Some("America/Los_Angeles".to_string()),
         approval_policy: AskForApproval::OnRequest,
-        sandbox_policy: SandboxPolicy::new_read_only_policy(),
-        permission_profile: None,
+        sandbox_policy,
+        permission_profile: Some(permission_profile),
         network: None,
         file_system_sandbox_policy: None,
         model: "gpt-test".to_string(),
