@@ -399,8 +399,8 @@ impl AppCommand {
                 cwd,
                 approval_policy,
                 approvals_reviewer,
-                sandbox_policy: None,
                 permission_profile,
+                clear_active_permission_profile: false,
                 windows_sandbox_level,
                 model,
                 effort,
@@ -634,8 +634,8 @@ impl From<Op> for AppCommand {
                 cwd,
                 approval_policy,
                 approvals_reviewer,
-                sandbox_policy,
                 permission_profile,
+                clear_active_permission_profile,
                 windows_sandbox_level,
                 model,
                 effort,
@@ -644,7 +644,7 @@ impl From<Op> for AppCommand {
                 collaboration_mode,
                 personality,
             } => {
-                if sandbox_policy.is_none() {
+                if !clear_active_permission_profile {
                     Self::OverrideTurnContext {
                         cwd,
                         approval_policy,
@@ -663,8 +663,8 @@ impl From<Op> for AppCommand {
                         cwd,
                         approval_policy,
                         approvals_reviewer,
-                        sandbox_policy,
                         permission_profile,
+                        clear_active_permission_profile,
                         windows_sandbox_level,
                         model,
                         effort,

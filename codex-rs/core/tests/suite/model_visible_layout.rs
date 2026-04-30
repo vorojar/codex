@@ -473,7 +473,7 @@ async fn snapshot_model_visible_layout_resume_override_matches_rollout_model() -
             cwd: Some(resume_override_cwd),
             approval_policy: None,
             approvals_reviewer: None,
-            sandbox_policy: None,
+            clear_active_permission_profile: false,
             permission_profile: None,
             windows_sandbox_level: None,
             model: Some("gpt-5.2".to_string()),

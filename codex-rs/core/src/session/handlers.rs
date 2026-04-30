@@ -34,7 +34,6 @@ use crate::tasks::execute_user_shell_command;
 use codex_mcp::collect_mcp_snapshot_from_manager;
 use codex_mcp::compute_auth_statuses;
 use codex_protocol::models::ContentItem;
-use codex_protocol::models::PermissionProfile;
 use codex_protocol::models::ResponseInputItem;
 use codex_protocol::protocol::CodexErrorInfo;
 use codex_protocol::protocol::ErrorEvent;
@@ -51,7 +50,6 @@ use codex_protocol::protocol::RealtimeVoicesList;
 use codex_protocol::protocol::ReviewDecision;
 use codex_protocol::protocol::ReviewRequest;
 use codex_protocol::protocol::RolloutItem;
-use codex_protocol::protocol::SandboxPolicy;
 use codex_protocol::protocol::SkillErrorInfo;
 use codex_protocol::protocol::SkillsListEntry;
 use codex_protocol::protocol::ThreadMemoryMode;
@@ -73,7 +71,6 @@ use codex_protocol::user_input::UserInput;
 use codex_rmcp_client::ElicitationAction;
 use codex_rmcp_client::ElicitationResponse;
 use serde_json::Value;
-use std::path::Path;
 use std::path::PathBuf;
 use std::sync::Arc;
 use tracing::debug;
@@ -181,9 +178,9 @@ pub(super) async fn user_input_or_turn_inner(
             cwd,
             approval_policy,
             approvals_reviewer,
-            sandbox_policy,
             permission_profile,
             active_permission_profile,
+            clear_active_permission_profile,
             windows_sandbox_level,
             model,
             effort,
@@ -207,15 +204,6 @@ pub(super) async fn user_input_or_turn_inner(
                         .with_updates(model, effort, /*developer_instructions*/ None),
                 )
             };
-            let clear_active_permission_profile =
-                permission_profile.is_none() && sandbox_policy.is_some();
-            let permission_profile = permission_profile_with_legacy_fallback(
-                sess,
-                sandbox_policy.as_ref(),
-                permission_profile,
-                cwd.as_deref(),
-            )
-            .await;
             (
                 items,
                 SessionSettingsUpdate {
@@ -302,26 +290,6 @@ pub(super) async fn user_input_or_turn_inner(
     };
     if let (Some(items), Some(())) = (accepted_items, mirror_user_text_to_realtime) {
         self::mirror_user_text_to_realtime(sess, &items).await;
-    }
-}
-
-async fn permission_profile_with_legacy_fallback(
-    sess: &Session,
-    sandbox_policy: Option<&SandboxPolicy>,
-    permission_profile: Option<PermissionProfile>,
-    cwd: Option<&Path>,
-) -> Option<PermissionProfile> {
-    match (permission_profile, sandbox_policy) {
-        (Some(permission_profile), _) => Some(permission_profile),
-        (None, Some(sandbox_policy)) => {
-            let state = sess.state.lock().await;
-            Some(
-                state
-                    .session_configuration
-                    .permission_profile_from_legacy_sandbox_update(sandbox_policy, cwd),
-            )
-        }
-        (None, None) => None,
     }
 }
 
@@ -1050,8 +1018,8 @@ pub(super) async fn submission_loop(
                     cwd,
                     approval_policy,
                     approvals_reviewer,
-                    sandbox_policy,
                     permission_profile,
+                    clear_active_permission_profile,
                     windows_sandbox_level,
                     model,
                     effort,
@@ -1070,15 +1038,6 @@ pub(super) async fn submission_loop(
                             /*developer_instructions*/ None,
                         )
                     };
-                    let clear_active_permission_profile =
-                        permission_profile.is_none() && sandbox_policy.is_some();
-                    let permission_profile = permission_profile_with_legacy_fallback(
-                        &sess,
-                        sandbox_policy.as_ref(),
-                        permission_profile,
-                        cwd.as_deref(),
-                    )
-                    .await;
                     override_turn_context(
                         &sess,
                         sub.id.clone(),

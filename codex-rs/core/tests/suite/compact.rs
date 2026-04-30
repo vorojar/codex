@@ -3037,7 +3037,7 @@ async fn snapshot_request_shape_pre_turn_compaction_including_incoming_user_mess
             cwd: Some(PathBuf::from(PRETURN_CONTEXT_DIFF_CWD)),
             approval_policy: None,
             approvals_reviewer: None,
-            sandbox_policy: None,
+            clear_active_permission_profile: false,
             permission_profile: None,
             windows_sandbox_level: None,
             model: None,

@@ -549,7 +549,7 @@ async fn snapshot_rollback_followup_turn_trims_context_updates() -> Result<()> {
             cwd: Some(override_cwd.to_path_buf()),
             approval_policy: None,
             approvals_reviewer: None,
-            sandbox_policy: None,
+            clear_active_permission_profile: false,
             permission_profile: None,
             windows_sandbox_level: None,
             model: None,

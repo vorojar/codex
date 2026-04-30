@@ -127,24 +127,6 @@ impl SessionConfiguration {
         self.permission_profile.get().network_sandbox_policy()
     }
 
-    pub(super) fn permission_profile_from_legacy_sandbox_update(
-        &self,
-        sandbox_policy: &SandboxPolicy,
-        cwd: Option<&Path>,
-    ) -> PermissionProfile {
-        let file_system_sandbox_policy =
-            FileSystemSandboxPolicy::from_legacy_sandbox_policy_preserving_deny_entries(
-                sandbox_policy,
-                self.resolved_update_cwd(cwd).as_path(),
-                &self.file_system_sandbox_policy(),
-            );
-        PermissionProfile::from_runtime_permissions_with_enforcement(
-            SandboxEnforcement::from_legacy_sandbox_policy(sandbox_policy),
-            &file_system_sandbox_policy,
-            NetworkSandboxPolicy::from(sandbox_policy),
-        )
-    }
-
     pub(super) fn thread_config_snapshot(&self) -> ThreadConfigSnapshot {
         ThreadConfigSnapshot {
             model: self.collaboration_mode.model().to_string(),

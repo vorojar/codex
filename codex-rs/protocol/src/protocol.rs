@@ -472,10 +472,6 @@ pub enum Op {
         #[serde(skip_serializing_if = "Option::is_none")]
         approvals_reviewer: Option<ApprovalsReviewer>,
 
-        /// Updated sandbox policy for tool calls.
-        #[serde(skip_serializing_if = "Option::is_none")]
-        sandbox_policy: Option<SandboxPolicy>,
-
         /// Updated permissions profile for tool calls.
         #[serde(skip_serializing_if = "Option::is_none")]
         permission_profile: Option<PermissionProfile>,
@@ -485,6 +481,11 @@ pub enum Op {
         /// permissions.
         #[serde(skip_serializing_if = "Option::is_none")]
         active_permission_profile: Option<ActivePermissionProfile>,
+
+        /// Clear the active profile name/provenance even when setting a
+        /// concrete `permission_profile`.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        clear_active_permission_profile: bool,
 
         /// Updated Windows sandbox mode for tool execution.
         #[serde(skip_serializing_if = "Option::is_none")]
@@ -609,13 +610,14 @@ pub enum Op {
         #[serde(skip_serializing_if = "Option::is_none")]
         approvals_reviewer: Option<ApprovalsReviewer>,
 
-        /// Updated sandbox policy for tool calls.
-        #[serde(skip_serializing_if = "Option::is_none")]
-        sandbox_policy: Option<SandboxPolicy>,
-
         /// Updated permissions profile for tool calls.
         #[serde(skip_serializing_if = "Option::is_none")]
         permission_profile: Option<PermissionProfile>,
+
+        /// Clear the active profile name/provenance even when setting a
+        /// concrete `permission_profile`.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        clear_active_permission_profile: bool,
 
         /// Updated Windows sandbox mode for tool execution.
         #[serde(skip_serializing_if = "Option::is_none")]

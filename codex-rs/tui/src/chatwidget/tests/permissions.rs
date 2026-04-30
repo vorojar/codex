@@ -710,7 +710,7 @@ async fn permissions_selection_sends_approvals_reviewer_in_override_turn_context
             cwd: None,
             approval_policy: Some(AskForApproval::OnRequest),
             approvals_reviewer: Some(ApprovalsReviewer::AutoReview),
-            sandbox_policy: None,
+            clear_active_permission_profile: false,
             permission_profile: Some(PermissionProfile::workspace_write()),
             windows_sandbox_level: None,
             model: None,
