@@ -630,15 +630,6 @@ impl TestCodex {
         .await
     }
 
-    pub async fn submit_turn_with_policy(
-        &self,
-        prompt: &str,
-        sandbox_policy: SandboxPolicy,
-    ) -> Result<()> {
-        self.submit_turn_with_policies(prompt, AskForApproval::Never, sandbox_policy)
-            .await
-    }
-
     pub async fn submit_turn_with_service_tier(
         &self,
         prompt: &str,
@@ -649,26 +640,6 @@ impl TestCodex {
             AskForApproval::Never,
             PermissionProfile::Disabled,
             Some(service_tier),
-            /*environments*/ None,
-        )
-        .await
-    }
-
-    pub async fn submit_turn_with_policies(
-        &self,
-        prompt: &str,
-        approval_policy: AskForApproval,
-        sandbox_policy: SandboxPolicy,
-    ) -> Result<()> {
-        let permission_profile = PermissionProfile::from_legacy_sandbox_policy_for_cwd(
-            &sandbox_policy,
-            self.config.cwd.as_path(),
-        );
-        self.submit_turn_with_context(
-            prompt,
-            approval_policy,
-            permission_profile,
-            /*service_tier*/ None,
             /*environments*/ None,
         )
         .await
@@ -894,16 +865,6 @@ impl TestCodexHarness {
         // Box the submit-and-wait path so callers do not inline the full turn
         // future into their own async state.
         Box::pin(self.test.submit_turn(prompt)).await
-    }
-
-    pub async fn submit_with_policy(
-        &self,
-        prompt: &str,
-        sandbox_policy: SandboxPolicy,
-    ) -> Result<()> {
-        self.test
-            .submit_turn_with_policy(prompt, sandbox_policy)
-            .await
     }
 
     pub async fn submit_with_permission_profile(
