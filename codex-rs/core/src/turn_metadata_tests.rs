@@ -1,8 +1,7 @@
 use super::*;
 
-use crate::sandbox_tags::sandbox_tag;
+use crate::sandbox_tags::permission_profile_sandbox_tag;
 use codex_protocol::models::PermissionProfile;
-use codex_protocol::protocol::SandboxPolicy;
 use codex_protocol::protocol::SessionSource;
 use codex_protocol::protocol::SubAgentSource;
 use core_test_support::PathBufExt;
@@ -82,7 +81,6 @@ async fn build_turn_metadata_header_includes_has_changes_for_clean_repo() {
 fn turn_metadata_state_uses_platform_sandbox_tag() {
     let temp_dir = TempDir::new().expect("temp dir");
     let cwd = temp_dir.path().abs();
-    let sandbox_policy = SandboxPolicy::new_read_only_policy();
     let permission_profile = PermissionProfile::read_only();
 
     let state = TurnMetadataState::new(
@@ -101,7 +99,11 @@ fn turn_metadata_state_uses_platform_sandbox_tag() {
     let session_id = json.get("session_id").and_then(Value::as_str);
     let thread_source = json.get("thread_source").and_then(Value::as_str);
 
-    let expected_sandbox = sandbox_tag(&sandbox_policy, WindowsSandboxLevel::Disabled);
+    let expected_sandbox = permission_profile_sandbox_tag(
+        &permission_profile,
+        WindowsSandboxLevel::Disabled,
+        /*enforce_managed_network*/ false,
+    );
     assert_eq!(sandbox_name, Some(expected_sandbox));
     assert_eq!(session_id, Some("session-a"));
     assert_eq!(thread_source, Some("user"));
