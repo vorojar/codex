@@ -529,7 +529,7 @@ pub enum Op {
         /// User input items, see `InputItem`
         items: Vec<UserInput>,
 
-        /// `cwd` to use with the [`SandboxPolicy`] and potentially tool calls
+        /// `cwd` to use with the permissions profile and potentially tool calls
         /// such as `local_shell`.
         cwd: PathBuf,
 
@@ -541,8 +541,13 @@ pub enum Op {
         /// When omitted, the session keeps the current setting
         approvals_reviewer: Option<ApprovalsReviewer>,
 
-        /// Policy to use for tool calls such as `local_shell`.
-        sandbox_policy: SandboxPolicy,
+        /// Legacy sandbox policy to use for tool calls such as `local_shell`.
+        ///
+        /// When omitted, `permission_profile` is used as the canonical source
+        /// of permissions. This field is kept only as a compatibility fallback
+        /// for older callers that have not migrated to `permission_profile`.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        sandbox_policy: Option<SandboxPolicy>,
 
         /// Full permissions profile to use for tool calls such as `local_shell`.
         ///

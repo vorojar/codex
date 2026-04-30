@@ -446,7 +446,7 @@ async fn overrides_turn_context_but_keeps_cached_prefix_and_key_constant() -> an
             cwd: None,
             approval_policy: Some(AskForApproval::Never),
             approvals_reviewer: None,
-            sandbox_policy: Some(sandbox_policy),
+            sandbox_policy,
             permission_profile,
             windows_sandbox_level: None,
             model: None,

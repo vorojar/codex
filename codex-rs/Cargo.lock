@@ -4161,7 +4161,6 @@ dependencies = [
  "codex-model-provider-info",
  "codex-models-manager",
  "codex-protocol",
- "codex-sandboxing",
  "codex-utils-absolute-path",
  "codex-utils-cargo-bin",
  "ctor 0.6.3",

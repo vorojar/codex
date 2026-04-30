@@ -703,17 +703,6 @@ async fn run_review_on_session(
         .unwrap_or_default();
 
     let permission_profile = PermissionProfile::read_only();
-    let sandbox_policy =
-        match permission_profile.to_legacy_sandbox_policy(params.parent_turn.cwd.as_path()) {
-            Ok(sandbox_policy) => sandbox_policy,
-            Err(err) => {
-                return (
-                    GuardianReviewSessionOutcome::SessionFailed(err.into()),
-                    false,
-                    analytics_result,
-                );
-            }
-        };
 
     let submit_result = run_before_review_deadline(
         deadline,
@@ -724,7 +713,7 @@ async fn run_review_on_session(
             cwd: params.parent_turn.cwd.to_path_buf(),
             approval_policy: AskForApproval::Never,
             approvals_reviewer: None,
-            sandbox_policy,
+            sandbox_policy: None,
             permission_profile: Some(permission_profile),
             model: params.model.clone(),
             effort: params.reasoning_effort,

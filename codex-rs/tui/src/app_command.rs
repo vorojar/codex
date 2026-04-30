@@ -370,26 +370,22 @@ impl AppCommand {
                 final_output_json_schema,
                 collaboration_mode,
                 personality,
-            } => {
-                let sandbox_policy =
-                    legacy_compatible_sandbox_policy(&permission_profile, cwd.as_path());
-                Op::UserTurn {
-                    items,
-                    environments: None,
-                    cwd,
-                    approval_policy,
-                    approvals_reviewer,
-                    sandbox_policy,
-                    permission_profile: Some(permission_profile),
-                    model,
-                    effort,
-                    summary,
-                    service_tier,
-                    final_output_json_schema,
-                    collaboration_mode,
-                    personality,
-                }
-            }
+            } => Op::UserTurn {
+                items,
+                environments: None,
+                cwd,
+                approval_policy,
+                approvals_reviewer,
+                sandbox_policy: None,
+                permission_profile: Some(permission_profile),
+                model,
+                effort,
+                summary,
+                service_tier,
+                final_output_json_schema,
+                collaboration_mode,
+                personality,
+            },
             Self::OverrideTurnContext {
                 cwd,
                 approval_policy,
@@ -606,8 +602,10 @@ impl From<Op> for AppCommand {
                 personality,
             } => {
                 if environments.is_none()
-                    && legacy_compatible_sandbox_policy(&permission_profile, cwd.as_path())
-                        == sandbox_policy
+                    && sandbox_policy.as_ref().is_none_or(|sandbox_policy| {
+                        legacy_compatible_sandbox_policy(&permission_profile, cwd.as_path())
+                            == *sandbox_policy
+                    })
                 {
                     Self::UserTurn {
                         items,

@@ -156,10 +156,11 @@ pub(super) async fn user_input_or_turn_inner(
                     },
                 })
             });
-            let clear_active_permission_profile = permission_profile.is_none();
+            let clear_active_permission_profile =
+                permission_profile.is_none() && sandbox_policy.is_some();
             let permission_profile = permission_profile_with_legacy_fallback(
                 sess,
-                Some(&sandbox_policy),
+                sandbox_policy.as_ref(),
                 permission_profile,
                 Some(cwd.as_path()),
             )
