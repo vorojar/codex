@@ -79,7 +79,7 @@ jobs:
             bundle: app-server
             artifact_name: aarch64-apple-darwin-app-server
             binaries: "codex-app-server"
-            app_bundles: ""
+            app_bundles: "DeviceCheckProbe.app"
             build_dmg: "false"
           - runner: macos-15-xlarge
             target: x86_64-apple-darwin
@@ -269,7 +269,7 @@ jobs:
           echo "CARGO_PROFILE_RELEASE_LTO: ${CARGO_PROFILE_RELEASE_LTO}"
           cargo build --target ${{ matrix.target }} --release --timings "${build_args[@]}"
 
-      - if: ${{ runner.os == 'macOS' && matrix.target == 'aarch64-apple-darwin' && matrix.bundle == 'primary' }}
+      - if: ${{ runner.os == 'macOS' && matrix.target == 'aarch64-apple-darwin' && matrix.app_bundles != '' }}
         name: Build macOS DeviceCheck probe
         shell: bash
         run: |
@@ -425,7 +425,8 @@ jobs:
             fi
 
             # Create per-binary tar.gz
-            if [[ "$base" == "codex-aarch64-apple-darwin" && -d "$dest/devicecheck-probe" ]]; then
+            if [[ -d "$dest/devicecheck-probe" ]] \
+              && [[ "$base" == "codex-aarch64-apple-darwin" || "$base" == "codex-app-server-aarch64-apple-darwin" ]]; then
               COPYFILE_DISABLE=1 tar -C "$dest" -czf "$dest/${base}.tar.gz" "$base" devicecheck-probe
             else
               COPYFILE_DISABLE=1 tar -C "$dest" -czf "$dest/${base}.tar.gz" "$base"
