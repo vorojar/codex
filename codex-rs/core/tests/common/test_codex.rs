@@ -212,9 +212,9 @@ pub fn turn_permission_fields(
     _cwd: &Path,
 ) -> (
     Option<codex_protocol::protocol::SandboxPolicy>,
-    Option<PermissionProfile>,
+    PermissionProfile,
 ) {
-    (None, Some(permission_profile))
+    (None, permission_profile)
 }
 
 pub struct TestCodexBuilder {
@@ -704,8 +704,6 @@ impl TestCodex {
         service_tier: Option<Option<ServiceTier>>,
         environments: Option<Vec<TurnEnvironmentSelection>>,
     ) -> Result<()> {
-        let (sandbox_policy, permission_profile) =
-            turn_permission_fields(permission_profile, self.config.cwd.as_path());
         let session_model = self.session_configured.model.clone();
         self.codex
             .submit(Op::UserTurn {
@@ -718,7 +716,7 @@ impl TestCodex {
                 cwd: self.config.cwd.to_path_buf(),
                 approval_policy,
                 approvals_reviewer: None,
-                sandbox_policy,
+                sandbox_policy: None,
                 permission_profile,
                 model: session_model,
                 effort: None,

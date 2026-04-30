@@ -24,8 +24,6 @@ use codex_protocol::user_input::UserInput;
 use serde::Serialize;
 use serde_json::Value;
 
-use crate::permission_compat::legacy_compatible_sandbox_policy;
-
 #[allow(clippy::large_enum_variant)]
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub(crate) enum AppCommand {
@@ -377,7 +375,7 @@ impl AppCommand {
                 approval_policy,
                 approvals_reviewer,
                 sandbox_policy: None,
-                permission_profile: Some(permission_profile),
+                permission_profile,
                 model,
                 effort,
                 summary,
@@ -592,7 +590,7 @@ impl From<Op> for AppCommand {
                 approval_policy,
                 approvals_reviewer,
                 sandbox_policy,
-                permission_profile: Some(permission_profile),
+                permission_profile,
                 model,
                 effort,
                 summary,
@@ -601,12 +599,7 @@ impl From<Op> for AppCommand {
                 collaboration_mode,
                 personality,
             } => {
-                if environments.is_none()
-                    && sandbox_policy.as_ref().is_none_or(|sandbox_policy| {
-                        legacy_compatible_sandbox_policy(&permission_profile, cwd.as_path())
-                            == *sandbox_policy
-                    })
-                {
+                if environments.is_none() {
                     Self::UserTurn {
                         items,
                         cwd,
@@ -628,7 +621,7 @@ impl From<Op> for AppCommand {
                         approval_policy,
                         approvals_reviewer,
                         sandbox_policy,
-                        permission_profile: Some(permission_profile),
+                        permission_profile,
                         model,
                         effort,
                         summary,

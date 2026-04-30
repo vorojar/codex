@@ -134,7 +134,7 @@ pub(super) async fn user_input_or_turn_inner(
             cwd,
             approval_policy,
             approvals_reviewer,
-            sandbox_policy,
+            sandbox_policy: _,
             permission_profile,
             model,
             effort,
@@ -156,24 +156,15 @@ pub(super) async fn user_input_or_turn_inner(
                     },
                 })
             });
-            let clear_active_permission_profile =
-                permission_profile.is_none() && sandbox_policy.is_some();
-            let permission_profile = permission_profile_with_legacy_fallback(
-                sess,
-                sandbox_policy.as_ref(),
-                permission_profile,
-                Some(cwd.as_path()),
-            )
-            .await;
             (
                 items,
                 SessionSettingsUpdate {
                     cwd: Some(cwd),
                     approval_policy: Some(approval_policy),
                     approvals_reviewer,
-                    permission_profile,
+                    permission_profile: Some(permission_profile),
                     active_permission_profile: None,
-                    clear_active_permission_profile,
+                    clear_active_permission_profile: false,
                     windows_sandbox_level: None,
                     collaboration_mode,
                     reasoning_summary: summary,

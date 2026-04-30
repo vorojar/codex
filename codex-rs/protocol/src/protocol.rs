@@ -541,20 +541,17 @@ pub enum Op {
         /// When omitted, the session keeps the current setting
         approvals_reviewer: Option<ApprovalsReviewer>,
 
-        /// Legacy sandbox policy to use for tool calls such as `local_shell`.
+        /// Deprecated legacy sandbox policy field.
         ///
-        /// When omitted, `permission_profile` is used as the canonical source
-        /// of permissions. This field is kept only as a compatibility fallback
-        /// for older callers that have not migrated to `permission_profile`.
+        /// `permission_profile` is required and is the canonical source for
+        /// `UserTurn` operations. This field is ignored by core and remains
+        /// only as a temporary compatibility slot while callers finish
+        /// migrating.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         sandbox_policy: Option<SandboxPolicy>,
 
         /// Full permissions profile to use for tool calls such as `local_shell`.
-        ///
-        /// When omitted, `sandbox_policy` is used as a legacy compatibility
-        /// projection.
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        permission_profile: Option<PermissionProfile>,
+        permission_profile: PermissionProfile,
 
         /// Must be a valid model slug for the configured client session
         /// associated with this conversation.

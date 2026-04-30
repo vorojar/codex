@@ -714,7 +714,7 @@ async fn run_review_on_session(
             approval_policy: AskForApproval::Never,
             approvals_reviewer: None,
             sandbox_policy: None,
-            permission_profile: Some(permission_profile),
+            permission_profile,
             model: params.model.clone(),
             effort: params.reasoning_effort,
             summary: Some(params.reasoning_summary),

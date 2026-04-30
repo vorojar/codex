@@ -150,7 +150,7 @@ async fn submission_includes_configured_permission_profile() {
         } => permission_profile,
         other => panic!("expected Op::UserTurn, got {other:?}"),
     };
-    assert_eq!(permission_profile, Some(expected_permission_profile));
+    assert_eq!(permission_profile, expected_permission_profile);
 }
 
 #[tokio::test]
@@ -198,7 +198,7 @@ async fn submission_keeps_profile_when_legacy_projection_is_external() {
         } => permission_profile,
         other => panic!("expected Op::UserTurn, got {other:?}"),
     };
-    assert_eq!(permission_profile, Some(expected_permission_profile));
+    assert_eq!(permission_profile, expected_permission_profile);
 }
 
 #[tokio::test]
