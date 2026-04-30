@@ -2,6 +2,7 @@ use std::collections::HashMap;
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
+use std::sync::Mutex as StdMutex;
 use std::sync::atomic::AtomicI64;
 use std::sync::atomic::Ordering;
 
@@ -229,12 +230,14 @@ pub(crate) struct RpcClient {
     disconnected_rx: watch::Receiver<bool>,
     next_request_id: AtomicI64,
     transport_tasks: Vec<JoinHandle<()>>,
+    transport_drop_resource: StdMutex<Option<Box<dyn Send>>>,
     reader_task: JoinHandle<()>,
 }
 
 impl RpcClient {
     pub(crate) fn new(connection: JsonRpcConnection) -> (Self, mpsc::Receiver<RpcClientEvent>) {
-        let (write_tx, mut incoming_rx, disconnected_rx, transport_tasks) = connection.into_parts();
+        let (write_tx, mut incoming_rx, disconnected_rx, transport_tasks, transport_drop_resource) =
+            connection.into_parts();
         let pending = Arc::new(Mutex::new(HashMap::<RequestId, PendingRequest>::new()));
         let (event_tx, event_rx) = mpsc::channel(128);
 
@@ -275,6 +278,7 @@ impl RpcClient {
                 disconnected_rx,
                 next_request_id: AtomicI64::new(1),
                 transport_tasks,
+                transport_drop_resource: StdMutex::new(transport_drop_resource),
                 reader_task,
             },
             event_rx,
@@ -369,6 +373,9 @@ impl Drop for RpcClient {
             task.abort();
         }
         self.reader_task.abort();
+        if let Ok(drop_resource) = self.transport_drop_resource.get_mut() {
+            let _ = drop_resource.take();
+        }
     }
 }
 

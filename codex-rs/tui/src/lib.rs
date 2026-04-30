@@ -747,12 +747,14 @@ pub async fn run_main(
 
     let environment_manager = Arc::new(
         EnvironmentManager::new(EnvironmentManagerArgs::new(
+            codex_home.clone(),
             ExecServerRuntimePaths::from_optional_paths(
                 arg0_paths.codex_self_exe.clone(),
                 arg0_paths.codex_linux_sandbox_exe.clone(),
             )?,
         ))
-        .await,
+        .await
+        .map_err(std::io::Error::other)?,
     );
     let cwd = cli.cwd.clone();
     let config_cwd =

@@ -8,13 +8,9 @@ use tokio::sync::watch;
 use tokio_tungstenite::WebSocketStream;
 use tokio_tungstenite::tungstenite::Message;
 
-#[cfg(test)]
 use tokio::io::AsyncBufReadExt;
-#[cfg(test)]
 use tokio::io::AsyncWriteExt;
-#[cfg(test)]
 use tokio::io::BufReader;
-#[cfg(test)]
 use tokio::io::BufWriter;
 
 pub(crate) const CHANNEL_CAPACITY: usize = 128;
@@ -31,10 +27,10 @@ pub(crate) struct JsonRpcConnection {
     incoming_rx: mpsc::Receiver<JsonRpcConnectionEvent>,
     disconnected_rx: watch::Receiver<bool>,
     task_handles: Vec<tokio::task::JoinHandle<()>>,
+    drop_resource: Option<Box<dyn Send>>,
 }
 
 impl JsonRpcConnection {
-    #[cfg(test)]
     pub(crate) fn from_stdio<R, W>(reader: R, writer: W, connection_label: String) -> Self
     where
         R: AsyncRead + Unpin + Send + 'static,
@@ -122,6 +118,7 @@ impl JsonRpcConnection {
             incoming_rx,
             disconnected_rx,
             task_handles: vec![reader_task, writer_task],
+            drop_resource: None,
         }
     }
 
@@ -256,7 +253,13 @@ impl JsonRpcConnection {
             incoming_rx,
             disconnected_rx,
             task_handles: vec![reader_task, writer_task],
+            drop_resource: None,
         }
+    }
+
+    pub(crate) fn with_drop_resource(mut self, drop_resource: Box<dyn Send>) -> Self {
+        self.drop_resource = Some(drop_resource);
+        self
     }
 
     pub(crate) fn into_parts(
@@ -266,12 +269,14 @@ impl JsonRpcConnection {
         mpsc::Receiver<JsonRpcConnectionEvent>,
         watch::Receiver<bool>,
         Vec<tokio::task::JoinHandle<()>>,
+        Option<Box<dyn Send>>,
     ) {
         (
             self.outgoing_tx,
             self.incoming_rx,
             self.disconnected_rx,
             self.task_handles,
+            self.drop_resource,
         )
     }
 }
@@ -298,7 +303,6 @@ async fn send_malformed_message(
         .await;
 }
 
-#[cfg(test)]
 async fn write_jsonrpc_line_message<W>(
     writer: &mut BufWriter<W>,
     message: &JSONRPCMessage,

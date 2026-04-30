@@ -1,5 +1,6 @@
 use std::collections::BTreeMap;
 use std::collections::HashMap;
+use std::process::Stdio;
 use std::sync::Arc;
 use std::sync::Mutex as StdMutex;
 use std::sync::OnceLock;
@@ -11,6 +12,11 @@ use codex_app_server_protocol::JSONRPCNotification;
 use futures::FutureExt;
 use futures::future::BoxFuture;
 use serde_json::Value;
+use tokio::io::AsyncBufReadExt;
+use tokio::io::BufReader;
+use tokio::process::Child;
+use tokio::process::Command;
+use tokio::runtime::Handle;
 use tokio::sync::Mutex;
 use tokio::sync::OnceCell;
 use tokio::sync::mpsc;
@@ -19,11 +25,14 @@ use tokio::sync::watch;
 use tokio::time::timeout;
 use tokio_tungstenite::connect_async;
 use tracing::debug;
+use tracing::warn;
 
 use crate::ProcessId;
 use crate::client_api::ExecServerClientConnectOptions;
+use crate::client_api::ExecServerTransport;
 use crate::client_api::HttpClient;
 use crate::client_api::RemoteExecServerConnectArgs;
+use crate::client_api::StdioExecServerConnectArgs;
 use crate::connection::JsonRpcConnection;
 use crate::process::ExecProcessEvent;
 use crate::process::ExecProcessEventLog;
@@ -97,6 +106,16 @@ impl Default for ExecServerClientConnectOptions {
 
 impl From<RemoteExecServerConnectArgs> for ExecServerClientConnectOptions {
     fn from(value: RemoteExecServerConnectArgs) -> Self {
+        Self {
+            client_name: value.client_name,
+            initialize_timeout: value.initialize_timeout,
+            resume_session_id: value.resume_session_id,
+        }
+    }
+}
+
+impl From<StdioExecServerConnectArgs> for ExecServerClientConnectOptions {
+    fn from(value: StdioExecServerConnectArgs) -> Self {
         Self {
             client_name: value.client_name,
             initialize_timeout: value.initialize_timeout,
@@ -180,29 +199,45 @@ pub struct ExecServerClient {
 
 #[derive(Clone)]
 pub(crate) struct LazyRemoteExecServerClient {
-    websocket_url: String,
+    transport: ExecServerTransport,
     client: Arc<OnceCell<ExecServerClient>>,
 }
 
 impl LazyRemoteExecServerClient {
-    pub(crate) fn new(websocket_url: String) -> Self {
+    pub(crate) fn new(transport: ExecServerTransport) -> Self {
         Self {
-            websocket_url,
+            transport,
             client: Arc::new(OnceCell::new()),
         }
     }
 
     pub(crate) async fn get(&self) -> Result<ExecServerClient, ExecServerError> {
         self.client
-            .get_or_try_init(|| async {
-                ExecServerClient::connect_websocket(RemoteExecServerConnectArgs {
-                    websocket_url: self.websocket_url.clone(),
-                    client_name: "codex-environment".to_string(),
-                    connect_timeout: Duration::from_secs(5),
-                    initialize_timeout: Duration::from_secs(5),
-                    resume_session_id: None,
-                })
-                .await
+            .get_or_try_init(|| {
+                let transport = self.transport.clone();
+                async move {
+                    match transport {
+                        ExecServerTransport::WebSocketUrl(websocket_url) => {
+                            ExecServerClient::connect_websocket(RemoteExecServerConnectArgs {
+                                websocket_url,
+                                client_name: "codex-environment".to_string(),
+                                connect_timeout: Duration::from_secs(5),
+                                initialize_timeout: Duration::from_secs(5),
+                                resume_session_id: None,
+                            })
+                            .await
+                        }
+                        ExecServerTransport::StdioShellCommand(shell_command) => {
+                            ExecServerClient::connect_stdio_command(StdioExecServerConnectArgs {
+                                shell_command,
+                                client_name: "codex-environment".to_string(),
+                                initialize_timeout: Duration::from_secs(5),
+                                resume_session_id: None,
+                            })
+                            .await
+                        }
+                    }
+                }
             })
             .await
             .cloned()
@@ -278,6 +313,51 @@ impl ExecServerClient {
                 stream,
                 format!("exec-server websocket {websocket_url}"),
             ),
+            args.into(),
+        )
+        .await
+    }
+
+    pub async fn connect_stdio_command(
+        args: StdioExecServerConnectArgs,
+    ) -> Result<Self, ExecServerError> {
+        let shell_command = args.shell_command.clone();
+        let mut child = shell_command_process(&shell_command)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .map_err(ExecServerError::Spawn)?;
+
+        let stdin = child.stdin.take().ok_or_else(|| {
+            ExecServerError::Protocol("spawned exec-server command has no stdin".to_string())
+        })?;
+        let stdout = child.stdout.take().ok_or_else(|| {
+            ExecServerError::Protocol("spawned exec-server command has no stdout".to_string())
+        })?;
+        if let Some(stderr) = child.stderr.take() {
+            tokio::spawn(async move {
+                let mut lines = BufReader::new(stderr).lines();
+                loop {
+                    match lines.next_line().await {
+                        Ok(Some(line)) => debug!("exec-server stdio stderr: {line}"),
+                        Ok(None) => break,
+                        Err(err) => {
+                            warn!("failed to read exec-server stdio stderr: {err}");
+                            break;
+                        }
+                    }
+                }
+            });
+        }
+
+        Self::connect(
+            JsonRpcConnection::from_stdio(
+                stdout,
+                stdin,
+                format!("exec-server stdio command `{shell_command}`"),
+            )
+            .with_drop_resource(Box::new(StdioChildGuard { child: Some(child) })),
             args.into(),
         )
         .await
@@ -523,6 +603,60 @@ impl ExecServerClient {
                 }
             }
         }
+    }
+}
+
+struct StdioChildGuard {
+    child: Option<Child>,
+}
+
+impl Drop for StdioChildGuard {
+    fn drop(&mut self) {
+        let Some(child) = self.child.take() else {
+            return;
+        };
+
+        match Handle::try_current() {
+            Ok(handle) => {
+                let _terminate_task = handle.spawn(terminate_stdio_child(child));
+            }
+            Err(_) => {
+                terminate_stdio_child_now(child);
+            }
+        }
+    }
+}
+
+async fn terminate_stdio_child(mut child: Child) {
+    kill_stdio_child(&mut child);
+    if let Err(err) = child.wait().await {
+        debug!("failed to wait for exec-server stdio child: {err}");
+    }
+}
+
+fn terminate_stdio_child_now(mut child: Child) {
+    kill_stdio_child(&mut child);
+}
+
+fn kill_stdio_child(child: &mut Child) {
+    if let Err(err) = child.start_kill() {
+        debug!("failed to terminate exec-server stdio child: {err}");
+    }
+}
+
+fn shell_command_process(shell_command: &str) -> Command {
+    #[cfg(windows)]
+    {
+        let mut command = Command::new("cmd");
+        command.arg("/C").arg(shell_command);
+        command
+    }
+
+    #[cfg(not(windows))]
+    {
+        let mut command = Command::new("sh");
+        command.arg("-lc").arg(shell_command);
+        command
     }
 }
 
@@ -893,6 +1027,7 @@ mod tests {
     use super::ExecServerClient;
     use super::ExecServerClientConnectOptions;
     use crate::ProcessId;
+    use crate::client_api::StdioExecServerConnectArgs;
     use crate::connection::JsonRpcConnection;
     use crate::process::ExecProcessEvent;
     use crate::protocol::EXEC_CLOSED_METHOD;
@@ -928,6 +1063,21 @@ mod tests {
             .write_all(format!("{encoded}\n").as_bytes())
             .await
             .expect("json-rpc line should write");
+    }
+
+    #[cfg(not(windows))]
+    #[tokio::test]
+    async fn connect_stdio_command_initializes_json_rpc_client() {
+        let client = ExecServerClient::connect_stdio_command(StdioExecServerConnectArgs {
+            shell_command: "read _line; printf '%s\\n' '{\"id\":1,\"result\":{\"sessionId\":\"stdio-test\"}}'; read _line; sleep 60".to_string(),
+            client_name: "stdio-test-client".to_string(),
+            initialize_timeout: Duration::from_secs(1),
+            resume_session_id: None,
+        })
+        .await
+        .expect("stdio client should connect");
+
+        assert_eq!(client.session_id().as_deref(), Some("stdio-test"));
     }
 
     #[tokio::test]
