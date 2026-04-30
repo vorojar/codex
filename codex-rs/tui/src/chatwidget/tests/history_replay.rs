@@ -12,10 +12,11 @@ use pretty_assertions::assert_eq;
 async fn resumed_initial_messages_render_history() {
     let (mut chat, mut rx, _ops) = make_chatwidget_manual(/*model_override*/ None).await;
 
-    let conversation_id = ThreadId::new();
+    let thread_id = ThreadId::new();
     let rollout_file = NamedTempFile::new().unwrap();
     let configured = codex_protocol::protocol::SessionConfiguredEvent {
-        session_id: conversation_id,
+        session_id: codex_protocol::SessionId::from(thread_id),
+        thread_id: thread_id,
         forked_from_id: None,
         thread_name: None,
         model: "test-model".to_string(),
@@ -126,10 +127,11 @@ async fn replayed_user_message_preserves_text_elements_and_local_images() {
     )];
     let local_images = vec![PathBuf::from("/tmp/replay.png")];
 
-    let conversation_id = ThreadId::new();
+    let thread_id = ThreadId::new();
     let rollout_file = NamedTempFile::new().unwrap();
     let configured = codex_protocol::protocol::SessionConfiguredEvent {
-        session_id: conversation_id,
+        session_id: codex_protocol::SessionId::from(thread_id),
+        thread_id: thread_id,
         forked_from_id: None,
         thread_name: None,
         model: "test-model".to_string(),
@@ -188,10 +190,11 @@ async fn replayed_user_message_preserves_remote_image_urls() {
     let message = "replayed with remote image".to_string();
     let remote_image_urls = vec!["https://example.com/image.png".to_string()];
 
-    let conversation_id = ThreadId::new();
+    let thread_id = ThreadId::new();
     let rollout_file = NamedTempFile::new().unwrap();
     let configured = codex_protocol::protocol::SessionConfiguredEvent {
-        session_id: conversation_id,
+        session_id: codex_protocol::SessionId::from(thread_id),
+        thread_id: thread_id,
         forked_from_id: None,
         thread_name: None,
         model: "test-model".to_string(),
@@ -280,7 +283,8 @@ async fn session_configured_syncs_widget_config_permissions_and_cwd() {
         .to_legacy_sandbox_policy(expected_cwd.as_path())
         .expect("permission profile should project to legacy sandbox policy");
     let configured = codex_protocol::protocol::SessionConfiguredEvent {
-        session_id: ThreadId::new(),
+        session_id: codex_protocol::SessionId::new(),
+        thread_id: ThreadId::new(),
         forked_from_id: None,
         thread_name: None,
         model: "test-model".to_string(),
@@ -339,7 +343,8 @@ async fn session_configured_external_sandbox_keeps_external_runtime_policy() {
         .to_legacy_sandbox_policy(test_path_buf("/home/user/external").as_path())
         .expect("external profile should project to legacy sandbox policy");
     let configured = codex_protocol::protocol::SessionConfiguredEvent {
-        session_id: ThreadId::new(),
+        session_id: codex_protocol::SessionId::new(),
+        thread_id: ThreadId::new(),
         forked_from_id: None,
         thread_name: None,
         model: "test-model".to_string(),
@@ -386,10 +391,11 @@ async fn replayed_user_message_with_only_remote_images_renders_history_cell() {
 
     let remote_image_urls = vec!["https://example.com/remote-only.png".to_string()];
 
-    let conversation_id = ThreadId::new();
+    let thread_id = ThreadId::new();
     let rollout_file = NamedTempFile::new().unwrap();
     let configured = codex_protocol::protocol::SessionConfiguredEvent {
-        session_id: conversation_id,
+        session_id: codex_protocol::SessionId::from(thread_id),
+        thread_id: thread_id,
         forked_from_id: None,
         thread_name: None,
         model: "test-model".to_string(),
@@ -440,10 +446,11 @@ async fn replayed_user_message_with_only_local_images_does_not_render_history_ce
 
     let local_images = vec![PathBuf::from("/tmp/replay-local-only.png")];
 
-    let conversation_id = ThreadId::new();
+    let thread_id = ThreadId::new();
     let rollout_file = NamedTempFile::new().unwrap();
     let configured = codex_protocol::protocol::SessionConfiguredEvent {
-        session_id: conversation_id,
+        session_id: codex_protocol::SessionId::from(thread_id),
+        thread_id: thread_id,
         forked_from_id: None,
         thread_name: None,
         model: "test-model".to_string(),
@@ -765,7 +772,8 @@ async fn replayed_reasoning_item_hides_raw_reasoning_when_disabled() {
     chat.handle_codex_event(Event {
         id: "configured".into(),
         msg: EventMsg::SessionConfigured(SessionConfiguredEvent {
-            session_id: ThreadId::new(),
+            session_id: codex_protocol::SessionId::new(),
+            thread_id: ThreadId::new(),
             forked_from_id: None,
             thread_name: None,
             model: "test-model".to_string(),
@@ -813,7 +821,8 @@ async fn replayed_reasoning_item_shows_raw_reasoning_when_enabled() {
     chat.handle_codex_event(Event {
         id: "configured".into(),
         msg: EventMsg::SessionConfigured(SessionConfiguredEvent {
-            session_id: ThreadId::new(),
+            session_id: codex_protocol::SessionId::new(),
+            thread_id: ThreadId::new(),
             forked_from_id: None,
             thread_name: None,
             model: "test-model".to_string(),

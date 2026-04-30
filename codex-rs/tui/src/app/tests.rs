@@ -3562,7 +3562,8 @@ async fn render_clear_ui_header_after_long_transcript_for_snapshot() -> String {
     };
     let make_header = |is_first| -> Arc<dyn HistoryCell> {
         let event = SessionConfiguredEvent {
-            session_id: ThreadId::new(),
+            session_id: codex_protocol::SessionId::new(),
+            thread_id: ThreadId::new(),
             forked_from_id: None,
             thread_name: None,
             model: "gpt-test".to_string(),
@@ -4315,7 +4316,8 @@ async fn backtrack_selection_with_duplicate_history_targets_unique_turn() {
 
     let make_header = |is_first| {
         let event = SessionConfiguredEvent {
-            session_id: ThreadId::new(),
+            session_id: codex_protocol::SessionId::new(),
+            thread_id: ThreadId::new(),
             forked_from_id: None,
             thread_name: None,
             model: "gpt-test".to_string(),
@@ -4379,7 +4381,8 @@ async fn backtrack_selection_with_duplicate_history_targets_unique_turn() {
     app.chat_widget.handle_codex_event(Event {
         id: String::new(),
         msg: EventMsg::SessionConfigured(SessionConfiguredEvent {
-            session_id: base_id,
+            session_id: codex_protocol::SessionId::from(base_id),
+            thread_id: base_id,
             forked_from_id: None,
             thread_name: None,
             model: "gpt-test".to_string(),
@@ -4473,7 +4476,8 @@ async fn backtrack_resubmit_preserves_data_image_urls_in_user_turn() {
     app.chat_widget.handle_codex_event(Event {
         id: String::new(),
         msg: EventMsg::SessionConfigured(SessionConfiguredEvent {
-            session_id: thread_id,
+            session_id: codex_protocol::SessionId::from(thread_id),
+            thread_id,
             forked_from_id: None,
             thread_name: None,
             model: "gpt-test".to_string(),
@@ -4860,7 +4864,8 @@ async fn new_session_requests_shutdown_for_previous_conversation() {
 
     let thread_id = ThreadId::new();
     let event = SessionConfiguredEvent {
-        session_id: thread_id,
+        session_id: codex_protocol::SessionId::from(thread_id),
+        thread_id,
         forked_from_id: None,
         thread_name: None,
         model: "gpt-test".to_string(),
@@ -4973,7 +4978,8 @@ async fn clear_only_ui_reset_preserves_chat_session_state() {
     app.chat_widget.handle_codex_event(Event {
         id: String::new(),
         msg: EventMsg::SessionConfigured(SessionConfiguredEvent {
-            session_id: thread_id,
+            session_id: codex_protocol::SessionId::from(thread_id),
+            thread_id,
             forked_from_id: None,
             thread_name: Some("keep me".to_string()),
             model: "gpt-test".to_string(),

@@ -1782,7 +1782,8 @@ async fn session_configured_clears_goal_status_footer() {
     chat.handle_codex_event(Event {
         id: "session-2".into(),
         msg: EventMsg::SessionConfigured(SessionConfiguredEvent {
-            session_id: ThreadId::new(),
+            session_id: codex_protocol::SessionId::new(),
+            thread_id: ThreadId::new(),
             forked_from_id: None,
             thread_name: None,
             model: "gpt-5.4".to_string(),

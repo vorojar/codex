@@ -533,7 +533,8 @@ async fn permissions_selection_marks_auto_review_current_after_session_configure
     chat.handle_codex_event(Event {
         id: "session-configured".to_string(),
         msg: EventMsg::SessionConfigured(SessionConfiguredEvent {
-            session_id: ThreadId::new(),
+            session_id: codex_protocol::SessionId::new(),
+            thread_id: ThreadId::new(),
             forked_from_id: None,
             thread_name: None,
             model: "gpt-test".to_string(),
@@ -588,7 +589,8 @@ async fn permissions_selection_marks_auto_review_current_with_custom_workspace_w
     chat.handle_codex_event(Event {
         id: "session-configured-custom-workspace".to_string(),
         msg: EventMsg::SessionConfigured(SessionConfiguredEvent {
-            session_id: ThreadId::new(),
+            session_id: codex_protocol::SessionId::new(),
+            thread_id: ThreadId::new(),
             forked_from_id: None,
             thread_name: None,
             model: "gpt-test".to_string(),

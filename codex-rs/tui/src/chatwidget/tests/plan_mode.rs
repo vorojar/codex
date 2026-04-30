@@ -1184,10 +1184,11 @@ async fn submit_user_message_queues_while_compaction_turn_is_running() {
 #[tokio::test(flavor = "multi_thread")]
 async fn submit_user_message_emits_structured_plugin_mentions_from_bindings() {
     let (mut chat, _rx, mut op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
-    let conversation_id = ThreadId::new();
+    let thread_id = ThreadId::new();
     let rollout_file = NamedTempFile::new().unwrap();
     let configured = codex_protocol::protocol::SessionConfiguredEvent {
-        session_id: conversation_id,
+        session_id: codex_protocol::SessionId::from(thread_id),
+        thread_id: thread_id,
         forked_from_id: None,
         thread_name: None,
         model: "test-model".to_string(),
@@ -1433,7 +1434,8 @@ async fn plan_slash_command_with_args_submits_prompt_in_plan_mode() {
     chat.set_feature_enabled(Feature::CollaborationModes, /*enabled*/ true);
 
     let configured = codex_protocol::protocol::SessionConfiguredEvent {
-        session_id: ThreadId::new(),
+        session_id: codex_protocol::SessionId::new(),
+        thread_id: ThreadId::new(),
         forked_from_id: None,
         thread_name: None,
         model: "test-model".to_string(),

@@ -3185,7 +3185,8 @@ mod tests {
 
     fn session_configured_event(model: &str) -> SessionConfiguredEvent {
         SessionConfiguredEvent {
-            session_id: ThreadId::new(),
+            session_id: codex_protocol::SessionId::new(),
+            thread_id: ThreadId::new(),
             forked_from_id: None,
             thread_name: None,
             model: model.to_string(),

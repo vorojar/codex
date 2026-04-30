@@ -296,7 +296,8 @@ mod tests {
         let event = Event {
             id: "1".to_string(),
             msg: EventMsg::SessionConfigured(SessionConfiguredEvent {
-                session_id: thread_id,
+                session_id: codex_protocol::SessionId::from(thread_id),
+                thread_id,
                 forked_from_id: None,
                 thread_name: None,
                 model: "gpt-4o".to_string(),
@@ -338,10 +339,11 @@ mod tests {
         let (outgoing_tx, mut outgoing_rx) = mpsc::unbounded_channel::<OutgoingMessage>();
         let outgoing_message_sender = OutgoingMessageSender::new(outgoing_tx);
 
-        let conversation_id = ThreadId::new();
+        let thread_id = ThreadId::new();
         let rollout_file = NamedTempFile::new()?;
         let session_configured_event = SessionConfiguredEvent {
-            session_id: conversation_id,
+            session_id: codex_protocol::SessionId::from(thread_id),
+            thread_id: thread_id,
             forked_from_id: None,
             thread_name: None,
             model: "gpt-4o".to_string(),
@@ -385,6 +387,7 @@ mod tests {
             "msg": {
                 "type": "session_configured",
                 "session_id": session_configured_event.session_id,
+                "thread_id": session_configured_event.thread_id,
                 "model": "gpt-4o",
                 "model_provider_id": "test-provider",
                 "approval_policy": "never",
@@ -409,7 +412,8 @@ mod tests {
         let thread_id = ThreadId::new();
         let rollout_file = NamedTempFile::new()?;
         let session_configured_event = SessionConfiguredEvent {
-            session_id: thread_id,
+            session_id: codex_protocol::SessionId::from(thread_id),
+            thread_id,
             forked_from_id: None,
             thread_name: None,
             model: "gpt-4o".to_string(),
@@ -454,6 +458,7 @@ mod tests {
             "msg": {
                 "type": "session_configured",
                 "session_id": session_configured_event.session_id,
+                "thread_id": session_configured_event.thread_id,
                 "model": "gpt-4o",
                 "model_provider_id": "test-provider",
                 "approval_policy": "never",

@@ -5,10 +5,11 @@ use pretty_assertions::assert_eq;
 async fn submission_preserves_text_elements_and_local_images() {
     let (mut chat, mut rx, mut op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
 
-    let conversation_id = ThreadId::new();
+    let thread_id = ThreadId::new();
     let rollout_file = NamedTempFile::new().unwrap();
     let configured = codex_protocol::protocol::SessionConfiguredEvent {
-        session_id: conversation_id,
+        session_id: codex_protocol::SessionId::from(thread_id),
+        thread_id: thread_id,
         forked_from_id: None,
         thread_name: None,
         model: "test-model".to_string(),
@@ -90,7 +91,7 @@ async fn submission_preserves_text_elements_and_local_images() {
 async fn submission_includes_configured_permission_profile() {
     let (mut chat, mut rx, mut op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
 
-    let conversation_id = ThreadId::new();
+    let thread_id = ThreadId::new();
     let rollout_file = NamedTempFile::new().unwrap();
     let expected_permission_profile = PermissionProfile::Managed {
         network: codex_protocol::permissions::NetworkSandboxPolicy::Restricted,
@@ -113,7 +114,8 @@ async fn submission_includes_configured_permission_profile() {
         },
     };
     let configured = codex_protocol::protocol::SessionConfiguredEvent {
-        session_id: conversation_id,
+        session_id: codex_protocol::SessionId::from(thread_id),
+        thread_id: thread_id,
         forked_from_id: None,
         thread_name: None,
         model: "test-model".to_string(),
@@ -157,14 +159,15 @@ async fn submission_includes_configured_permission_profile() {
 async fn submission_keeps_profile_when_legacy_projection_is_external() {
     let (mut chat, mut rx, mut op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
 
-    let conversation_id = ThreadId::new();
+    let thread_id = ThreadId::new();
     let rollout_file = NamedTempFile::new().unwrap();
     let expected_permission_profile = PermissionProfile::Managed {
         network: codex_protocol::permissions::NetworkSandboxPolicy::Restricted,
         file_system: codex_protocol::models::ManagedFileSystemPermissions::Unrestricted,
     };
     let configured = codex_protocol::protocol::SessionConfiguredEvent {
-        session_id: conversation_id,
+        session_id: codex_protocol::SessionId::from(thread_id),
+        thread_id: thread_id,
         forked_from_id: None,
         thread_name: None,
         model: "test-model".to_string(),
@@ -205,10 +208,11 @@ async fn submission_keeps_profile_when_legacy_projection_is_external() {
 async fn submission_with_remote_and_local_images_keeps_local_placeholder_numbering() {
     let (mut chat, mut rx, mut op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
 
-    let conversation_id = ThreadId::new();
+    let thread_id = ThreadId::new();
     let rollout_file = NamedTempFile::new().unwrap();
     let configured = codex_protocol::protocol::SessionConfiguredEvent {
-        session_id: conversation_id,
+        session_id: codex_protocol::SessionId::from(thread_id),
+        thread_id: thread_id,
         forked_from_id: None,
         thread_name: None,
         model: "test-model".to_string(),
@@ -301,10 +305,11 @@ async fn submission_with_remote_and_local_images_keeps_local_placeholder_numberi
 async fn enter_with_only_remote_images_submits_user_turn() {
     let (mut chat, mut rx, mut op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
 
-    let conversation_id = ThreadId::new();
+    let thread_id = ThreadId::new();
     let rollout_file = NamedTempFile::new().unwrap();
     let configured = codex_protocol::protocol::SessionConfiguredEvent {
-        session_id: conversation_id,
+        session_id: codex_protocol::SessionId::from(thread_id),
+        thread_id: thread_id,
         forked_from_id: None,
         thread_name: None,
         model: "test-model".to_string(),
@@ -367,10 +372,11 @@ async fn enter_with_only_remote_images_submits_user_turn() {
 async fn shift_enter_with_only_remote_images_does_not_submit_user_turn() {
     let (mut chat, mut rx, mut op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
 
-    let conversation_id = ThreadId::new();
+    let thread_id = ThreadId::new();
     let rollout_file = NamedTempFile::new().unwrap();
     let configured = codex_protocol::protocol::SessionConfiguredEvent {
-        session_id: conversation_id,
+        session_id: codex_protocol::SessionId::from(thread_id),
+        thread_id: thread_id,
         forked_from_id: None,
         thread_name: None,
         model: "test-model".to_string(),
@@ -408,10 +414,11 @@ async fn shift_enter_with_only_remote_images_does_not_submit_user_turn() {
 async fn enter_with_only_remote_images_does_not_submit_when_modal_is_active() {
     let (mut chat, mut rx, mut op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
 
-    let conversation_id = ThreadId::new();
+    let thread_id = ThreadId::new();
     let rollout_file = NamedTempFile::new().unwrap();
     let configured = codex_protocol::protocol::SessionConfiguredEvent {
-        session_id: conversation_id,
+        session_id: codex_protocol::SessionId::from(thread_id),
+        thread_id: thread_id,
         forked_from_id: None,
         thread_name: None,
         model: "test-model".to_string(),
@@ -449,10 +456,11 @@ async fn enter_with_only_remote_images_does_not_submit_when_modal_is_active() {
 async fn enter_with_only_remote_images_does_not_submit_when_input_disabled() {
     let (mut chat, mut rx, mut op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
 
-    let conversation_id = ThreadId::new();
+    let thread_id = ThreadId::new();
     let rollout_file = NamedTempFile::new().unwrap();
     let configured = codex_protocol::protocol::SessionConfiguredEvent {
-        session_id: conversation_id,
+        session_id: codex_protocol::SessionId::from(thread_id),
+        thread_id: thread_id,
         forked_from_id: None,
         thread_name: None,
         model: "test-model".to_string(),
@@ -493,10 +501,11 @@ async fn enter_with_only_remote_images_does_not_submit_when_input_disabled() {
 async fn submission_prefers_selected_duplicate_skill_path() {
     let (mut chat, mut rx, mut op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
 
-    let conversation_id = ThreadId::new();
+    let thread_id = ThreadId::new();
     let rollout_file = NamedTempFile::new().unwrap();
     let configured = codex_protocol::protocol::SessionConfiguredEvent {
-        session_id: conversation_id,
+        session_id: codex_protocol::SessionId::from(thread_id),
+        thread_id: thread_id,
         forked_from_id: None,
         thread_name: None,
         model: "test-model".to_string(),

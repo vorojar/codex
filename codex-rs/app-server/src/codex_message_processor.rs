@@ -7271,7 +7271,7 @@ impl CodexMessageProcessor {
                 Err(err) => {
                     tracing::warn!(
                         "failed to load summary for review thread {}: {}",
-                        session_configured.session_id,
+                        session_configured.thread_id,
                         err
                     );
                 }
@@ -7279,7 +7279,7 @@ impl CodexMessageProcessor {
         } else {
             tracing::warn!(
                 "review thread {} has no rollout path",
-                session_configured.session_id
+                session_configured.thread_id
             );
         }
 

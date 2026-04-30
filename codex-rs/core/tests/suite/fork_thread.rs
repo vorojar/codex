@@ -196,7 +196,7 @@ async fn fork_thread_from_history_does_not_require_source_rollout_path() {
             test.config.clone(),
             codex_core::thread_store_from_config(&test.config),
             InitialHistory::Resumed(ResumedHistory {
-                conversation_id: test.session_configured.session_id,
+                conversation_id: test.session_configured.thread_id,
                 history: source_items.clone(),
                 rollout_path: None,
             }),

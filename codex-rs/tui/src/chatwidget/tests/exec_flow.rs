@@ -1047,10 +1047,11 @@ async fn user_shell_command_renders_output_not_exploring() {
 #[tokio::test]
 async fn bang_shell_enter_while_task_running_submits_run_user_shell_command() {
     let (mut chat, mut rx, mut op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
-    let conversation_id = ThreadId::new();
+    let thread_id = ThreadId::new();
     let rollout_file = NamedTempFile::new().unwrap();
     let configured = codex_protocol::protocol::SessionConfiguredEvent {
-        session_id: conversation_id,
+        session_id: codex_protocol::SessionId::from(thread_id),
+        thread_id: thread_id,
         forked_from_id: None,
         thread_name: None,
         model: "test-model".to_string(),

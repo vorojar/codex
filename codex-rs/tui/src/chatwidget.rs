@@ -1636,7 +1636,8 @@ fn thread_session_state_to_legacy_event(
     session: ThreadSessionState,
 ) -> codex_protocol::protocol::SessionConfiguredEvent {
     codex_protocol::protocol::SessionConfiguredEvent {
-        session_id: session.thread_id,
+        session_id: codex_protocol::SessionId::from(session.thread_id),
+        thread_id: session.thread_id,
         forked_from_id: session.forked_from_id,
         thread_name: session.thread_name,
         model: session.model,
@@ -2348,7 +2349,7 @@ impl ChatWidget {
         self.set_skills(/*skills*/ None);
         self.session_network_proxy = event.network_proxy.clone();
         let previous_thread_id = self.thread_id;
-        self.thread_id = Some(event.session_id);
+        self.thread_id = Some(event.thread_id);
         if previous_thread_id != self.thread_id {
             self.recent_auto_review_denials = RecentAutoReviewDenials::default();
         }

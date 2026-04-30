@@ -637,7 +637,8 @@ mod tests {
         app.chat_widget.handle_codex_event(Event {
             id: String::new(),
             msg: EventMsg::SessionConfigured(SessionConfiguredEvent {
-                session_id: ThreadId::new(),
+                session_id: codex_protocol::SessionId::new(),
+                thread_id: ThreadId::new(),
                 forked_from_id: None,
                 thread_name: None,
                 model: "gpt-test".to_string(),
