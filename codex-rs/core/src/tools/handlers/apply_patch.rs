@@ -56,7 +56,6 @@ pub struct ApplyPatchHandler;
 #[derive(Default)]
 struct ApplyPatchArgumentDiffConsumer {
     parser: StreamingPatchParser,
-    last_progress: Option<Vec<Hunk>>,
     last_sent_at: Option<Instant>,
     pending: Option<PatchApplyUpdatedEvent>,
 }
@@ -88,11 +87,7 @@ impl ApplyPatchArgumentDiffConsumer {
         if hunks.is_empty() {
             return None;
         }
-        if self.last_progress.as_ref() == Some(&hunks) {
-            return None;
-        }
         let changes = convert_apply_patch_hunks_to_protocol(&hunks);
-        self.last_progress = Some(hunks);
         let event = PatchApplyUpdatedEvent { call_id, changes };
         let now = Instant::now();
         match self.last_sent_at {
