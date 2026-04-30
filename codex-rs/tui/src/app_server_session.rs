@@ -1874,8 +1874,8 @@ mod tests {
             .to_legacy_sandbox_policy(cwd.as_path())
             .expect("read-only profile must be legacy-compatible")
             .into();
-        let split_profile = PermissionProfile::Managed {
-            file_system: ManagedFileSystemPermissions::Restricted {
+        let response_profile = AppServerPermissionProfile::Managed {
+            file_system: PermissionProfileFileSystemPermissions::Restricted {
                 entries: vec![
                     FileSystemSandboxEntry {
                         path: FileSystemPath::Special {
@@ -1894,9 +1894,9 @@ mod tests {
                 ],
                 glob_scan_max_depth: None,
             },
-            network: NetworkSandboxPolicy::Restricted,
+            network: PermissionProfileNetworkPermissions { enabled: false },
         };
-        let response_profile = split_profile.clone().into();
+        let split_profile: PermissionProfile = response_profile.clone().into();
 
         assert_eq!(
             permission_profile_from_thread_response(

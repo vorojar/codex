@@ -29,9 +29,9 @@ use codex_protocol::config_types::ApprovalsReviewer;
 use codex_protocol::config_types::ReasoningSummary;
 use codex_protocol::models::ActivePermissionProfile;
 use codex_protocol::models::ActivePermissionProfileModification;
-use codex_protocol::models::ManagedFileSystemPermissions;
 use codex_protocol::models::PermissionProfile;
 use codex_protocol::openai_models::ReasoningEffort;
+use codex_protocol::permissions::NetworkSandboxPolicy;
 use insta::assert_snapshot;
 use pretty_assertions::assert_eq;
 use ratatui::prelude::*;
@@ -287,7 +287,7 @@ async fn status_permissions_named_read_only_profile_shows_builtin_label() {
     config
         .permissions
         .approval_policy
-        .set(AskForApproval::OnRequest)
+        .set(AskForApproval::OnRequest.to_core())
         .expect("set approval policy");
     config
         .permissions
@@ -310,7 +310,7 @@ async fn status_permissions_read_only_profile_shows_additional_writable_roots() 
     config
         .permissions
         .approval_policy
-        .set(AskForApproval::OnRequest)
+        .set(AskForApproval::OnRequest.to_core())
         .expect("set approval policy");
     let extra_root = test_path_buf("/workspace/extra").abs();
     let file_system_policy = PermissionProfile::read_only()
@@ -346,7 +346,7 @@ async fn status_permissions_named_workspace_profile_shows_builtin_label() {
     config
         .permissions
         .approval_policy
-        .set(AskForApproval::OnRequest)
+        .set(AskForApproval::OnRequest.to_core())
         .expect("set approval policy");
     config
         .permissions
@@ -370,7 +370,7 @@ async fn status_permissions_workspace_auto_review_shows_reviewer_label() {
     config
         .permissions
         .approval_policy
-        .set(AskForApproval::OnRequest)
+        .set(AskForApproval::OnRequest.to_core())
         .expect("set approval policy");
     config
         .permissions
@@ -393,7 +393,7 @@ async fn status_permissions_named_profile_shows_additional_writable_roots() {
     config
         .permissions
         .approval_policy
-        .set(AskForApproval::OnRequest)
+        .set(AskForApproval::OnRequest.to_core())
         .expect("set approval policy");
     let extra_root = test_path_buf("/workspace/extra").abs();
     config
@@ -428,7 +428,7 @@ async fn status_permissions_broadened_workspace_profile_shows_builtin_label() {
     config
         .permissions
         .approval_policy
-        .set(AskForApproval::OnRequest)
+        .set(AskForApproval::OnRequest.to_core())
         .expect("set approval policy");
     config
         .permissions
