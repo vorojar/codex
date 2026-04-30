@@ -20,10 +20,10 @@ pub struct Cli {
     #[clap(skip)]
     pub resume_last: bool,
 
-    /// Internal: resume a specific recorded session by id (UUID). Set by the
-    /// top-level `codex resume <SESSION_ID>` wrapper; not exposed as a public flag.
+    /// Internal: resume a specific recorded thread by id (UUID) or name. Set by the
+    /// top-level `codex resume <THREAD_ID_OR_NAME>` wrapper; not exposed as a public flag.
     #[clap(skip)]
-    pub resume_session_id: Option<String>,
+    pub resume_thread_id: Option<String>,
 
     /// Internal: show all sessions (disables cwd filtering and shows CWD column).
     #[clap(skip)]
@@ -41,10 +41,10 @@ pub struct Cli {
     #[clap(skip)]
     pub fork_last: bool,
 
-    /// Internal: fork a specific recorded session by id (UUID). Set by the
-    /// top-level `codex fork <SESSION_ID>` wrapper; not exposed as a public flag.
+    /// Internal: fork a specific recorded thread by id (UUID) or name. Set by the
+    /// top-level `codex fork <THREAD_ID_OR_NAME>` wrapper; not exposed as a public flag.
     #[clap(skip)]
-    pub fork_session_id: Option<String>,
+    pub fork_thread_id: Option<String>,
 
     /// Internal: show all sessions (disables cwd filtering and shows CWD column).
     #[clap(skip)]

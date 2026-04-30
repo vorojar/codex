@@ -226,7 +226,7 @@ async fn resume_lookup_model_providers_filters_only_last_lookup() {
         prompt: None,
     };
     let named_args = crate::cli::ResumeArgs {
-        session_id: Some("named-session".to_string()),
+        session_id: Some("named-thread".to_string()),
         last: false,
         all: false,
         images: vec![],

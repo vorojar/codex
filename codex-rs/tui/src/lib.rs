@@ -565,9 +565,9 @@ async fn lookup_session_target_with_app_server(
             Ok(thread_id) => thread_id,
             Err(err) => {
                 warn!(
-                    session = id_or_name,
+                    thread_id = id_or_name,
                     %err,
-                    "Failed to parse session id during TUI lookup"
+                    "failed to parse thread id during TUI lookup"
                 );
                 return Ok(None);
             }
@@ -579,9 +579,9 @@ async fn lookup_session_target_with_app_server(
             Ok(thread) => Ok(session_target_from_app_server_thread(thread)),
             Err(err) => {
                 warn!(
-                    session = id_or_name,
+                    thread_id = id_or_name,
                     %err,
-                    "thread/read failed during TUI session lookup"
+                    "thread/read failed during TUI thread lookup"
                 );
                 Ok(None)
             }
@@ -1210,9 +1210,9 @@ async fn run_ratatui_app(
         })
     };
 
-    let use_fork = cli.fork_picker || cli.fork_last || cli.fork_session_id.is_some();
+    let use_fork = cli.fork_picker || cli.fork_last || cli.fork_thread_id.is_some();
     let session_selection = if use_fork {
-        if let Some(id_str) = cli.fork_session_id.as_deref() {
+        if let Some(id_str) = cli.fork_thread_id.as_deref() {
             let Some(startup_app_server) = app_server.as_mut() else {
                 unreachable!("app server should be initialized for --fork <id>");
             };
@@ -1273,7 +1273,7 @@ async fn run_ratatui_app(
         } else {
             resume_picker::SessionSelection::StartFresh
         }
-    } else if let Some(id_str) = cli.resume_session_id.as_deref() {
+    } else if let Some(id_str) = cli.resume_thread_id.as_deref() {
         let Some(startup_app_server) = app_server.as_mut() else {
             unreachable!("app server should be initialized for --resume <id>");
         };

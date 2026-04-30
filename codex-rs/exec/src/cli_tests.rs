@@ -41,7 +41,7 @@ fn resume_accepts_output_last_message_flag_after_subcommand() {
     let cli = Cli::parse_from([
         "codex-exec",
         "resume",
-        "session-123",
+        "thread-123",
         "-o",
         "/tmp/resume-output.md",
         PROMPT,
@@ -54,7 +54,7 @@ fn resume_accepts_output_last_message_flag_after_subcommand() {
     let Some(Command::Resume(args)) = cli.command else {
         panic!("expected resume command");
     };
-    assert_eq!(args.session_id.as_deref(), Some("session-123"));
+    assert_eq!(args.session_id.as_deref(), Some("thread-123"));
     assert_eq!(args.prompt.as_deref(), Some(PROMPT));
 }
 

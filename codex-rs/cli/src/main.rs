@@ -273,12 +273,12 @@ struct DebugTraceReduceCommand {
 
 #[derive(Debug, Parser)]
 struct ResumeCommand {
-    /// Conversation/session id (UUID) or thread name. UUIDs take precedence if it parses.
-    /// If omitted, use --last to pick the most recent recorded session.
-    #[arg(value_name = "SESSION_ID")]
-    session_id: Option<String>,
+    /// Thread id (UUID) or thread name. UUIDs take precedence if it parses.
+    /// If omitted, use --last to pick the most recent recorded thread.
+    #[arg(value_name = "THREAD_ID_OR_NAME")]
+    thread_id: Option<String>,
 
-    /// Continue the most recent session without showing the picker.
+    /// Continue the most recent thread without showing the picker.
     #[arg(long = "last", default_value_t = false)]
     last: bool,
 
@@ -299,13 +299,13 @@ struct ResumeCommand {
 
 #[derive(Debug, Parser)]
 struct ForkCommand {
-    /// Conversation/session id (UUID). When provided, forks this session.
-    /// If omitted, use --last to pick the most recent recorded session.
-    #[arg(value_name = "SESSION_ID")]
-    session_id: Option<String>,
+    /// Thread id (UUID) or thread name. UUIDs take precedence if it parses.
+    /// If omitted, use --last to pick the most recent recorded thread.
+    #[arg(value_name = "THREAD_ID_OR_NAME")]
+    thread_id: Option<String>,
 
-    /// Fork the most recent session without showing the picker.
-    #[arg(long = "last", default_value_t = false, conflicts_with = "session_id")]
+    /// Fork the most recent thread without showing the picker.
+    #[arg(long = "last", default_value_t = false, conflicts_with = "thread_id")]
     last: bool,
 
     /// Show all sessions (disables cwd filtering and shows CWD column).
@@ -901,7 +901,7 @@ async fn cli_main(arg0_paths: Arg0DispatchPaths) -> anyhow::Result<()> {
             app_cmd::run_app(app_cli).await?;
         }
         Some(Subcommand::Resume(ResumeCommand {
-            session_id,
+            thread_id,
             last,
             all,
             include_non_interactive,
@@ -911,7 +911,7 @@ async fn cli_main(arg0_paths: Arg0DispatchPaths) -> anyhow::Result<()> {
             interactive = finalize_resume_interactive(
                 interactive,
                 root_config_overrides.clone(),
-                session_id,
+                thread_id,
                 last,
                 all,
                 include_non_interactive,
@@ -929,7 +929,7 @@ async fn cli_main(arg0_paths: Arg0DispatchPaths) -> anyhow::Result<()> {
             handle_app_exit(exit_info)?;
         }
         Some(Subcommand::Fork(ForkCommand {
-            session_id,
+            thread_id,
             last,
             all,
             remote,
@@ -938,7 +938,7 @@ async fn cli_main(arg0_paths: Arg0DispatchPaths) -> anyhow::Result<()> {
             interactive = finalize_fork_interactive(
                 interactive,
                 root_config_overrides.clone(),
-                session_id,
+                thread_id,
                 last,
                 all,
                 config_overrides,
@@ -1595,7 +1595,7 @@ fn confirm(prompt: &str) -> std::io::Result<bool> {
 fn finalize_resume_interactive(
     mut interactive: TuiCli,
     root_config_overrides: CliConfigOverrides,
-    session_id: Option<String>,
+    thread_id: Option<String>,
     last: bool,
     show_all: bool,
     include_non_interactive: bool,
@@ -1603,10 +1603,10 @@ fn finalize_resume_interactive(
 ) -> TuiCli {
     // Start with the parsed interactive CLI so resume shares the same
     // configuration surface area as `codex` without additional flags.
-    let resume_session_id = session_id;
-    interactive.resume_picker = resume_session_id.is_none() && !last;
+    let resume_thread_id = thread_id;
+    interactive.resume_picker = resume_thread_id.is_none() && !last;
     interactive.resume_last = last;
-    interactive.resume_session_id = resume_session_id;
+    interactive.resume_thread_id = resume_thread_id;
     interactive.resume_show_all = show_all;
     interactive.resume_include_non_interactive = include_non_interactive;
 
@@ -1623,17 +1623,17 @@ fn finalize_resume_interactive(
 fn finalize_fork_interactive(
     mut interactive: TuiCli,
     root_config_overrides: CliConfigOverrides,
-    session_id: Option<String>,
+    thread_id: Option<String>,
     last: bool,
     show_all: bool,
     fork_cli: TuiCli,
 ) -> TuiCli {
     // Start with the parsed interactive CLI so fork shares the same
     // configuration surface area as `codex` without additional flags.
-    let fork_session_id = session_id;
-    interactive.fork_picker = fork_session_id.is_none() && !last;
+    let fork_thread_id = thread_id;
+    interactive.fork_picker = fork_thread_id.is_none() && !last;
     interactive.fork_last = last;
-    interactive.fork_session_id = fork_session_id;
+    interactive.fork_thread_id = fork_thread_id;
     interactive.fork_show_all = show_all;
 
     // Merge fork-scoped flags and overrides with highest precedence.
@@ -1702,7 +1702,7 @@ mod tests {
         } = cli;
 
         let Subcommand::Resume(ResumeCommand {
-            session_id,
+            thread_id,
             last,
             all,
             include_non_interactive,
@@ -1716,7 +1716,7 @@ mod tests {
         finalize_resume_interactive(
             interactive,
             root_overrides,
-            session_id,
+            thread_id,
             last,
             all,
             include_non_interactive,
@@ -1735,7 +1735,7 @@ mod tests {
         } = cli;
 
         let Subcommand::Fork(ForkCommand {
-            session_id,
+            thread_id,
             last,
             all,
             remote: _,
@@ -1745,7 +1745,7 @@ mod tests {
             unreachable!()
         };
 
-        finalize_fork_interactive(interactive, root_overrides, session_id, last, all, fork_cli)
+        finalize_fork_interactive(interactive, root_overrides, thread_id, last, all, fork_cli)
     }
 
     #[test]
@@ -1772,7 +1772,7 @@ mod tests {
             "codex",
             "exec",
             "resume",
-            "session-123",
+            "thread-123",
             "-o",
             "/tmp/resume-output.md",
             "re-review",
@@ -1790,7 +1790,7 @@ mod tests {
             exec.last_message_file,
             Some(std::path::PathBuf::from("/tmp/resume-output.md"))
         );
-        assert_eq!(args.session_id.as_deref(), Some("session-123"));
+        assert_eq!(args.session_id.as_deref(), Some("thread-123"));
         assert_eq!(args.prompt.as_deref(), Some("re-review"));
     }
 
@@ -2088,7 +2088,7 @@ mod tests {
         assert_eq!(interactive.model.as_deref(), Some("gpt-5.1-test"));
         assert!(interactive.resume_picker);
         assert!(!interactive.resume_last);
-        assert_eq!(interactive.resume_session_id, None);
+        assert_eq!(interactive.resume_thread_id, None);
     }
 
     #[test]
@@ -2096,7 +2096,7 @@ mod tests {
         let interactive = finalize_resume_from_args(["codex", "resume"].as_ref());
         assert!(interactive.resume_picker);
         assert!(!interactive.resume_last);
-        assert_eq!(interactive.resume_session_id, None);
+        assert_eq!(interactive.resume_thread_id, None);
         assert!(!interactive.resume_show_all);
     }
 
@@ -2105,16 +2105,16 @@ mod tests {
         let interactive = finalize_resume_from_args(["codex", "resume", "--last"].as_ref());
         assert!(!interactive.resume_picker);
         assert!(interactive.resume_last);
-        assert_eq!(interactive.resume_session_id, None);
+        assert_eq!(interactive.resume_thread_id, None);
         assert!(!interactive.resume_show_all);
     }
 
     #[test]
-    fn resume_picker_logic_with_session_id() {
+    fn resume_picker_logic_with_thread_id() {
         let interactive = finalize_resume_from_args(["codex", "resume", "1234"].as_ref());
         assert!(!interactive.resume_picker);
         assert!(!interactive.resume_last);
-        assert_eq!(interactive.resume_session_id.as_deref(), Some("1234"));
+        assert_eq!(interactive.resume_thread_id.as_deref(), Some("1234"));
         assert!(!interactive.resume_show_all);
     }
 
@@ -2140,7 +2140,7 @@ mod tests {
             [
                 "codex",
                 "resume",
-                "sid",
+                "thread-name",
                 "--oss",
                 "--search",
                 "--sandbox",
@@ -2186,7 +2186,7 @@ mod tests {
         assert!(has_a && has_b);
         assert!(!interactive.resume_picker);
         assert!(!interactive.resume_last);
-        assert_eq!(interactive.resume_session_id.as_deref(), Some("sid"));
+        assert_eq!(interactive.resume_thread_id.as_deref(), Some("thread-name"));
     }
 
     #[test]
@@ -2202,7 +2202,7 @@ mod tests {
         assert!(interactive.dangerously_bypass_approvals_and_sandbox);
         assert!(interactive.resume_picker);
         assert!(!interactive.resume_last);
-        assert_eq!(interactive.resume_session_id, None);
+        assert_eq!(interactive.resume_thread_id, None);
     }
 
     #[test]
@@ -2210,7 +2210,7 @@ mod tests {
         let interactive = finalize_fork_from_args(["codex", "fork"].as_ref());
         assert!(interactive.fork_picker);
         assert!(!interactive.fork_last);
-        assert_eq!(interactive.fork_session_id, None);
+        assert_eq!(interactive.fork_thread_id, None);
         assert!(!interactive.fork_show_all);
     }
 
@@ -2219,16 +2219,16 @@ mod tests {
         let interactive = finalize_fork_from_args(["codex", "fork", "--last"].as_ref());
         assert!(!interactive.fork_picker);
         assert!(interactive.fork_last);
-        assert_eq!(interactive.fork_session_id, None);
+        assert_eq!(interactive.fork_thread_id, None);
         assert!(!interactive.fork_show_all);
     }
 
     #[test]
-    fn fork_picker_logic_with_session_id() {
+    fn fork_picker_logic_with_thread_id() {
         let interactive = finalize_fork_from_args(["codex", "fork", "1234"].as_ref());
         assert!(!interactive.fork_picker);
         assert!(!interactive.fork_last);
-        assert_eq!(interactive.fork_session_id.as_deref(), Some("1234"));
+        assert_eq!(interactive.fork_thread_id.as_deref(), Some("1234"));
         assert!(!interactive.fork_show_all);
     }
 

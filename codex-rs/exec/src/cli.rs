@@ -159,7 +159,7 @@ fn mark_exec_global_args(cmd: clap::Command) -> clap::Command {
 
 #[derive(Debug, clap::Subcommand)]
 pub enum Command {
-    /// Resume a previous session by id or pick the most recent with --last.
+    /// Resume a previous thread by id or pick the most recent with --last.
     Resume(ResumeArgs),
 
     /// Run a code review against the current repository.
@@ -169,13 +169,13 @@ pub enum Command {
 #[derive(Args, Debug)]
 struct ResumeArgsRaw {
     // Note: This is the direct clap shape. We reinterpret the positional when --last is set
-    // so "codex resume --last <prompt>" treats the positional as a prompt, not a session id.
-    /// Conversation/session id (UUID) or thread name. UUIDs take precedence if it parses.
-    /// If omitted, use --last to pick the most recent recorded session.
-    #[arg(value_name = "SESSION_ID")]
+    // so "codex resume --last <prompt>" treats the positional as a prompt, not a thread id.
+    /// Thread id (UUID) or thread name. UUIDs take precedence if it parses.
+    /// If omitted, use --last to pick the most recent recorded thread.
+    #[arg(value_name = "THREAD_ID_OR_NAME")]
     session_id: Option<String>,
 
-    /// Resume the most recent recorded session (newest) without specifying an id.
+    /// Resume the most recent recorded thread (newest) without specifying an id.
     #[arg(long = "last", default_value_t = false)]
     last: bool,
 
@@ -200,11 +200,11 @@ struct ResumeArgsRaw {
 
 #[derive(Debug)]
 pub struct ResumeArgs {
-    /// Conversation/session id (UUID) or thread name. UUIDs take precedence if it parses.
-    /// If omitted, use --last to pick the most recent recorded session.
+    /// Thread id (UUID) or thread name. UUIDs take precedence if it parses.
+    /// If omitted, use --last to pick the most recent recorded thread.
     pub session_id: Option<String>,
 
-    /// Resume the most recent recorded session (newest) without specifying an id.
+    /// Resume the most recent recorded thread (newest) without specifying an id.
     pub last: bool,
 
     /// Show all sessions (disables cwd filtering).
