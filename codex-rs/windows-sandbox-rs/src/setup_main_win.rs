@@ -34,6 +34,7 @@ use serde::Serialize;
 use std::collections::HashSet;
 use std::ffi::OsStr;
 use std::ffi::c_void;
+use std::fs;
 use std::fs::File;
 use std::io::Write;
 use std::os::windows::process::CommandExt;
@@ -243,6 +244,42 @@ fn read_mask_allows_or_log(
             Ok(false)
         }
     }
+}
+
+fn should_skip_descendant(path: &Path, skip_roots: &[PathBuf]) -> bool {
+    skip_roots
+        .iter()
+        .any(|skip_root| path.starts_with(skip_root))
+}
+
+fn collect_repair_targets(root: &Path, skip_roots: &[PathBuf]) -> Vec<PathBuf> {
+    let mut repair_targets = Vec::new();
+    let mut stack = vec![root.to_path_buf()];
+
+    while let Some(dir) = stack.pop() {
+        let entries = match fs::read_dir(&dir) {
+            Ok(entries) => entries,
+            Err(_) => continue,
+        };
+
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if should_skip_descendant(&path, skip_roots) {
+                continue;
+            }
+
+            repair_targets.push(path.clone());
+
+            let Ok(metadata) = fs::symlink_metadata(&path) else {
+                continue;
+            };
+            if metadata.is_dir() && !metadata.file_type().is_symlink() {
+                stack.push(path);
+            }
+        }
+    }
+
+    repair_targets
 }
 
 fn lock_sandbox_dir(
@@ -645,6 +682,13 @@ fn run_setup_full(payload: &Payload, log: &mut File, sbx_dir: &Path) -> Result<(
     let mut seen_deny_paths: HashSet<PathBuf> = HashSet::new();
     let mut seen_write_roots: HashSet<PathBuf> = HashSet::new();
     let canonical_command_cwd = canonicalize_path(&payload.command_cwd);
+    let recursive_write_acl_repair = !refresh_only;
+    let canonical_deny_write_paths: Vec<PathBuf> = payload
+        .deny_write_paths
+        .iter()
+        .filter(|path| path.exists())
+        .map(|path| canonicalize_path(path))
+        .collect();
 
     for root in &payload.write_roots {
         if !seen_write_roots.insert(root.clone()) {
@@ -697,11 +741,16 @@ fn run_setup_full(payload: &Payload, log: &mut File, sbx_dir: &Path) -> Result<(
                 need_grant = true;
             }
         }
-        if need_grant {
+        if need_grant || recursive_write_acl_repair {
+            let action = if need_grant {
+                "granting write ACE"
+            } else {
+                "repairing descendant write ACLs under"
+            };
             log_line(
                 log,
                 &format!(
-                    "granting write ACE to {} for sandbox group and capability SID",
+                    "{action} {} for sandbox group and capability SID",
                     root.display()
                 ),
             )?;
@@ -709,7 +758,7 @@ fn run_setup_full(payload: &Payload, log: &mut File, sbx_dir: &Path) -> Result<(
         }
     }
 
-    let (tx, rx) = mpsc::channel::<(PathBuf, Result<bool>)>();
+    let (tx, rx) = mpsc::channel::<(PathBuf, Result<usize>)>();
     std::thread::scope(|scope| {
         for root in grant_tasks {
             let is_command_cwd = is_command_cwd_root(&root, &canonical_command_cwd);
@@ -718,6 +767,17 @@ fn run_setup_full(payload: &Payload, log: &mut File, sbx_dir: &Path) -> Result<(
             } else {
                 vec![sandbox_group_sid_str.clone(), cap_sid_str.clone()]
             };
+            let canonical_root = canonicalize_path(&root);
+            let skip_roots: Vec<PathBuf> = if recursive_write_acl_repair {
+                canonical_deny_write_paths
+                    .iter()
+                    .filter(|path| path.starts_with(&canonical_root))
+                    .cloned()
+                    .collect()
+            } else {
+                Vec::new()
+            };
+            let recursive_write_acl_repair = recursive_write_acl_repair;
             let tx = tx.clone();
             scope.spawn(move || {
                 // Convert SID strings to psids locally in this thread.
@@ -731,7 +791,22 @@ fn run_setup_full(payload: &Payload, log: &mut File, sbx_dir: &Path) -> Result<(
                     }
                 }
 
-                let res = unsafe { ensure_allow_write_aces(&root, &psids) };
+                let res = (|| -> Result<usize> {
+                    let mut repaired_paths = 0usize;
+                    if unsafe { ensure_allow_write_aces(&root, &psids) }? {
+                        repaired_paths += 1;
+                    }
+
+                    if recursive_write_acl_repair && root.is_dir() {
+                        for path in collect_repair_targets(&root, &skip_roots) {
+                            if unsafe { ensure_allow_write_aces(&path, &psids) }? {
+                                repaired_paths += 1;
+                            }
+                        }
+                    }
+
+                    Ok(repaired_paths)
+                })();
 
                 for psid in psids {
                     unsafe {
@@ -744,7 +819,17 @@ fn run_setup_full(payload: &Payload, log: &mut File, sbx_dir: &Path) -> Result<(
         drop(tx);
         for (root, res) in rx {
             match res {
-                Ok(_) => {}
+                Ok(repaired_paths) => {
+                    if recursive_write_acl_repair && repaired_paths > 0 {
+                        let _ = log_line(
+                            log,
+                            &format!(
+                                "recursively repaired write ACLs under {} ({repaired_paths} paths updated)",
+                                root.display()
+                            ),
+                        );
+                    }
+                }
                 Err(e) => {
                     refresh_errors.push(format!("write ACE failed on {}: {}", root.display(), e));
                     if log_line(
