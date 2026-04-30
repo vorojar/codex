@@ -4,13 +4,13 @@ use super::*;
 use crate::config::RolloutConfig;
 use chrono::TimeZone;
 use codex_protocol::config_types::ReasoningSummary as ReasoningSummaryConfig;
+use codex_protocol::models::PermissionProfile;
 use codex_protocol::models::ResponseItem;
 use codex_protocol::protocol::AgentMessageEvent;
 use codex_protocol::protocol::AskForApproval;
 use codex_protocol::protocol::EventMsg;
 use codex_protocol::protocol::RolloutItem;
 use codex_protocol::protocol::RolloutLine;
-use codex_protocol::protocol::SandboxPolicy;
 use codex_protocol::protocol::TurnContextItem;
 use codex_protocol::protocol::UserMessageEvent;
 use pretty_assertions::assert_eq;
@@ -1095,6 +1095,7 @@ async fn resume_candidate_matches_cwd_reads_latest_turn_context() -> std::io::Re
 
     let path = write_session_file(home.path(), "2025-01-03T13-00-00", Uuid::from_u128(9012))?;
     let mut file = std::fs::OpenOptions::new().append(true).open(&path)?;
+    let permission_profile = PermissionProfile::read_only();
     let turn_context = RolloutLine {
         timestamp: "2025-01-03T13:00:01Z".to_string(),
         item: RolloutItem::TurnContext(TurnContextItem {
@@ -1104,8 +1105,8 @@ async fn resume_candidate_matches_cwd_reads_latest_turn_context() -> std::io::Re
             current_date: None,
             timezone: None,
             approval_policy: AskForApproval::Never,
-            sandbox_policy: SandboxPolicy::new_read_only_policy(),
-            permission_profile: None,
+            sandbox_policy: permission_profile.to_legacy_sandbox_policy(latest_cwd.as_path())?,
+            permission_profile: Some(permission_profile),
             network: None,
             file_system_sandbox_policy: None,
             model: "test-model".to_string(),
