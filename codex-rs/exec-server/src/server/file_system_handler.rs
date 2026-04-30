@@ -173,8 +173,8 @@ fn map_fs_error(err: io::Error) -> JSONRPCErrorError {
 
 #[cfg(test)]
 mod tests {
-    use codex_protocol::protocol::NetworkAccess;
-    use codex_protocol::protocol::SandboxPolicy;
+    use codex_protocol::models::PermissionProfile;
+    use codex_protocol::permissions::NetworkSandboxPolicy;
     use codex_utils_absolute_path::AbsolutePathBuf;
     use pretty_assertions::assert_eq;
 
@@ -195,12 +195,12 @@ mod tests {
         let sandbox_cwd =
             AbsolutePathBuf::from_absolute_path(temp_dir.path()).expect("absolute tempdir");
 
-        for (file_name, sandbox_policy) in [
-            ("danger.txt", SandboxPolicy::DangerFullAccess),
+        for (file_name, permission_profile) in [
+            ("danger.txt", PermissionProfile::Disabled),
             (
                 "external.txt",
-                SandboxPolicy::ExternalSandbox {
-                    network_access: NetworkAccess::Restricted,
+                PermissionProfile::External {
+                    network: NetworkSandboxPolicy::Restricted,
                 },
             ),
         ] {
@@ -212,8 +212,8 @@ mod tests {
                 .write_file(FsWriteFileParams {
                     path: path.clone(),
                     data_base64: STANDARD.encode("ok"),
-                    sandbox: Some(FileSystemSandboxContext::from_legacy_sandbox_policy(
-                        sandbox_policy.clone(),
+                    sandbox: Some(FileSystemSandboxContext::from_permission_profile_with_cwd(
+                        permission_profile.clone(),
                         sandbox_cwd.clone(),
                     )),
                 })
@@ -223,8 +223,8 @@ mod tests {
             let response = handler
                 .read_file(FsReadFileParams {
                     path,
-                    sandbox: Some(FileSystemSandboxContext::from_legacy_sandbox_policy(
-                        sandbox_policy,
+                    sandbox: Some(FileSystemSandboxContext::from_permission_profile_with_cwd(
+                        permission_profile,
                         sandbox_cwd.clone(),
                     )),
                 })
