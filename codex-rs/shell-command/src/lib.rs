@@ -9,3 +9,4 @@ pub mod powershell;
 
 pub use command_safety::is_dangerous_command;
 pub use command_safety::is_safe_command;
+pub use command_safety::windows_safe_commands::split_powershell_command_sequence;

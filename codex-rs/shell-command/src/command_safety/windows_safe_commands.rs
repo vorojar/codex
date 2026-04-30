@@ -6,7 +6,7 @@ use std::path::Path;
 /// On Windows, we conservatively allow only clearly read-only PowerShell invocations
 /// that match a small safelist. Anything else (including direct CMD commands) is unsafe.
 pub fn is_safe_command_windows(command: &[String]) -> bool {
-    if let Some(commands) = try_parse_powershell_command_sequence(command) {
+    if let Some(commands) = split_powershell_command_sequence(command) {
         commands
             .iter()
             .all(|cmd| is_safe_powershell_command(cmd.as_slice()))
@@ -18,7 +18,7 @@ pub fn is_safe_command_windows(command: &[String]) -> bool {
 
 /// Returns each command sequence if the invocation starts with a PowerShell binary.
 /// For example, the tokens from `pwsh Get-ChildItem | Measure-Object` become two sequences.
-fn try_parse_powershell_command_sequence(command: &[String]) -> Option<Vec<Vec<String>>> {
+pub fn split_powershell_command_sequence(command: &[String]) -> Option<Vec<Vec<String>>> {
     let (exe, rest) = command.split_first()?;
     if is_powershell_executable(exe) {
         parse_powershell_invocation(exe, rest)

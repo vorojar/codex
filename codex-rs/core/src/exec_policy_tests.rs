@@ -674,6 +674,23 @@ fn commands_for_exec_policy_falls_back_for_whitespace_shell_script() {
     assert_eq!(commands_for_exec_policy(&command), (vec![command], false));
 }
 
+#[test]
+fn commands_for_exec_policy_splits_powershell_command() {
+    let command = vec![
+        "pwsh".to_string(),
+        "-Command".to_string(),
+        "git add -A".to_string(),
+    ];
+
+    assert_eq!(
+        commands_for_exec_policy(&command),
+        (
+            vec![vec!["git".to_string(), "add".to_string(), "-A".to_string(),]],
+            false,
+        )
+    );
+}
+
 #[tokio::test]
 async fn ignore_user_config_keeps_user_policy_files() -> std::io::Result<()> {
     let temp = tempdir()?;
@@ -1627,6 +1644,32 @@ prefix_rule(pattern=["bash"], decision="allow")
             sandbox_policy: SandboxPolicy::new_read_only_policy(),
             file_system_sandbox_policy: read_only_file_system_sandbox_policy(),
             sandbox_permissions: SandboxPermissions::UseDefault,
+            prefix_rule: None,
+        },
+        ExecApprovalRequirement::Skip {
+            bypass_sandbox: true,
+            proposed_execpolicy_amendment: None,
+        },
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn powershell_command_bypasses_sandbox_when_inner_command_matches_policy_allow() {
+    let policy_src = r#"prefix_rule(pattern=["git", "add"], decision="allow")"#;
+
+    assert_exec_approval_requirement_for_command(
+        ExecApprovalRequirementScenario {
+            policy_src: Some(policy_src.to_string()),
+            command: vec![
+                "pwsh".to_string(),
+                "-Command".to_string(),
+                "git add -A".to_string(),
+            ],
+            approval_policy: AskForApproval::OnRequest,
+            sandbox_policy: SandboxPolicy::new_workspace_write_policy(),
+            file_system_sandbox_policy: workspace_write_file_system_sandbox_policy(),
+            sandbox_permissions: SandboxPermissions::RequireEscalated,
             prefix_rule: None,
         },
         ExecApprovalRequirement::Skip {
