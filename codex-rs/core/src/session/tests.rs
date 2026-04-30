@@ -1738,6 +1738,14 @@ async fn fork_startup_context_then_first_turn_diff_snapshot() -> anyhow::Result<
 async fn record_initial_history_forked_hydrates_previous_turn_settings() {
     let (session, turn_context) = make_session_and_context().await;
     let previous_model = "forked-rollout-model";
+    let file_system_sandbox_policy = turn_context.file_system_sandbox_policy();
+    let legacy_sandbox_policy =
+        codex_sandboxing::compatibility_sandbox_policy_for_permission_profile(
+            &turn_context.permission_profile,
+            &file_system_sandbox_policy,
+            turn_context.network_sandbox_policy(),
+            turn_context.cwd.as_path(),
+        );
     let previous_context_item = TurnContextItem {
         turn_id: Some(turn_context.sub_id.clone()),
         trace_id: turn_context.trace_id.clone(),
@@ -1745,7 +1753,7 @@ async fn record_initial_history_forked_hydrates_previous_turn_settings() {
         current_date: turn_context.current_date.clone(),
         timezone: turn_context.timezone.clone(),
         approval_policy: turn_context.approval_policy.value(),
-        sandbox_policy: Some(turn_context.sandbox_policy()),
+        sandbox_policy: Some(legacy_sandbox_policy),
         permission_profile: None,
         network: None,
         file_system_sandbox_policy: None,

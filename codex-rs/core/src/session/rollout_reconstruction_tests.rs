@@ -9,6 +9,7 @@ use codex_protocol::protocol::CompactedItem;
 use codex_protocol::protocol::InitialHistory;
 use codex_protocol::protocol::InterAgentCommunication;
 use codex_protocol::protocol::ResumedHistory;
+use codex_protocol::protocol::SandboxPolicy;
 use pretty_assertions::assert_eq;
 use std::path::PathBuf;
 
@@ -52,6 +53,16 @@ fn inter_agent_assistant_message(text: &str) -> ResponseItem {
     }
 }
 
+fn legacy_sandbox_policy_for_rollout_fixture(turn_context: &TurnContext) -> SandboxPolicy {
+    let file_system_sandbox_policy = turn_context.file_system_sandbox_policy();
+    codex_sandboxing::compatibility_sandbox_policy_for_permission_profile(
+        &turn_context.permission_profile,
+        &file_system_sandbox_policy,
+        turn_context.network_sandbox_policy(),
+        turn_context.cwd.as_path(),
+    )
+}
+
 #[tokio::test]
 async fn record_initial_history_resumed_bare_turn_context_does_not_hydrate_previous_turn_settings()
 {
@@ -64,7 +75,7 @@ async fn record_initial_history_resumed_bare_turn_context_does_not_hydrate_previ
         current_date: turn_context.current_date.clone(),
         timezone: turn_context.timezone.clone(),
         approval_policy: turn_context.approval_policy.value(),
-        sandbox_policy: Some(turn_context.sandbox_policy()),
+        sandbox_policy: Some(legacy_sandbox_policy_for_rollout_fixture(&turn_context)),
         permission_profile: None,
         network: None,
         file_system_sandbox_policy: None,
@@ -105,7 +116,7 @@ async fn record_initial_history_resumed_hydrates_previous_turn_settings_from_lif
         current_date: turn_context.current_date.clone(),
         timezone: turn_context.timezone.clone(),
         approval_policy: turn_context.approval_policy.value(),
-        sandbox_policy: Some(turn_context.sandbox_policy()),
+        sandbox_policy: Some(legacy_sandbox_policy_for_rollout_fixture(&turn_context)),
         permission_profile: None,
         network: None,
         file_system_sandbox_policy: None,
@@ -915,7 +926,7 @@ async fn record_initial_history_resumed_turn_context_after_compaction_reestablis
         current_date: turn_context.current_date.clone(),
         timezone: turn_context.timezone.clone(),
         approval_policy: turn_context.approval_policy.value(),
-        sandbox_policy: Some(turn_context.sandbox_policy()),
+        sandbox_policy: Some(legacy_sandbox_policy_for_rollout_fixture(&turn_context)),
         permission_profile: None,
         network: None,
         file_system_sandbox_policy: None,
@@ -993,7 +1004,7 @@ async fn record_initial_history_resumed_turn_context_after_compaction_reestablis
             current_date: turn_context.current_date.clone(),
             timezone: turn_context.timezone.clone(),
             approval_policy: turn_context.approval_policy.value(),
-            sandbox_policy: Some(turn_context.sandbox_policy()),
+            sandbox_policy: Some(legacy_sandbox_policy_for_rollout_fixture(&turn_context)),
             permission_profile: None,
             network: None,
             file_system_sandbox_policy: None,
@@ -1024,7 +1035,7 @@ async fn record_initial_history_resumed_aborted_turn_without_id_clears_active_tu
         current_date: turn_context.current_date.clone(),
         timezone: turn_context.timezone.clone(),
         approval_policy: turn_context.approval_policy.value(),
-        sandbox_policy: Some(turn_context.sandbox_policy()),
+        sandbox_policy: Some(legacy_sandbox_policy_for_rollout_fixture(&turn_context)),
         permission_profile: None,
         network: None,
         file_system_sandbox_policy: None,
@@ -1139,7 +1150,7 @@ async fn record_initial_history_resumed_unmatched_abort_preserves_active_turn_fo
         current_date: turn_context.current_date.clone(),
         timezone: turn_context.timezone.clone(),
         approval_policy: turn_context.approval_policy.value(),
-        sandbox_policy: Some(turn_context.sandbox_policy()),
+        sandbox_policy: Some(legacy_sandbox_policy_for_rollout_fixture(&turn_context)),
         permission_profile: None,
         network: None,
         file_system_sandbox_policy: None,
@@ -1253,7 +1264,7 @@ async fn record_initial_history_resumed_trailing_incomplete_turn_compaction_clea
         current_date: turn_context.current_date.clone(),
         timezone: turn_context.timezone.clone(),
         approval_policy: turn_context.approval_policy.value(),
-        sandbox_policy: Some(turn_context.sandbox_policy()),
+        sandbox_policy: Some(legacy_sandbox_policy_for_rollout_fixture(&turn_context)),
         permission_profile: None,
         network: None,
         file_system_sandbox_policy: None,
@@ -1405,7 +1416,7 @@ async fn record_initial_history_resumed_replaced_incomplete_compacted_turn_clear
         current_date: turn_context.current_date.clone(),
         timezone: turn_context.timezone.clone(),
         approval_policy: turn_context.approval_policy.value(),
-        sandbox_policy: Some(turn_context.sandbox_policy()),
+        sandbox_policy: Some(legacy_sandbox_policy_for_rollout_fixture(&turn_context)),
         permission_profile: None,
         network: None,
         file_system_sandbox_policy: None,
