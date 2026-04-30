@@ -24,7 +24,7 @@ use core_test_support::responses::start_mock_server;
 use core_test_support::skip_if_no_network;
 use core_test_support::test_codex::TestCodex;
 use core_test_support::test_codex::test_codex;
-use core_test_support::test_codex::turn_permission_fields;
+use core_test_support::test_codex::turn_permission_profile;
 use core_test_support::wait_for_event;
 use serde_json::Value;
 use serde_json::json;
@@ -77,8 +77,8 @@ async fn shell_tool_executes_command_and_streams_output() -> anyhow::Result<()> 
 
     let session_model = session_configured.model.clone();
     let cwd_path = cwd.path().to_path_buf();
-    let (sandbox_policy, permission_profile) =
-        turn_permission_fields(PermissionProfile::Disabled, cwd_path.as_path());
+    let permission_profile =
+        turn_permission_profile(PermissionProfile::Disabled, cwd_path.as_path());
 
     codex
         .submit(Op::UserTurn {
@@ -91,7 +91,6 @@ async fn shell_tool_executes_command_and_streams_output() -> anyhow::Result<()> 
             cwd: cwd_path,
             approval_policy: AskForApproval::Never,
             approvals_reviewer: None,
-            sandbox_policy,
             permission_profile,
             model: session_model,
             effort: None,
@@ -153,8 +152,8 @@ async fn update_plan_tool_emits_plan_update_event() -> anyhow::Result<()> {
 
     let session_model = session_configured.model.clone();
     let cwd_path = cwd.path().to_path_buf();
-    let (sandbox_policy, permission_profile) =
-        turn_permission_fields(PermissionProfile::Disabled, cwd_path.as_path());
+    let permission_profile =
+        turn_permission_profile(PermissionProfile::Disabled, cwd_path.as_path());
 
     codex
         .submit(Op::UserTurn {
@@ -167,7 +166,6 @@ async fn update_plan_tool_emits_plan_update_event() -> anyhow::Result<()> {
             cwd: cwd_path,
             approval_policy: AskForApproval::Never,
             approvals_reviewer: None,
-            sandbox_policy,
             permission_profile,
             model: session_model,
             effort: None,
@@ -239,8 +237,8 @@ async fn update_plan_tool_rejects_malformed_payload() -> anyhow::Result<()> {
 
     let session_model = session_configured.model.clone();
     let cwd_path = cwd.path().to_path_buf();
-    let (sandbox_policy, permission_profile) =
-        turn_permission_fields(PermissionProfile::Disabled, cwd_path.as_path());
+    let permission_profile =
+        turn_permission_profile(PermissionProfile::Disabled, cwd_path.as_path());
 
     codex
         .submit(Op::UserTurn {
@@ -253,7 +251,6 @@ async fn update_plan_tool_rejects_malformed_payload() -> anyhow::Result<()> {
             cwd: cwd_path,
             approval_policy: AskForApproval::Never,
             approvals_reviewer: None,
-            sandbox_policy,
             permission_profile,
             model: session_model,
             effort: None,
@@ -340,8 +337,8 @@ async fn apply_patch_tool_executes_and_emits_patch_events() -> anyhow::Result<()
 
     let session_model = session_configured.model.clone();
     let cwd_path = cwd.path().to_path_buf();
-    let (sandbox_policy, permission_profile) =
-        turn_permission_fields(PermissionProfile::Disabled, cwd_path.as_path());
+    let permission_profile =
+        turn_permission_profile(PermissionProfile::Disabled, cwd_path.as_path());
 
     codex
         .submit(Op::UserTurn {
@@ -354,7 +351,6 @@ async fn apply_patch_tool_executes_and_emits_patch_events() -> anyhow::Result<()
             cwd: cwd_path,
             approval_policy: AskForApproval::Never,
             approvals_reviewer: None,
-            sandbox_policy,
             permission_profile,
             model: session_model,
             effort: None,
@@ -449,8 +445,8 @@ async fn apply_patch_reports_parse_diagnostics() -> anyhow::Result<()> {
 
     let session_model = session_configured.model.clone();
     let cwd_path = cwd.path().to_path_buf();
-    let (sandbox_policy, permission_profile) =
-        turn_permission_fields(PermissionProfile::Disabled, cwd_path.as_path());
+    let permission_profile =
+        turn_permission_profile(PermissionProfile::Disabled, cwd_path.as_path());
 
     codex
         .submit(Op::UserTurn {
@@ -463,7 +459,6 @@ async fn apply_patch_reports_parse_diagnostics() -> anyhow::Result<()> {
             cwd: cwd_path,
             approval_policy: AskForApproval::Never,
             approvals_reviewer: None,
-            sandbox_policy,
             permission_profile,
             model: session_model,
             effort: None,

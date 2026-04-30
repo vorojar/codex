@@ -22,7 +22,7 @@ use core_test_support::responses::start_mock_server;
 use core_test_support::skip_if_no_network;
 use core_test_support::stdio_server_bin;
 use core_test_support::test_codex::test_codex;
-use core_test_support::test_codex::turn_permission_fields;
+use core_test_support::test_codex::turn_permission_profile;
 use core_test_support::wait_for_event;
 use serde_json::Value;
 use serde_json::json;
@@ -509,8 +509,8 @@ async fn mcp_image_output_preserves_image_and_no_text_summary() -> Result<()> {
     });
     let fixture = builder.build(&server).await?;
     let session_model = fixture.session_configured.model.clone();
-    let (sandbox_policy, permission_profile) =
-        turn_permission_fields(PermissionProfile::read_only(), fixture.cwd.path());
+    let permission_profile =
+        turn_permission_profile(PermissionProfile::read_only(), fixture.cwd.path());
 
     fixture
         .codex
@@ -524,7 +524,6 @@ async fn mcp_image_output_preserves_image_and_no_text_summary() -> Result<()> {
             cwd: fixture.cwd.path().to_path_buf(),
             approval_policy: AskForApproval::Never,
             approvals_reviewer: None,
-            sandbox_policy,
             permission_profile,
             model: session_model,
             effort: None,

@@ -28,7 +28,7 @@ use core_test_support::responses::ev_reasoning_item;
 use core_test_support::responses::mount_models_once;
 use core_test_support::skip_if_no_network;
 use core_test_support::test_codex::test_codex;
-use core_test_support::test_codex::turn_permission_fields;
+use core_test_support::test_codex::turn_permission_profile;
 use core_test_support::wait_for_event;
 use core_test_support::wait_for_event_match;
 use std::path::PathBuf;
@@ -73,8 +73,7 @@ const PRETURN_CONTEXT_DIFF_CWD: &str = "/tmp/PRETURN_CONTEXT_DIFF_CWD";
 pub(super) const COMPACT_WARNING_MESSAGE: &str = "Heads up: Long threads and multiple compactions can cause the model to be less accurate. Start a new thread when possible to keep threads small and targeted.";
 
 fn disabled_permission_user_turn(text: impl Into<String>, cwd: PathBuf, model: String) -> Op {
-    let (sandbox_policy, permission_profile) =
-        turn_permission_fields(PermissionProfile::Disabled, cwd.as_path());
+    let permission_profile = turn_permission_profile(PermissionProfile::Disabled, cwd.as_path());
     Op::UserTurn {
         environments: None,
         items: vec![UserInput::Text {
@@ -85,7 +84,6 @@ fn disabled_permission_user_turn(text: impl Into<String>, cwd: PathBuf, model: S
         cwd,
         approval_policy: AskForApproval::Never,
         approvals_reviewer: None,
-        sandbox_policy,
         permission_profile,
         model,
         effort: None,

@@ -13,7 +13,7 @@ use core_test_support::responses::mount_function_call_agent_response;
 use core_test_support::responses::start_mock_server;
 use core_test_support::skip_if_no_network;
 use core_test_support::test_codex::TestCodex;
-use core_test_support::test_codex::turn_permission_fields;
+use core_test_support::test_codex::turn_permission_profile;
 use core_test_support::wait_for_event;
 use core_test_support::wait_for_event_match;
 use core_test_support::zsh_fork::build_zsh_fork_test;
@@ -43,8 +43,7 @@ async fn submit_turn_with_policies(
     approval_policy: AskForApproval,
     permission_profile: PermissionProfile,
 ) -> Result<()> {
-    let (sandbox_policy, permission_profile) =
-        turn_permission_fields(permission_profile, test.cwd_path());
+    let permission_profile = turn_permission_profile(permission_profile, test.cwd_path());
     test.codex
         .submit(Op::UserTurn {
             environments: None,
@@ -56,7 +55,6 @@ async fn submit_turn_with_policies(
             cwd: test.cwd_path().to_path_buf(),
             approval_policy,
             approvals_reviewer: None,
-            sandbox_policy,
             permission_profile,
             model: test.session_configured.model.clone(),
             effort: None,

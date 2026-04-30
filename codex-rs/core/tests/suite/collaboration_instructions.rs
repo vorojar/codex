@@ -14,7 +14,7 @@ use core_test_support::responses::sse;
 use core_test_support::responses::start_mock_server;
 use core_test_support::skip_if_no_network;
 use core_test_support::test_codex::test_codex;
-use core_test_support::test_codex::turn_permission_fields;
+use core_test_support::test_codex::turn_permission_profile;
 use core_test_support::wait_for_event;
 use pretty_assertions::assert_eq;
 use serde_json::Value;
@@ -175,7 +175,7 @@ async fn collaboration_instructions_added_on_user_turn() -> Result<()> {
     let test = test_codex().build(&server).await?;
     let collab_text = "turn instructions";
     let collaboration_mode = collab_mode_with_instructions(Some(collab_text));
-    let (sandbox_policy, permission_profile) = turn_permission_fields(
+    let permission_profile = turn_permission_profile(
         test.config.permissions.permission_profile(),
         test.config.cwd.as_path(),
     );
@@ -190,7 +190,6 @@ async fn collaboration_instructions_added_on_user_turn() -> Result<()> {
             cwd: test.config.cwd.to_path_buf(),
             approval_policy: test.config.permissions.approval_policy.value(),
             approvals_reviewer: None,
-            sandbox_policy,
             permission_profile,
             model: test.session_configured.model.clone(),
             effort: None,
@@ -284,7 +283,7 @@ async fn user_turn_overrides_collaboration_instructions_after_override() -> Resu
     let base_mode = collab_mode_with_instructions(Some(base_text));
     let turn_text = "turn override";
     let turn_mode = collab_mode_with_instructions(Some(turn_text));
-    let (sandbox_policy, permission_profile) = turn_permission_fields(
+    let permission_profile = turn_permission_profile(
         test.config.permissions.permission_profile(),
         test.config.cwd.as_path(),
     );
@@ -316,7 +315,6 @@ async fn user_turn_overrides_collaboration_instructions_after_override() -> Resu
             cwd: test.config.cwd.to_path_buf(),
             approval_policy: test.config.permissions.approval_policy.value(),
             approvals_reviewer: None,
-            sandbox_policy,
             permission_profile,
             model: test.session_configured.model.clone(),
             effort: None,

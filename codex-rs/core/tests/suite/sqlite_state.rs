@@ -26,7 +26,7 @@ use core_test_support::responses::start_mock_server;
 use core_test_support::skip_if_no_network;
 use core_test_support::stdio_server_bin;
 use core_test_support::test_codex::test_codex;
-use core_test_support::test_codex::turn_permission_fields;
+use core_test_support::test_codex::turn_permission_profile;
 use core_test_support::wait_for_event;
 use core_test_support::wait_for_event_match;
 use pretty_assertions::assert_eq;
@@ -398,8 +398,7 @@ async fn mcp_call_marks_thread_memory_mode_polluted_when_configured() -> Result<
     let db = test.codex.state_db().expect("state db enabled");
     let thread_id = test.session_configured.session_id;
     let cwd = test.cwd_path().to_path_buf();
-    let (sandbox_policy, permission_profile) =
-        turn_permission_fields(PermissionProfile::read_only(), cwd.as_path());
+    let permission_profile = turn_permission_profile(PermissionProfile::read_only(), cwd.as_path());
 
     test.codex
         .submit(Op::UserTurn {
@@ -412,7 +411,6 @@ async fn mcp_call_marks_thread_memory_mode_polluted_when_configured() -> Result<
             cwd,
             approval_policy: AskForApproval::Never,
             approvals_reviewer: None,
-            sandbox_policy,
             permission_profile,
             model: test.session_configured.model.clone(),
             effort: None,

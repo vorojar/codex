@@ -32,7 +32,7 @@ use core_test_support::skip_if_windows;
 use core_test_support::test_codex::TestCodex;
 use core_test_support::test_codex::TestCodexHarness;
 use core_test_support::test_codex::test_codex;
-use core_test_support::test_codex::turn_permission_fields;
+use core_test_support::test_codex::turn_permission_profile;
 use core_test_support::wait_for_event;
 use core_test_support::wait_for_event_match;
 use core_test_support::wait_for_event_with_timeout;
@@ -186,8 +186,7 @@ async fn submit_unified_exec_turn(
     permission_profile: PermissionProfile,
 ) -> Result<()> {
     let session_model = test.session_configured.model.clone();
-    let (sandbox_policy, permission_profile) =
-        turn_permission_fields(permission_profile, test.config.cwd.as_path());
+    let permission_profile = turn_permission_profile(permission_profile, test.config.cwd.as_path());
 
     test.codex
         .submit(Op::UserTurn {
@@ -200,7 +199,6 @@ async fn submit_unified_exec_turn(
             cwd: test.config.cwd.to_path_buf(),
             approval_policy: AskForApproval::Never,
             approvals_reviewer: None,
-            sandbox_policy,
             permission_profile,
             model: session_model,
             effort: None,
@@ -273,8 +271,7 @@ async fn unified_exec_intercepts_apply_patch_exec_command() -> Result<()> {
     let codex = test.codex.clone();
     let cwd = test.cwd_path().to_path_buf();
     let session_model = test.session_configured.model.clone();
-    let (sandbox_policy, permission_profile) =
-        turn_permission_fields(PermissionProfile::Disabled, cwd.as_path());
+    let permission_profile = turn_permission_profile(PermissionProfile::Disabled, cwd.as_path());
 
     codex
         .submit(Op::UserTurn {
@@ -287,7 +284,6 @@ async fn unified_exec_intercepts_apply_patch_exec_command() -> Result<()> {
             cwd,
             approval_policy: AskForApproval::Never,
             approvals_reviewer: None,
-            sandbox_policy,
             permission_profile,
             model: session_model,
             effort: None,
@@ -2145,8 +2141,7 @@ async fn unified_exec_keeps_long_running_session_after_turn_end() -> Result<()> 
     mount_sse_sequence(&server, responses).await;
 
     let session_model = session_configured.model.clone();
-    let (sandbox_policy, permission_profile) =
-        turn_permission_fields(PermissionProfile::Disabled, cwd.path());
+    let permission_profile = turn_permission_profile(PermissionProfile::Disabled, cwd.path());
 
     codex
         .submit(Op::UserTurn {
@@ -2159,7 +2154,6 @@ async fn unified_exec_keeps_long_running_session_after_turn_end() -> Result<()> 
             cwd: cwd.path().to_path_buf(),
             approval_policy: AskForApproval::Never,
             approvals_reviewer: None,
-            sandbox_policy,
             permission_profile,
             model: session_model,
             effort: None,
@@ -2242,8 +2236,7 @@ async fn unified_exec_interrupt_preserves_long_running_session() -> Result<()> {
     mount_sse_sequence(&server, responses).await;
 
     let session_model = session_configured.model.clone();
-    let (sandbox_policy, permission_profile) =
-        turn_permission_fields(PermissionProfile::Disabled, cwd.path());
+    let permission_profile = turn_permission_profile(PermissionProfile::Disabled, cwd.path());
 
     codex
         .submit(Op::UserTurn {
@@ -2256,7 +2249,6 @@ async fn unified_exec_interrupt_preserves_long_running_session() -> Result<()> {
             cwd: cwd.path().to_path_buf(),
             approval_policy: AskForApproval::Never,
             approvals_reviewer: None,
-            sandbox_policy,
             permission_profile,
             model: session_model,
             effort: None,
@@ -2708,8 +2700,7 @@ async fn unified_exec_runs_under_sandbox() -> Result<()> {
     let request_log = mount_sse_sequence(&server, responses).await;
 
     let session_model = session_configured.model.clone();
-    let (sandbox_policy, permission_profile) =
-        turn_permission_fields(PermissionProfile::read_only(), cwd.path());
+    let permission_profile = turn_permission_profile(PermissionProfile::read_only(), cwd.path());
 
     codex
         .submit(Op::UserTurn {
@@ -2723,7 +2714,6 @@ async fn unified_exec_runs_under_sandbox() -> Result<()> {
             approval_policy: AskForApproval::Never,
             approvals_reviewer: None,
             // Important!
-            sandbox_policy,
             permission_profile,
             model: session_model,
             effort: None,
@@ -2824,8 +2814,8 @@ async fn unified_exec_enforces_glob_deny_read_policy() -> Result<()> {
     let request_log = mount_sse_sequence(&server, responses).await;
 
     let session_model = session_configured.model.clone();
-    let (sandbox_policy, permission_profile) =
-        turn_permission_fields(session_configured.permission_profile.clone(), cwd.path());
+    let permission_profile =
+        turn_permission_profile(session_configured.permission_profile.clone(), cwd.path());
     codex
         .submit(Op::UserTurn {
             environments: None,
@@ -2837,7 +2827,6 @@ async fn unified_exec_enforces_glob_deny_read_policy() -> Result<()> {
             cwd: cwd.path().to_path_buf(),
             approval_policy: AskForApproval::Never,
             approvals_reviewer: None,
-            sandbox_policy,
             permission_profile,
             model: session_model,
             effort: None,
@@ -2955,8 +2944,7 @@ async fn unified_exec_python_prompt_under_seatbelt() -> Result<()> {
     let request_log = mount_sse_sequence(&server, responses).await;
 
     let session_model = session_configured.model.clone();
-    let (sandbox_policy, permission_profile) =
-        turn_permission_fields(PermissionProfile::read_only(), cwd.path());
+    let permission_profile = turn_permission_profile(PermissionProfile::read_only(), cwd.path());
 
     codex
         .submit(Op::UserTurn {
@@ -2969,7 +2957,6 @@ async fn unified_exec_python_prompt_under_seatbelt() -> Result<()> {
             cwd: cwd.path().to_path_buf(),
             approval_policy: AskForApproval::Never,
             approvals_reviewer: None,
-            sandbox_policy,
             permission_profile,
             model: session_model,
             effort: None,

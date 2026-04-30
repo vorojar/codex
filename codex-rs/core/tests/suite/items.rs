@@ -35,7 +35,7 @@ use core_test_support::responses::start_mock_server;
 use core_test_support::skip_if_no_network;
 use core_test_support::test_codex::TestCodex;
 use core_test_support::test_codex::test_codex;
-use core_test_support::test_codex::turn_permission_fields;
+use core_test_support::test_codex::turn_permission_profile;
 use core_test_support::wait_for_event;
 use core_test_support::wait_for_event_match;
 use pretty_assertions::assert_eq;
@@ -48,8 +48,7 @@ fn disabled_plan_turn(
     collaboration_mode: CollaborationMode,
 ) -> anyhow::Result<Op> {
     let cwd = std::env::current_dir()?;
-    let (sandbox_policy, permission_profile) =
-        turn_permission_fields(PermissionProfile::Disabled, cwd.as_path());
+    let permission_profile = turn_permission_profile(PermissionProfile::Disabled, cwd.as_path());
     Ok(Op::UserTurn {
         environments: None,
         items: vec![UserInput::Text {
@@ -60,7 +59,6 @@ fn disabled_plan_turn(
         cwd,
         approval_policy: AskForApproval::Never,
         approvals_reviewer: None,
-        sandbox_policy,
         permission_profile,
         model,
         effort: None,

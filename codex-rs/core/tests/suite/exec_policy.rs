@@ -18,7 +18,7 @@ use core_test_support::responses::mount_sse_once;
 use core_test_support::responses::sse;
 use core_test_support::responses::start_mock_server;
 use core_test_support::test_codex::test_codex;
-use core_test_support::test_codex::turn_permission_fields;
+use core_test_support::test_codex::turn_permission_profile;
 use core_test_support::wait_for_event;
 use serde_json::Value;
 use serde_json::json;
@@ -43,8 +43,7 @@ async fn submit_user_turn(
     collaboration_mode: Option<CollaborationMode>,
 ) -> Result<()> {
     let session_model = test.session_configured.model.clone();
-    let (sandbox_policy, permission_profile) =
-        turn_permission_fields(permission_profile, test.config.cwd.as_path());
+    let permission_profile = turn_permission_profile(permission_profile, test.config.cwd.as_path());
     test.codex
         .submit(Op::UserTurn {
             environments: None,
@@ -56,7 +55,6 @@ async fn submit_user_turn(
             cwd: test.cwd_path().to_path_buf(),
             approval_policy,
             approvals_reviewer: None,
-            sandbox_policy,
             permission_profile,
             model: session_model,
             effort: None,
@@ -128,8 +126,8 @@ async fn execpolicy_blocks_shell_invocation() -> Result<()> {
     .await;
 
     let session_model = test.session_configured.model.clone();
-    let (sandbox_policy, permission_profile) =
-        turn_permission_fields(PermissionProfile::Disabled, test.config.cwd.as_path());
+    let permission_profile =
+        turn_permission_profile(PermissionProfile::Disabled, test.config.cwd.as_path());
     test.codex
         .submit(Op::UserTurn {
             environments: None,
@@ -141,7 +139,6 @@ async fn execpolicy_blocks_shell_invocation() -> Result<()> {
             cwd: test.cwd_path().to_path_buf(),
             approval_policy: AskForApproval::Never,
             approvals_reviewer: None,
-            sandbox_policy,
             permission_profile,
             model: session_model,
             effort: None,

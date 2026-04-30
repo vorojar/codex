@@ -32,7 +32,7 @@ use core_test_support::skip_if_no_network;
 use core_test_support::skip_if_sandbox;
 use core_test_support::test_codex::TestCodex;
 use core_test_support::test_codex::test_codex;
-use core_test_support::test_codex::turn_permission_fields;
+use core_test_support::test_codex::turn_permission_profile;
 use core_test_support::wait_for_event;
 use pretty_assertions::assert_eq;
 use regex_lite::Regex;
@@ -187,8 +187,7 @@ async fn submit_turn(
     permission_profile: RuntimePermissionProfile,
 ) -> Result<()> {
     let session_model = test.session_configured.model.clone();
-    let (sandbox_policy, permission_profile) =
-        turn_permission_fields(permission_profile, test.cwd.path());
+    let permission_profile = turn_permission_profile(permission_profile, test.cwd.path());
     test.codex
         .submit(Op::UserTurn {
             environments: None,
@@ -200,7 +199,6 @@ async fn submit_turn(
             cwd: test.cwd.path().to_path_buf(),
             approval_policy,
             approvals_reviewer: Some(ApprovalsReviewer::User),
-            sandbox_policy,
             permission_profile,
             model: session_model,
             effort: None,

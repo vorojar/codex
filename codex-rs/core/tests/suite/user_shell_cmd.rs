@@ -22,7 +22,7 @@ use core_test_support::responses::sse;
 use core_test_support::responses::start_mock_server;
 use core_test_support::skip_if_no_network;
 use core_test_support::test_codex::test_codex;
-use core_test_support::test_codex::turn_permission_fields;
+use core_test_support::test_codex::turn_permission_profile;
 use core_test_support::wait_for_event;
 use core_test_support::wait_for_event_match;
 use core_test_support::wait_for_event_with_timeout;
@@ -169,8 +169,7 @@ async fn user_shell_command_does_not_replace_active_turn() -> anyhow::Result<()>
     let mock = responses::mount_sse_sequence(&server, vec![first, second]).await;
 
     let cwd = fixture.cwd.path().to_path_buf();
-    let (sandbox_policy, permission_profile) =
-        turn_permission_fields(PermissionProfile::Disabled, cwd.as_path());
+    let permission_profile = turn_permission_profile(PermissionProfile::Disabled, cwd.as_path());
 
     fixture
         .codex
@@ -184,7 +183,6 @@ async fn user_shell_command_does_not_replace_active_turn() -> anyhow::Result<()>
             cwd,
             approval_policy: AskForApproval::Never,
             approvals_reviewer: None,
-            sandbox_policy,
             permission_profile,
             model: fixture.session_configured.model.clone(),
             effort: None,

@@ -26,7 +26,7 @@ use core_test_support::responses::start_mock_server;
 use core_test_support::skip_if_no_network;
 use core_test_support::test_codex::TestCodex;
 use core_test_support::test_codex::test_codex;
-use core_test_support::test_codex::turn_permission_fields;
+use core_test_support::test_codex::turn_permission_profile;
 use core_test_support::wait_for_event;
 use pretty_assertions::assert_eq;
 use tempfile::TempDir;
@@ -439,14 +439,13 @@ async fn overrides_turn_context_but_keeps_cached_prefix_and_key_constant() -> an
         /*exclude_tmpdir_env_var*/ true,
         /*exclude_slash_tmp*/ true,
     );
-    let (sandbox_policy, permission_profile) =
-        turn_permission_fields(permission_profile, config.cwd.as_path());
+    let permission_profile = turn_permission_profile(permission_profile, config.cwd.as_path());
     codex
         .submit(Op::OverrideTurnContext {
             cwd: None,
             approval_policy: Some(AskForApproval::Never),
             approvals_reviewer: None,
-            sandbox_policy,
+            sandbox_policy: None,
             permission_profile: Some(permission_profile),
             windows_sandbox_level: None,
             model: None,
@@ -719,8 +718,7 @@ async fn per_turn_overrides_keep_cached_prefix_and_key_constant() -> anyhow::Res
         /*exclude_tmpdir_env_var*/ true,
         /*exclude_slash_tmp*/ true,
     );
-    let (sandbox_policy, permission_profile) =
-        turn_permission_fields(permission_profile, new_cwd.path());
+    let permission_profile = turn_permission_profile(permission_profile, new_cwd.path());
     codex
         .submit(Op::UserTurn {
             environments: None,
@@ -731,7 +729,6 @@ async fn per_turn_overrides_keep_cached_prefix_and_key_constant() -> anyhow::Res
             cwd: new_cwd.path().to_path_buf(),
             approval_policy: AskForApproval::Never,
             approvals_reviewer: None,
-            sandbox_policy,
             permission_profile,
             model: "o3".to_string(),
             effort: Some(ReasoningEffort::High),
@@ -831,7 +828,7 @@ async fn send_user_turn_with_no_changes_does_not_send_environment_context() -> a
 
     let default_cwd = config.cwd.clone();
     let default_approval_policy = config.permissions.approval_policy.value();
-    let (default_sandbox_policy, default_permission_profile) = turn_permission_fields(
+    let default_permission_profile = turn_permission_profile(
         config.permissions.permission_profile(),
         default_cwd.as_path(),
     );
@@ -849,7 +846,6 @@ async fn send_user_turn_with_no_changes_does_not_send_environment_context() -> a
             cwd: default_cwd.to_path_buf(),
             approval_policy: default_approval_policy,
             approvals_reviewer: None,
-            sandbox_policy: default_sandbox_policy.clone(),
             permission_profile: default_permission_profile.clone(),
             model: default_model.clone(),
             effort: default_effort,
@@ -872,7 +868,6 @@ async fn send_user_turn_with_no_changes_does_not_send_environment_context() -> a
             cwd: default_cwd.to_path_buf(),
             approval_policy: default_approval_policy,
             approvals_reviewer: None,
-            sandbox_policy: default_sandbox_policy.clone(),
             permission_profile: default_permission_profile.clone(),
             model: default_model.clone(),
             effort: default_effort,
@@ -964,7 +959,7 @@ async fn send_user_turn_with_changes_sends_environment_context() -> anyhow::Resu
 
     let default_cwd = config.cwd.clone();
     let default_approval_policy = config.permissions.approval_policy.value();
-    let (default_sandbox_policy, default_permission_profile) = turn_permission_fields(
+    let default_permission_profile = turn_permission_profile(
         config.permissions.permission_profile(),
         default_cwd.as_path(),
     );
@@ -982,7 +977,6 @@ async fn send_user_turn_with_changes_sends_environment_context() -> anyhow::Resu
             cwd: default_cwd.to_path_buf(),
             approval_policy: default_approval_policy,
             approvals_reviewer: None,
-            sandbox_policy: default_sandbox_policy.clone(),
             permission_profile: default_permission_profile.clone(),
             model: default_model,
             effort: default_effort,
@@ -995,8 +989,8 @@ async fn send_user_turn_with_changes_sends_environment_context() -> anyhow::Resu
         .await?;
     wait_for_event(&codex, |ev| matches!(ev, EventMsg::TurnComplete(_))).await;
 
-    let (sandbox_policy, permission_profile) =
-        turn_permission_fields(PermissionProfile::Disabled, default_cwd.as_path());
+    let permission_profile =
+        turn_permission_profile(PermissionProfile::Disabled, default_cwd.as_path());
     codex
         .submit(Op::UserTurn {
             environments: None,
@@ -1007,7 +1001,6 @@ async fn send_user_turn_with_changes_sends_environment_context() -> anyhow::Resu
             cwd: default_cwd.to_path_buf(),
             approval_policy: AskForApproval::Never,
             approvals_reviewer: None,
-            sandbox_policy,
             permission_profile,
             model: "o3".to_string(),
             effort: Some(ReasoningEffort::High),

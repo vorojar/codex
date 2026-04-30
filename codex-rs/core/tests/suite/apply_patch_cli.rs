@@ -35,7 +35,7 @@ use core_test_support::skip_if_remote;
 use core_test_support::test_codex::TestCodexBuilder;
 use core_test_support::test_codex::TestCodexHarness;
 use core_test_support::test_codex::test_codex;
-use core_test_support::test_codex::turn_permission_fields;
+use core_test_support::test_codex::turn_permission_profile;
 use core_test_support::wait_for_event;
 use core_test_support::wait_for_event_with_timeout;
 use serde_json::json;
@@ -64,8 +64,7 @@ async fn apply_patch_harness_with(
 async fn submit_without_wait(harness: &TestCodexHarness, prompt: &str) -> Result<()> {
     let test = harness.test();
     let session_model = test.session_configured.model.clone();
-    let (sandbox_policy, permission_profile) =
-        turn_permission_fields(PermissionProfile::Disabled, harness.cwd());
+    let permission_profile = turn_permission_profile(PermissionProfile::Disabled, harness.cwd());
     test.codex
         .submit(Op::UserTurn {
             environments: None,
@@ -77,7 +76,6 @@ async fn submit_without_wait(harness: &TestCodexHarness, prompt: &str) -> Result
             cwd: harness.cwd().to_path_buf(),
             approval_policy: AskForApproval::Never,
             approvals_reviewer: None,
-            sandbox_policy,
             permission_profile,
             model: session_model,
             effort: None,

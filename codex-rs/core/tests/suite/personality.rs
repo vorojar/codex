@@ -27,7 +27,7 @@ use core_test_support::responses::start_mock_server;
 use core_test_support::skip_if_no_network;
 use core_test_support::test_codex::TestCodex;
 use core_test_support::test_codex::test_codex;
-use core_test_support::test_codex::turn_permission_fields;
+use core_test_support::test_codex::turn_permission_profile;
 use core_test_support::wait_for_event;
 use pretty_assertions::assert_eq;
 use tempfile::TempDir;
@@ -58,8 +58,8 @@ fn read_only_text_turn_with_personality(
     approval_policy: AskForApproval,
     personality: Option<Personality>,
 ) -> Op {
-    let (sandbox_policy, permission_profile) =
-        turn_permission_fields(PermissionProfile::read_only(), test.cwd_path());
+    let permission_profile =
+        turn_permission_profile(PermissionProfile::read_only(), test.cwd_path());
     Op::UserTurn {
         environments: None,
         items: vec![UserInput::Text {
@@ -70,7 +70,6 @@ fn read_only_text_turn_with_personality(
         cwd: test.cwd_path().to_path_buf(),
         approval_policy,
         approvals_reviewer: None,
-        sandbox_policy,
         permission_profile,
         model,
         effort: test.config.model_reasoning_effort,

@@ -541,15 +541,6 @@ pub enum Op {
         /// When omitted, the session keeps the current setting
         approvals_reviewer: Option<ApprovalsReviewer>,
 
-        /// Deprecated legacy sandbox policy field.
-        ///
-        /// `permission_profile` is required and is the canonical source for
-        /// `UserTurn` operations. This field is ignored by core and remains
-        /// only as a temporary compatibility slot while callers finish
-        /// migrating.
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        sandbox_policy: Option<SandboxPolicy>,
-
         /// Full permissions profile to use for tool calls such as `local_shell`.
         permission_profile: PermissionProfile,
 

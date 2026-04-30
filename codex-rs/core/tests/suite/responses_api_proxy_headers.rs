@@ -21,7 +21,7 @@ use core_test_support::responses::start_mock_server;
 use core_test_support::skip_if_no_network;
 use core_test_support::test_codex::TestCodex;
 use core_test_support::test_codex::test_codex;
-use core_test_support::test_codex::turn_permission_fields;
+use core_test_support::test_codex::turn_permission_profile;
 use pretty_assertions::assert_eq;
 use serde_json::json;
 use std::time::Duration;
@@ -127,8 +127,8 @@ async fn responses_api_parent_and_subagent_requests_include_identity_headers() -
 async fn submit_turn_with_timeout(test: &TestCodex, prompt: &str) -> Result<()> {
     let session_model = test.session_configured.model.clone();
     let cwd = test.config.cwd.to_path_buf();
-    let (sandbox_policy, permission_profile) =
-        turn_permission_fields(PermissionProfile::workspace_write(), cwd.as_path());
+    let permission_profile =
+        turn_permission_profile(PermissionProfile::workspace_write(), cwd.as_path());
     test.codex
         .submit(Op::UserTurn {
             environments: None,
@@ -140,7 +140,6 @@ async fn submit_turn_with_timeout(test: &TestCodex, prompt: &str) -> Result<()> 
             cwd,
             approval_policy: AskForApproval::OnRequest,
             approvals_reviewer: None,
-            sandbox_policy,
             permission_profile,
             model: session_model,
             effort: None,

@@ -713,7 +713,6 @@ async fn run_review_on_session(
             cwd: params.parent_turn.cwd.to_path_buf(),
             approval_policy: AskForApproval::Never,
             approvals_reviewer: None,
-            sandbox_policy: None,
             permission_profile,
             model: params.model.clone(),
             effort: params.reasoning_effort,

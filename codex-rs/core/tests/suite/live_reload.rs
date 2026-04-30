@@ -19,7 +19,7 @@ use core_test_support::responses::mount_sse_sequence;
 use core_test_support::responses::start_mock_server;
 use core_test_support::test_codex::TestCodex;
 use core_test_support::test_codex::test_codex;
-use core_test_support::test_codex::turn_permission_fields;
+use core_test_support::test_codex::turn_permission_profile;
 use core_test_support::wait_for_event;
 use tokio::time::timeout;
 
@@ -47,8 +47,7 @@ fn contains_skill_body(request: &ResponsesRequest, skill_body: &str) -> bool {
 
 async fn submit_skill_turn(test: &TestCodex, skill_path: PathBuf, prompt: &str) -> Result<()> {
     let session_model = test.session_configured.model.clone();
-    let (sandbox_policy, permission_profile) =
-        turn_permission_fields(PermissionProfile::Disabled, test.cwd_path());
+    let permission_profile = turn_permission_profile(PermissionProfile::Disabled, test.cwd_path());
     test.codex
         .submit(Op::UserTurn {
             environments: None,
@@ -66,7 +65,6 @@ async fn submit_skill_turn(test: &TestCodex, skill_path: PathBuf, prompt: &str) 
             cwd: test.cwd_path().to_path_buf(),
             approval_policy: AskForApproval::Never,
             approvals_reviewer: None,
-            sandbox_policy,
             permission_profile,
             model: session_model,
             effort: None,

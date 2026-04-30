@@ -18,7 +18,7 @@ use core_test_support::responses::start_mock_server;
 use core_test_support::skip_if_no_network;
 use core_test_support::test_codex::TestCodex;
 use core_test_support::test_codex::test_codex;
-use core_test_support::test_codex::turn_permission_fields;
+use core_test_support::test_codex::turn_permission_profile;
 use core_test_support::wait_for_event;
 use image::ImageBuffer;
 use image::Rgba;
@@ -109,8 +109,7 @@ async fn copy_paste_local_image_persists_rollout_request_shape() -> anyhow::Resu
     responses::mount_sse_once(&server, response).await;
 
     let session_model = session_configured.model.clone();
-    let (sandbox_policy, permission_profile) =
-        turn_permission_fields(PermissionProfile::Disabled, cwd.path());
+    let permission_profile = turn_permission_profile(PermissionProfile::Disabled, cwd.path());
 
     codex
         .submit(Op::UserTurn {
@@ -128,7 +127,6 @@ async fn copy_paste_local_image_persists_rollout_request_shape() -> anyhow::Resu
             cwd: cwd.path().to_path_buf(),
             approval_policy: AskForApproval::Never,
             approvals_reviewer: None,
-            sandbox_policy,
             permission_profile,
             model: session_model,
             effort: None,
@@ -199,8 +197,7 @@ async fn drag_drop_image_persists_rollout_request_shape() -> anyhow::Result<()> 
     responses::mount_sse_once(&server, response).await;
 
     let session_model = session_configured.model.clone();
-    let (sandbox_policy, permission_profile) =
-        turn_permission_fields(PermissionProfile::Disabled, cwd.path());
+    let permission_profile = turn_permission_profile(PermissionProfile::Disabled, cwd.path());
 
     codex
         .submit(Op::UserTurn {
@@ -218,7 +215,6 @@ async fn drag_drop_image_persists_rollout_request_shape() -> anyhow::Result<()> 
             cwd: cwd.path().to_path_buf(),
             approval_policy: AskForApproval::Never,
             approvals_reviewer: None,
-            sandbox_policy,
             permission_profile,
             model: session_model,
             effort: None,

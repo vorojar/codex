@@ -134,7 +134,6 @@ pub(super) async fn user_input_or_turn_inner(
             cwd,
             approval_policy,
             approvals_reviewer,
-            sandbox_policy: _,
             permission_profile,
             model,
             effort,

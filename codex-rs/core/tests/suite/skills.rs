@@ -24,7 +24,7 @@ use core_test_support::responses::sse;
 use core_test_support::responses::start_mock_server;
 use core_test_support::skip_if_no_network;
 use core_test_support::test_codex::test_codex;
-use core_test_support::test_codex::turn_permission_fields;
+use core_test_support::test_codex::turn_permission_profile;
 use pretty_assertions::assert_eq;
 use std::fs;
 use std::path::Path;
@@ -98,8 +98,8 @@ async fn user_turn_includes_skill_instructions() -> Result<()> {
     .await;
 
     let session_model = test.session_configured.model.clone();
-    let (sandbox_policy, permission_profile) =
-        turn_permission_fields(PermissionProfile::Disabled, test.config.cwd.as_path());
+    let permission_profile =
+        turn_permission_profile(PermissionProfile::Disabled, test.config.cwd.as_path());
     test.codex
         .submit(Op::UserTurn {
             environments: None,
@@ -117,7 +117,6 @@ async fn user_turn_includes_skill_instructions() -> Result<()> {
             cwd: test.config.cwd.to_path_buf(),
             approval_policy: AskForApproval::Never,
             approvals_reviewer: None,
-            sandbox_policy,
             permission_profile,
             model: session_model,
             effort: None,

@@ -4247,7 +4247,6 @@ async fn user_turn_updates_approvals_reviewer() {
             cwd: config.cwd.to_path_buf(),
             approval_policy: config.permissions.approval_policy.value(),
             approvals_reviewer: Some(codex_config::types::ApprovalsReviewer::AutoReview),
-            sandbox_policy: None,
             permission_profile: config.permissions.permission_profile(),
             model: turn_context.model_info.slug.clone(),
             effort: config.model_reasoning_effort,

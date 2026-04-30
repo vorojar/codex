@@ -37,7 +37,7 @@ use core_test_support::skip_if_no_network;
 use core_test_support::skip_if_sandbox;
 use core_test_support::test_codex::TestCodex;
 use core_test_support::test_codex::test_codex;
-use core_test_support::test_codex::turn_permission_fields;
+use core_test_support::test_codex::turn_permission_profile;
 use core_test_support::wait_for_event;
 use core_test_support::wait_for_event_match;
 use pretty_assertions::assert_eq;
@@ -152,8 +152,8 @@ async fn remote_models_config_context_window_override_clamps_to_max_context_wind
         })
         .build(&server)
         .await?;
-    let (sandbox_policy, permission_profile) =
-        turn_permission_fields(config.permissions.permission_profile(), cwd.path());
+    let permission_profile =
+        turn_permission_profile(config.permissions.permission_profile(), cwd.path());
 
     codex
         .submit(Op::UserTurn {
@@ -165,7 +165,6 @@ async fn remote_models_config_context_window_override_clamps_to_max_context_wind
             cwd: cwd.path().to_path_buf(),
             approval_policy: config.permissions.approval_policy.value(),
             approvals_reviewer: None,
-            sandbox_policy,
             model: requested_model.to_string(),
             effort: None,
             summary: None,
@@ -232,8 +231,8 @@ async fn remote_models_config_override_above_max_uses_max_context_window() -> Re
         })
         .build(&server)
         .await?;
-    let (sandbox_policy, permission_profile) =
-        turn_permission_fields(config.permissions.permission_profile(), cwd.path());
+    let permission_profile =
+        turn_permission_profile(config.permissions.permission_profile(), cwd.path());
 
     codex
         .submit(Op::UserTurn {
@@ -245,7 +244,6 @@ async fn remote_models_config_override_above_max_uses_max_context_window() -> Re
             cwd: cwd.path().to_path_buf(),
             approval_policy: config.permissions.approval_policy.value(),
             approvals_reviewer: None,
-            sandbox_policy,
             model: requested_model.to_string(),
             effort: None,
             summary: None,
@@ -311,8 +309,8 @@ async fn remote_models_use_context_window_when_config_override_is_absent() -> Re
         })
         .build(&server)
         .await?;
-    let (sandbox_policy, permission_profile) =
-        turn_permission_fields(config.permissions.permission_profile(), cwd.path());
+    let permission_profile =
+        turn_permission_profile(config.permissions.permission_profile(), cwd.path());
 
     codex
         .submit(Op::UserTurn {
@@ -324,7 +322,6 @@ async fn remote_models_use_context_window_when_config_override_is_absent() -> Re
             cwd: cwd.path().to_path_buf(),
             approval_policy: config.permissions.approval_policy.value(),
             approvals_reviewer: None,
-            sandbox_policy,
             model: requested_model.to_string(),
             effort: None,
             summary: None,
@@ -403,8 +400,8 @@ async fn remote_models_long_model_slug_is_sent_with_high_reasoning() -> Result<(
         })
         .build(&server)
         .await?;
-    let (sandbox_policy, permission_profile) =
-        turn_permission_fields(config.permissions.permission_profile(), cwd.path());
+    let permission_profile =
+        turn_permission_profile(config.permissions.permission_profile(), cwd.path());
 
     codex
         .submit(Op::UserTurn {
@@ -416,7 +413,6 @@ async fn remote_models_long_model_slug_is_sent_with_high_reasoning() -> Result<(
             cwd: cwd.path().to_path_buf(),
             approval_policy: config.permissions.approval_policy.value(),
             approvals_reviewer: None,
-            sandbox_policy,
             permission_profile,
             model: requested_model.to_string(),
             effort: None,
@@ -466,8 +462,8 @@ async fn namespaced_model_slug_uses_catalog_metadata_without_fallback_warning() 
         .with_model(requested_model)
         .build(&server)
         .await?;
-    let (sandbox_policy, permission_profile) =
-        turn_permission_fields(config.permissions.permission_profile(), cwd.path());
+    let permission_profile =
+        turn_permission_profile(config.permissions.permission_profile(), cwd.path());
 
     codex
         .submit(Op::UserTurn {
@@ -479,7 +475,6 @@ async fn namespaced_model_slug_uses_catalog_metadata_without_fallback_warning() 
             cwd: cwd.path().to_path_buf(),
             approval_policy: config.permissions.approval_policy.value(),
             approvals_reviewer: None,
-            sandbox_policy,
             permission_profile,
             model: requested_model.to_string(),
             effort: None,
@@ -639,8 +634,8 @@ async fn remote_models_remote_model_uses_unified_exec() -> Result<()> {
     mount_sse_sequence(&server, responses).await;
 
     let cwd_path = cwd.path().to_path_buf();
-    let (sandbox_policy, permission_profile) =
-        turn_permission_fields(PermissionProfile::Disabled, cwd_path.as_path());
+    let permission_profile =
+        turn_permission_profile(PermissionProfile::Disabled, cwd_path.as_path());
     codex
         .submit(Op::UserTurn {
             items: vec![UserInput::Text {
@@ -651,7 +646,6 @@ async fn remote_models_remote_model_uses_unified_exec() -> Result<()> {
             cwd: cwd_path,
             approval_policy: AskForApproval::Never,
             approvals_reviewer: None,
-            sandbox_policy,
             permission_profile,
             model: REMOTE_MODEL_SLUG.to_string(),
             effort: None,
@@ -870,8 +864,8 @@ async fn remote_models_apply_remote_base_instructions() -> Result<()> {
         .await?;
 
     let cwd_path = cwd.path().to_path_buf();
-    let (sandbox_policy, permission_profile) =
-        turn_permission_fields(PermissionProfile::Disabled, cwd_path.as_path());
+    let permission_profile =
+        turn_permission_profile(PermissionProfile::Disabled, cwd_path.as_path());
     codex
         .submit(Op::UserTurn {
             items: vec![UserInput::Text {
@@ -882,7 +876,6 @@ async fn remote_models_apply_remote_base_instructions() -> Result<()> {
             cwd: cwd_path,
             approval_policy: AskForApproval::Never,
             approvals_reviewer: None,
-            sandbox_policy,
             permission_profile,
             model: model.to_string(),
             effort: None,

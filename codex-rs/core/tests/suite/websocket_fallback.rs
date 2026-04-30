@@ -14,7 +14,7 @@ use core_test_support::responses::sse;
 use core_test_support::skip_if_no_network;
 use core_test_support::test_codex::TestCodex;
 use core_test_support::test_codex::test_codex;
-use core_test_support::test_codex::turn_permission_fields;
+use core_test_support::test_codex::turn_permission_profile;
 use pretty_assertions::assert_eq;
 use tokio::time::Duration;
 use tokio::time::timeout;
@@ -148,8 +148,7 @@ async fn websocket_fallback_hides_first_websocket_retry_stream_error() -> Result
         cwd,
         ..
     } = builder.build(&server).await?;
-    let (sandbox_policy, permission_profile) =
-        turn_permission_fields(PermissionProfile::Disabled, cwd.path());
+    let permission_profile = turn_permission_profile(PermissionProfile::Disabled, cwd.path());
 
     codex
         .submit(Op::UserTurn {
@@ -162,7 +161,6 @@ async fn websocket_fallback_hides_first_websocket_retry_stream_error() -> Result
             cwd: cwd.path().to_path_buf(),
             approval_policy: AskForApproval::Never,
             approvals_reviewer: None,
-            sandbox_policy,
             permission_profile,
             model: session_configured.model.clone(),
             effort: None,

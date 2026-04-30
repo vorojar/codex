@@ -28,7 +28,7 @@ use core_test_support::responses::ev_response_created;
 use core_test_support::responses::sse;
 use core_test_support::responses::sse_response;
 use core_test_support::test_codex::test_codex;
-use core_test_support::test_codex::turn_permission_fields;
+use core_test_support::test_codex::turn_permission_profile;
 use core_test_support::wait_for_event;
 use pretty_assertions::assert_eq;
 use serde::Deserialize;
@@ -88,8 +88,7 @@ async fn renews_cache_ttl_on_matching_models_etag() -> Result<()> {
         sse_response(response_body).insert_header("X-Models-Etag", ETAG),
     )
     .await;
-    let (sandbox_policy, permission_profile) =
-        turn_permission_fields(PermissionProfile::Disabled, test.cwd_path());
+    let permission_profile = turn_permission_profile(PermissionProfile::Disabled, test.cwd_path());
 
     codex
         .submit(Op::UserTurn {
@@ -102,7 +101,6 @@ async fn renews_cache_ttl_on_matching_models_etag() -> Result<()> {
             cwd: test.cwd_path().to_path_buf(),
             approval_policy: codex_protocol::protocol::AskForApproval::Never,
             approvals_reviewer: None,
-            sandbox_policy,
             permission_profile,
             model: test.session_configured.model.clone(),
             effort: None,

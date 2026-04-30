@@ -24,7 +24,7 @@ use core_test_support::responses::sse;
 use core_test_support::responses::start_mock_server;
 use core_test_support::skip_if_no_network;
 use core_test_support::test_codex::test_codex;
-use core_test_support::test_codex::turn_permission_fields;
+use core_test_support::test_codex::turn_permission_profile;
 use core_test_support::wait_for_event;
 use serde_json::json;
 
@@ -113,8 +113,8 @@ async fn snapshot_model_visible_layout_turn_overrides() -> Result<()> {
     let preturn_context_diff_cwd = test.cwd_path().join(PRETURN_CONTEXT_DIFF_CWD);
     fs::create_dir_all(&preturn_context_diff_cwd)?;
     let first_turn_cwd = test.cwd_path().to_path_buf();
-    let (first_sandbox_policy, first_permission_profile) =
-        turn_permission_fields(PermissionProfile::read_only(), first_turn_cwd.as_path());
+    let first_permission_profile =
+        turn_permission_profile(PermissionProfile::read_only(), first_turn_cwd.as_path());
 
     test.codex
         .submit(Op::UserTurn {
@@ -127,7 +127,6 @@ async fn snapshot_model_visible_layout_turn_overrides() -> Result<()> {
             cwd: first_turn_cwd,
             approval_policy: AskForApproval::Never,
             approvals_reviewer: None,
-            sandbox_policy: first_sandbox_policy,
             permission_profile: first_permission_profile,
             model: test.session_configured.model.clone(),
             effort: test.config.model_reasoning_effort,
@@ -142,7 +141,7 @@ async fn snapshot_model_visible_layout_turn_overrides() -> Result<()> {
     })
     .await;
 
-    let (second_sandbox_policy, second_permission_profile) = turn_permission_fields(
+    let second_permission_profile = turn_permission_profile(
         PermissionProfile::read_only(),
         preturn_context_diff_cwd.as_path(),
     );
@@ -157,7 +156,6 @@ async fn snapshot_model_visible_layout_turn_overrides() -> Result<()> {
             cwd: preturn_context_diff_cwd,
             approval_policy: AskForApproval::OnRequest,
             approvals_reviewer: None,
-            sandbox_policy: second_sandbox_policy,
             permission_profile: second_permission_profile,
             model: test.session_configured.model.clone(),
             effort: test.config.model_reasoning_effort,
@@ -226,8 +224,8 @@ async fn snapshot_model_visible_layout_cwd_change_does_not_refresh_agents() -> R
         cwd_two.join("AGENTS.md"),
         "# AGENTS two\n\n<INSTRUCTIONS>\nTurn two agents instructions.\n</INSTRUCTIONS>\n",
     )?;
-    let (first_sandbox_policy, first_permission_profile) =
-        turn_permission_fields(PermissionProfile::read_only(), cwd_one.as_path());
+    let first_permission_profile =
+        turn_permission_profile(PermissionProfile::read_only(), cwd_one.as_path());
 
     test.codex
         .submit(Op::UserTurn {
@@ -240,7 +238,6 @@ async fn snapshot_model_visible_layout_cwd_change_does_not_refresh_agents() -> R
             cwd: cwd_one.clone(),
             approval_policy: AskForApproval::Never,
             approvals_reviewer: None,
-            sandbox_policy: first_sandbox_policy,
             permission_profile: first_permission_profile,
             model: test.session_configured.model.clone(),
             effort: test.config.model_reasoning_effort,
@@ -255,8 +252,8 @@ async fn snapshot_model_visible_layout_cwd_change_does_not_refresh_agents() -> R
     })
     .await;
 
-    let (second_sandbox_policy, second_permission_profile) =
-        turn_permission_fields(PermissionProfile::read_only(), cwd_two.as_path());
+    let second_permission_profile =
+        turn_permission_profile(PermissionProfile::read_only(), cwd_two.as_path());
     test.codex
         .submit(Op::UserTurn {
             environments: None,
@@ -268,7 +265,6 @@ async fn snapshot_model_visible_layout_cwd_change_does_not_refresh_agents() -> R
             cwd: cwd_two,
             approval_policy: AskForApproval::Never,
             approvals_reviewer: None,
-            sandbox_policy: second_sandbox_policy,
             permission_profile: second_permission_profile,
             model: test.session_configured.model.clone(),
             effort: test.config.model_reasoning_effort,
@@ -370,7 +366,7 @@ async fn snapshot_model_visible_layout_resume_with_personality_change() -> Resul
     let resumed = resume_builder.resume(&server, home, rollout_path).await?;
     let resume_override_cwd = resumed.cwd_path().join(PRETURN_CONTEXT_DIFF_CWD);
     fs::create_dir_all(&resume_override_cwd)?;
-    let (sandbox_policy, permission_profile) = turn_permission_fields(
+    let permission_profile = turn_permission_profile(
         PermissionProfile::read_only(),
         resume_override_cwd.as_path(),
     );
@@ -386,7 +382,6 @@ async fn snapshot_model_visible_layout_resume_with_personality_change() -> Resul
             cwd: resume_override_cwd,
             approval_policy: AskForApproval::Never,
             approvals_reviewer: None,
-            sandbox_policy,
             permission_profile,
             model: resumed.session_configured.model.clone(),
             effort: resumed.config.model_reasoning_effort,

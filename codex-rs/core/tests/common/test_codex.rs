@@ -202,19 +202,13 @@ pub enum ShellModelOutput {
     // UnifiedExec has its own set of tests
 }
 
-/// Returns the permission fields required by `Op::UserTurn` for tests that
+/// Returns the permission profile required by `Op::UserTurn` for tests that
 /// construct the op directly.
-///
-/// The legacy sandbox field is intentionally omitted when a canonical
-/// `PermissionProfile` is available.
-pub fn turn_permission_fields(
+pub fn turn_permission_profile(
     permission_profile: PermissionProfile,
     _cwd: &Path,
-) -> (
-    Option<codex_protocol::protocol::SandboxPolicy>,
-    PermissionProfile,
-) {
-    (None, permission_profile)
+) -> PermissionProfile {
+    permission_profile
 }
 
 pub struct TestCodexBuilder {
@@ -716,7 +710,6 @@ impl TestCodex {
                 cwd: self.config.cwd.to_path_buf(),
                 approval_policy,
                 approvals_reviewer: None,
-                sandbox_policy: None,
                 permission_profile,
                 model: session_model,
                 effort: None,
