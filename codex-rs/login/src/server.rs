@@ -121,15 +121,17 @@ impl LoginServer {
 }
 
 /// Handle used to signal the login server loop to exit.
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct ShutdownHandle {
     shutdown_notify: Arc<tokio::sync::Notify>,
+    server: Arc<Server>,
 }
 
 impl ShutdownHandle {
     /// Signals the login loop to terminate.
     pub fn shutdown(&self) {
         self.shutdown_notify.notify_waiters();
+        self.server.unblock();
     }
 }
 
@@ -183,6 +185,7 @@ pub fn run_login_server(opts: ServerOptions) -> io::Result<LoginServer> {
     };
 
     let shutdown_notify = Arc::new(tokio::sync::Notify::new());
+    let shutdown_server = server.clone();
     let server_handle = {
         let shutdown_notify = shutdown_notify.clone();
         let server = server;
@@ -242,7 +245,10 @@ pub fn run_login_server(opts: ServerOptions) -> io::Result<LoginServer> {
         auth_url,
         actual_port,
         server_handle,
-        shutdown_handle: ShutdownHandle { shutdown_notify },
+        shutdown_handle: ShutdownHandle {
+            shutdown_notify,
+            server: shutdown_server,
+        },
     })
 }
 
