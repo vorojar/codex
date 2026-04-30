@@ -4252,6 +4252,7 @@ impl ChatWidget {
             call_id,
             query,
             action,
+            ..
         } = ev;
         let mut handled = false;
         if let Some(cell) = self
@@ -4290,6 +4291,9 @@ impl ChatWidget {
             model,
             reasoning_effort,
             agents_states,
+            started_at_ms,
+            completed_at_ms,
+            duration_ms,
         } = item
         else {
             return;
@@ -4348,6 +4352,9 @@ impl ChatWidget {
                                 .unwrap_or_else(|| {
                                     AgentStatus::Errored("Agent spawn failed".into())
                                 }),
+                            started_at_ms,
+                            completed_at_ms,
+                            duration_ms,
                         },
                         spawn_request.as_ref(),
                     ));
@@ -4376,6 +4383,9 @@ impl ChatWidget {
                                 .unwrap_or_else(|| {
                                     AgentStatus::Errored("Agent interaction failed".into())
                                 }),
+                            started_at_ms,
+                            completed_at_ms,
+                            duration_ms,
                         },
                     ));
                 }
@@ -4394,6 +4404,7 @@ impl ChatWidget {
                                 receiver_agent_role: first_receiver_metadata
                                     .as_ref()
                                     .and_then(|metadata| metadata.agent_role.clone()),
+                                started_at_ms,
                             },
                         ));
                     } else {
@@ -4415,6 +4426,9 @@ impl ChatWidget {
                                     .unwrap_or_else(|| {
                                         AgentStatus::Errored("Agent resume failed".into())
                                     }),
+                                started_at_ms,
+                                completed_at_ms,
+                                duration_ms,
                             },
                         ));
                     }
@@ -4436,6 +4450,7 @@ impl ChatWidget {
                                 &self.collab_agent_metadata,
                             ),
                             call_id: id,
+                            started_at_ms,
                         },
                     ));
                 } else {
@@ -4450,6 +4465,9 @@ impl ChatWidget {
                             call_id: id,
                             agent_statuses,
                             statuses,
+                            started_at_ms,
+                            completed_at_ms,
+                            duration_ms,
                         },
                     ));
                 }
@@ -4469,6 +4487,9 @@ impl ChatWidget {
                             receiver_agent_role: first_receiver_metadata
                                 .as_ref()
                                 .and_then(|metadata| metadata.agent_role.clone()),
+                            started_at_ms,
+                            completed_at_ms,
+                            duration_ms,
                             status: receiver_thread_ids
                                 .iter()
                                 .find_map(|thread_id| agents_states.get(thread_id))
@@ -6519,6 +6540,8 @@ impl ChatWidget {
                 command_actions,
                 aggregated_output,
                 exit_code,
+                started_at_ms,
+                completed_at_ms,
                 duration_ms,
             } => {
                 if matches!(
@@ -6537,6 +6560,7 @@ impl ChatWidget {
                             .collect(),
                         source: source.to_core(),
                         interaction_input: None,
+                        started_at_ms,
                     });
                 } else {
                     let aggregated_output = aggregated_output.unwrap_or_default();
@@ -6552,6 +6576,8 @@ impl ChatWidget {
                             .collect(),
                         source: source.to_core(),
                         interaction_input: None,
+                        started_at_ms,
+                        completed_at_ms,
                         stdout: String::new(),
                         stderr: String::new(),
                         aggregated_output: aggregated_output.clone(),
@@ -6581,6 +6607,9 @@ impl ChatWidget {
                 id,
                 changes,
                 status,
+                started_at_ms,
+                completed_at_ms,
+                duration_ms,
             } => {
                 if !matches!(
                     status,
@@ -6610,6 +6639,9 @@ impl ChatWidget {
                                 codex_protocol::protocol::PatchApplyStatus::Failed
                             }
                         },
+                        started_at_ms,
+                        completed_at_ms,
+                        duration_ms,
                     });
                 }
             }
@@ -6621,6 +6653,8 @@ impl ChatWidget {
                 mcp_app_resource_uri,
                 result,
                 error,
+                started_at_ms,
+                completed_at_ms,
                 duration_ms,
                 ..
             } => {
@@ -6632,6 +6666,8 @@ impl ChatWidget {
                         arguments: Some(arguments),
                     },
                     mcp_app_resource_uri,
+                    started_at_ms,
+                    completed_at_ms,
                     duration: Duration::from_millis(duration_ms.unwrap_or_default().max(0) as u64),
                     result: match (result, error) {
                         (_, Some(error)) => Err(error.message),
@@ -6648,9 +6684,17 @@ impl ChatWidget {
                     },
                 });
             }
-            ThreadItem::WebSearch { id, query, action } => {
+            ThreadItem::WebSearch {
+                id,
+                query,
+                action,
+                started_at_ms,
+                completed_at_ms,
+                duration_ms,
+            } => {
                 self.on_web_search_begin(WebSearchBeginEvent {
                     call_id: id.clone(),
+                    started_at_ms,
                 });
                 self.on_web_search_end(WebSearchEndEvent {
                     call_id: id,
@@ -6658,6 +6702,9 @@ impl ChatWidget {
                     action: action
                         .map(web_search_action_to_core)
                         .unwrap_or(codex_protocol::models::WebSearchAction::Other),
+                    started_at_ms,
+                    completed_at_ms,
+                    duration_ms,
                 });
             }
             ThreadItem::ImageView { id, path } => {
@@ -6669,6 +6716,9 @@ impl ChatWidget {
                 revised_prompt,
                 result,
                 saved_path,
+                started_at_ms,
+                completed_at_ms,
+                duration_ms,
             } => {
                 self.on_image_generation_end(ImageGenerationEndEvent {
                     call_id: id,
@@ -6676,6 +6726,9 @@ impl ChatWidget {
                     revised_prompt,
                     status,
                     saved_path,
+                    started_at_ms,
+                    completed_at_ms,
+                    duration_ms,
                 });
             }
             ThreadItem::EnteredReviewMode { review, .. } => {
@@ -6700,6 +6753,9 @@ impl ChatWidget {
                 model,
                 reasoning_effort,
                 agents_states,
+                started_at_ms,
+                completed_at_ms,
+                duration_ms,
             } => self.on_collab_agent_tool_call(ThreadItem::CollabAgentToolCall {
                 id,
                 tool,
@@ -6710,6 +6766,9 @@ impl ChatWidget {
                 model,
                 reasoning_effort,
                 agents_states,
+                started_at_ms,
+                completed_at_ms,
+                duration_ms,
             }),
             ThreadItem::DynamicToolCall { .. } => {}
         }
@@ -7138,6 +7197,7 @@ impl ChatWidget {
                 process_id,
                 source,
                 command_actions,
+                started_at_ms,
                 ..
             } => {
                 self.on_exec_command_begin(ExecCommandBeginEvent {
@@ -7152,14 +7212,21 @@ impl ChatWidget {
                         .collect(),
                     source: source.to_core(),
                     interaction_input: None,
+                    started_at_ms,
                 });
             }
-            ThreadItem::FileChange { id, changes, .. } => {
+            ThreadItem::FileChange {
+                id,
+                changes,
+                started_at_ms,
+                ..
+            } => {
                 self.on_patch_apply_begin(PatchApplyBeginEvent {
                     call_id: id,
                     turn_id: notification.turn_id,
                     auto_approved: false,
                     changes: file_update_changes_to_core(changes),
+                    started_at_ms,
                 });
             }
             ThreadItem::McpToolCall {
@@ -7168,6 +7235,7 @@ impl ChatWidget {
                 tool,
                 arguments,
                 mcp_app_resource_uri,
+                started_at_ms,
                 ..
             } => {
                 self.on_mcp_tool_call_begin(McpToolCallBeginEvent {
@@ -7178,13 +7246,24 @@ impl ChatWidget {
                         arguments: Some(arguments),
                     },
                     mcp_app_resource_uri,
+                    started_at_ms,
                 });
             }
-            ThreadItem::WebSearch { id, .. } => {
-                self.on_web_search_begin(WebSearchBeginEvent { call_id: id });
+            ThreadItem::WebSearch {
+                id, started_at_ms, ..
+            } => {
+                self.on_web_search_begin(WebSearchBeginEvent {
+                    call_id: id,
+                    started_at_ms,
+                });
             }
-            ThreadItem::ImageGeneration { id, .. } => {
-                self.on_image_generation_begin(ImageGenerationBeginEvent { call_id: id });
+            ThreadItem::ImageGeneration {
+                id, started_at_ms, ..
+            } => {
+                self.on_image_generation_begin(ImageGenerationBeginEvent {
+                    call_id: id,
+                    started_at_ms,
+                });
             }
             ThreadItem::CollabAgentToolCall {
                 id,
@@ -7196,6 +7275,9 @@ impl ChatWidget {
                 model,
                 reasoning_effort,
                 agents_states,
+                started_at_ms,
+                completed_at_ms,
+                duration_ms,
             } => self.on_collab_agent_tool_call(ThreadItem::CollabAgentToolCall {
                 id,
                 tool,
@@ -7206,6 +7288,9 @@ impl ChatWidget {
                 model,
                 reasoning_effort,
                 agents_states,
+                started_at_ms,
+                completed_at_ms,
+                duration_ms,
             }),
             ThreadItem::EnteredReviewMode { review, .. } => {
                 if !from_replay {

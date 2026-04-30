@@ -2818,6 +2818,7 @@ async fn chatwidget_exec_and_status_layout_vt100_snapshot() {
             parsed_cmd: parsed_cmd.clone(),
             source: ExecCommandSource::Agent,
             interaction_input: None,
+            started_at_ms: None,
         }),
     });
     chat.handle_codex_event(Event {
@@ -2831,6 +2832,8 @@ async fn chatwidget_exec_and_status_layout_vt100_snapshot() {
             parsed_cmd,
             source: ExecCommandSource::Agent,
             interaction_input: None,
+            started_at_ms: None,
+            completed_at_ms: None,
             stdout: String::new(),
             stderr: String::new(),
             aggregated_output: String::new(),
