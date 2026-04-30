@@ -14,7 +14,6 @@ use codex_protocol::protocol::EventMsg;
 use codex_protocol::protocol::ExecCommandSource;
 use codex_protocol::protocol::ExecCommandStatus;
 use codex_protocol::protocol::Op;
-use codex_protocol::protocol::SandboxPolicy;
 use codex_protocol::user_input::UserInput;
 use core_test_support::assert_regex_match;
 use core_test_support::process::process_is_alive;
@@ -33,6 +32,7 @@ use core_test_support::skip_if_windows;
 use core_test_support::test_codex::TestCodex;
 use core_test_support::test_codex::TestCodexHarness;
 use core_test_support::test_codex::test_codex;
+use core_test_support::test_codex::turn_permission_fields;
 use core_test_support::wait_for_event;
 use core_test_support::wait_for_event_match;
 use core_test_support::wait_for_event_with_timeout;
@@ -183,9 +183,11 @@ async fn wait_for_raw_unified_exec_output(
 async fn submit_unified_exec_turn(
     test: &TestCodex,
     prompt: &str,
-    sandbox_policy: SandboxPolicy,
+    permission_profile: PermissionProfile,
 ) -> Result<()> {
     let session_model = test.session_configured.model.clone();
+    let (sandbox_policy, permission_profile) =
+        turn_permission_fields(permission_profile, test.config.cwd.as_path());
 
     test.codex
         .submit(Op::UserTurn {
@@ -199,7 +201,7 @@ async fn submit_unified_exec_turn(
             approval_policy: AskForApproval::Never,
             approvals_reviewer: None,
             sandbox_policy,
-            permission_profile: None,
+            permission_profile,
             model: session_model,
             effort: None,
             summary: None,
@@ -271,6 +273,8 @@ async fn unified_exec_intercepts_apply_patch_exec_command() -> Result<()> {
     let codex = test.codex.clone();
     let cwd = test.cwd_path().to_path_buf();
     let session_model = test.session_configured.model.clone();
+    let (sandbox_policy, permission_profile) =
+        turn_permission_fields(PermissionProfile::Disabled, cwd.as_path());
 
     codex
         .submit(Op::UserTurn {
@@ -283,8 +287,8 @@ async fn unified_exec_intercepts_apply_patch_exec_command() -> Result<()> {
             cwd,
             approval_policy: AskForApproval::Never,
             approvals_reviewer: None,
-            sandbox_policy: SandboxPolicy::DangerFullAccess,
-            permission_profile: None,
+            sandbox_policy,
+            permission_profile,
             model: session_model,
             effort: None,
             summary: None,
@@ -402,7 +406,7 @@ async fn unified_exec_emits_exec_command_begin_event() -> Result<()> {
     ];
     mount_sse_sequence(&server, responses).await;
 
-    submit_unified_exec_turn(&test, "emit begin event", SandboxPolicy::DangerFullAccess).await?;
+    submit_unified_exec_turn(&test, "emit begin event", PermissionProfile::Disabled).await?;
 
     let begin_event = wait_for_event_match(&test.codex, |msg| match msg {
         EventMsg::ExecCommandBegin(event) if event.call_id == call_id => Some(event.clone()),
@@ -466,7 +470,7 @@ async fn unified_exec_resolves_relative_workdir() -> Result<()> {
     submit_unified_exec_turn(
         &test,
         "run relative workdir test",
-        SandboxPolicy::DangerFullAccess,
+        PermissionProfile::Disabled,
     )
     .await?;
 
@@ -531,7 +535,7 @@ async fn unified_exec_respects_workdir_override() -> Result<()> {
     ];
     let request_log = mount_sse_sequence(&server, responses).await;
 
-    submit_unified_exec_turn(&test, "run workdir test", SandboxPolicy::DangerFullAccess).await?;
+    submit_unified_exec_turn(&test, "run workdir test", PermissionProfile::Disabled).await?;
 
     let begin_event = wait_for_event_match(&test.codex, |msg| match msg {
         EventMsg::ExecCommandBegin(event) if event.call_id == call_id => Some(event.clone()),
@@ -608,7 +612,7 @@ async fn unified_exec_emits_exec_command_end_event() -> Result<()> {
     ];
     mount_sse_sequence(&server, responses).await;
 
-    submit_unified_exec_turn(&test, "emit end event", SandboxPolicy::DangerFullAccess).await?;
+    submit_unified_exec_turn(&test, "emit end event", PermissionProfile::Disabled).await?;
 
     let end_event = wait_for_event_match(&test.codex, |msg| match msg {
         EventMsg::ExecCommandEnd(ev) if ev.call_id == call_id => Some(ev.clone()),
@@ -666,7 +670,7 @@ async fn unified_exec_emits_output_delta_for_exec_command() -> Result<()> {
     ];
     mount_sse_sequence(&server, responses).await;
 
-    submit_unified_exec_turn(&test, "emit delta", SandboxPolicy::DangerFullAccess).await?;
+    submit_unified_exec_turn(&test, "emit delta", PermissionProfile::Disabled).await?;
 
     let event = wait_for_event_match(&test.codex, |msg| match msg {
         EventMsg::ExecCommandEnd(ev) if ev.call_id == call_id => Some(ev.clone()),
@@ -728,7 +732,7 @@ async fn unified_exec_full_lifecycle_with_background_end_event() -> Result<()> {
     submit_unified_exec_turn(
         &test,
         "exercise full unified exec lifecycle",
-        SandboxPolicy::DangerFullAccess,
+        PermissionProfile::Disabled,
     )
     .await?;
 
@@ -871,7 +875,7 @@ async fn unified_exec_short_lived_network_denial_emits_failed_end_event() -> Res
 #[allow(clippy::expect_used)]
 async fn unified_exec_network_denial_test(
     server: &wiremock::MockServer,
-) -> Result<(TestCodex, SandboxPolicy)> {
+) -> Result<(TestCodex, PermissionProfile)> {
     use codex_config::ConfigLayerStack;
     use codex_config::ConfigLayerStackOrdering;
     use codex_config::Constrained;
@@ -879,6 +883,7 @@ async fn unified_exec_network_denial_test(
     use codex_config::NetworkRequirementsToml;
     use codex_config::RequirementSource;
     use codex_config::Sourced;
+    use codex_protocol::permissions::NetworkSandboxPolicy;
     use std::sync::Arc;
     use tempfile::TempDir;
 
@@ -896,11 +901,13 @@ mode = "limited"
 allow_local_binding = true
 "#,
     )?;
-    let mut sandbox_policy = SandboxPolicy::new_workspace_write_policy();
-    if let SandboxPolicy::WorkspaceWrite { network_access, .. } = &mut sandbox_policy {
-        *network_access = true;
-    }
-    let sandbox_policy_for_config = sandbox_policy.clone();
+    let permission_profile = PermissionProfile::workspace_write_with(
+        &[],
+        NetworkSandboxPolicy::Enabled,
+        /*exclude_tmpdir_env_var*/ false,
+        /*exclude_slash_tmp*/ false,
+    );
+    let permission_profile_for_config = permission_profile.clone();
     let mut builder = test_codex().with_home(home).with_config(move |config| {
         config.use_experimental_unified_exec_tool = true;
         config
@@ -908,9 +915,8 @@ allow_local_binding = true
             .enable(Feature::UnifiedExec)
             .expect("test config should allow feature update");
         config.permissions.approval_policy = Constrained::allow_any(AskForApproval::Never);
-        config.permissions.permission_profile = Constrained::allow_any(
-            PermissionProfile::from_legacy_sandbox_policy(&sandbox_policy_for_config),
-        );
+        config.permissions.permission_profile =
+            Constrained::allow_any(permission_profile_for_config);
         let layers = config
             .config_layer_stack
             .get_layers(
@@ -947,7 +953,7 @@ allow_local_binding = true
         "expected managed network proxy config to be present"
     );
 
-    Ok((test, sandbox_policy))
+    Ok((test, permission_profile))
 }
 
 async fn mount_unified_exec_network_denial_responses(
@@ -1065,7 +1071,7 @@ async fn unified_exec_emits_terminal_interaction_for_write_stdin() -> Result<()>
     ];
     mount_sse_sequence(&server, responses).await;
 
-    submit_unified_exec_turn(&test, "stdin delta", SandboxPolicy::DangerFullAccess).await?;
+    submit_unified_exec_turn(&test, "stdin delta", PermissionProfile::Disabled).await?;
 
     let mut terminal_interaction = None;
 
@@ -1185,7 +1191,7 @@ async fn unified_exec_terminal_interaction_captures_delayed_output() -> Result<(
     submit_unified_exec_turn(
         &test,
         "delayed terminal interaction output",
-        SandboxPolicy::DangerFullAccess,
+        PermissionProfile::Disabled,
     )
     .await?;
 
@@ -1330,7 +1336,7 @@ async fn unified_exec_emits_one_begin_and_one_end_event() -> Result<()> {
     submit_unified_exec_turn(
         &test,
         "check poll event behavior",
-        SandboxPolicy::DangerFullAccess,
+        PermissionProfile::Disabled,
     )
     .await?;
 
@@ -1420,7 +1426,7 @@ async fn exec_command_reports_chunk_and_exit_metadata() -> Result<()> {
     ];
     let request_log = mount_sse_sequence(&server, responses).await;
 
-    submit_unified_exec_turn(&test, "run metadata test", SandboxPolicy::DangerFullAccess).await?;
+    submit_unified_exec_turn(&test, "run metadata test", PermissionProfile::Disabled).await?;
 
     wait_for_event(&test.codex, |event| {
         matches!(event, EventMsg::TurnComplete(_))
@@ -1519,7 +1525,7 @@ async fn exec_command_clamps_model_requested_max_output_tokens_to_policy() -> Re
     submit_unified_exec_turn(
         &test,
         "run clamped max output test",
-        SandboxPolicy::DangerFullAccess,
+        PermissionProfile::Disabled,
     )
     .await?;
 
@@ -1602,7 +1608,7 @@ async fn write_stdin_clamps_model_requested_max_output_tokens_to_policy() -> Res
     submit_unified_exec_turn(
         &test,
         "run clamped write_stdin output test",
-        SandboxPolicy::DangerFullAccess,
+        PermissionProfile::Disabled,
     )
     .await?;
 
@@ -1667,7 +1673,7 @@ async fn unified_exec_defaults_to_pipe() -> Result<()> {
     submit_unified_exec_turn(
         &test,
         "check default pipe mode",
-        SandboxPolicy::DangerFullAccess,
+        PermissionProfile::Disabled,
     )
     .await?;
 
@@ -1734,7 +1740,7 @@ async fn unified_exec_can_enable_tty() -> Result<()> {
     ];
     let request_log = mount_sse_sequence(&server, responses).await;
 
-    submit_unified_exec_turn(&test, "check tty enabled", SandboxPolicy::DangerFullAccess).await?;
+    submit_unified_exec_turn(&test, "check tty enabled", PermissionProfile::Disabled).await?;
 
     wait_for_event(&test.codex, |event| {
         matches!(event, EventMsg::TurnComplete(_))
@@ -1801,7 +1807,7 @@ async fn unified_exec_respects_early_exit_notifications() -> Result<()> {
     submit_unified_exec_turn(
         &test,
         "watch early exit timing",
-        SandboxPolicy::DangerFullAccess,
+        PermissionProfile::Disabled,
     )
     .await?;
 
@@ -1920,7 +1926,7 @@ async fn write_stdin_returns_exit_metadata_and_clears_session() -> Result<()> {
     submit_unified_exec_turn(
         &test,
         "test write_stdin exit behavior",
-        SandboxPolicy::DangerFullAccess,
+        PermissionProfile::Disabled,
     )
     .await?;
 
@@ -2073,7 +2079,7 @@ async fn unified_exec_emits_end_event_when_session_dies_via_stdin() -> Result<()
     ];
     mount_sse_sequence(&server, responses).await;
 
-    submit_unified_exec_turn(&test, "end on exit", SandboxPolicy::DangerFullAccess).await?;
+    submit_unified_exec_turn(&test, "end on exit", PermissionProfile::Disabled).await?;
 
     // We expect the ExecCommandEnd event to match the initial exec_command call_id.
     let end_event = wait_for_event_match(&test.codex, |msg| match msg {
@@ -2139,6 +2145,8 @@ async fn unified_exec_keeps_long_running_session_after_turn_end() -> Result<()> 
     mount_sse_sequence(&server, responses).await;
 
     let session_model = session_configured.model.clone();
+    let (sandbox_policy, permission_profile) =
+        turn_permission_fields(PermissionProfile::Disabled, cwd.path());
 
     codex
         .submit(Op::UserTurn {
@@ -2151,8 +2159,8 @@ async fn unified_exec_keeps_long_running_session_after_turn_end() -> Result<()> 
             cwd: cwd.path().to_path_buf(),
             approval_policy: AskForApproval::Never,
             approvals_reviewer: None,
-            sandbox_policy: SandboxPolicy::DangerFullAccess,
-            permission_profile: None,
+            sandbox_policy,
+            permission_profile,
             model: session_model,
             effort: None,
             summary: None,
@@ -2234,6 +2242,8 @@ async fn unified_exec_interrupt_preserves_long_running_session() -> Result<()> {
     mount_sse_sequence(&server, responses).await;
 
     let session_model = session_configured.model.clone();
+    let (sandbox_policy, permission_profile) =
+        turn_permission_fields(PermissionProfile::Disabled, cwd.path());
 
     codex
         .submit(Op::UserTurn {
@@ -2246,8 +2256,8 @@ async fn unified_exec_interrupt_preserves_long_running_session() -> Result<()> {
             cwd: cwd.path().to_path_buf(),
             approval_policy: AskForApproval::Never,
             approvals_reviewer: None,
-            sandbox_policy: SandboxPolicy::DangerFullAccess,
-            permission_profile: None,
+            sandbox_policy,
+            permission_profile,
             model: session_model,
             effort: None,
             summary: None,
@@ -2339,7 +2349,7 @@ async fn unified_exec_reuses_session_via_stdin() -> Result<()> {
     ];
     let request_log = mount_sse_sequence(&server, responses).await;
 
-    submit_unified_exec_turn(&test, "run unified exec", SandboxPolicy::DangerFullAccess).await?;
+    submit_unified_exec_turn(&test, "run unified exec", PermissionProfile::Disabled).await?;
 
     wait_for_event(&test.codex, |event| {
         matches!(event, EventMsg::TurnComplete(_))
@@ -2457,12 +2467,7 @@ PY
     ];
     let request_log = mount_sse_sequence(&server, responses).await;
 
-    submit_unified_exec_turn(
-        &test,
-        "exercise lag handling",
-        SandboxPolicy::DangerFullAccess,
-    )
-    .await?;
+    submit_unified_exec_turn(&test, "exercise lag handling", PermissionProfile::Disabled).await?;
     // This is a worst case scenario for the truncate logic, and CI can spend a
     // while draining the lagged tail before the follow-up tool call completes.
     wait_for_event_with_timeout(
@@ -2557,7 +2562,7 @@ async fn unified_exec_timeout_and_followup_poll() -> Result<()> {
     ];
     let request_log = mount_sse_sequence(&server, responses).await;
 
-    submit_unified_exec_turn(&test, "check timeout", SandboxPolicy::DangerFullAccess).await?;
+    submit_unified_exec_turn(&test, "check timeout", PermissionProfile::Disabled).await?;
 
     loop {
         let event = test.codex.next_event().await.expect("event");
@@ -2633,12 +2638,7 @@ PY
     ];
     let request_log = mount_sse_sequence(&server, responses).await;
 
-    submit_unified_exec_turn(
-        &test,
-        "summarize large output",
-        SandboxPolicy::DangerFullAccess,
-    )
-    .await?;
+    submit_unified_exec_turn(&test, "summarize large output", PermissionProfile::Disabled).await?;
 
     wait_for_event(&test.codex, |event| {
         matches!(event, EventMsg::TurnComplete(_))
@@ -2708,6 +2708,8 @@ async fn unified_exec_runs_under_sandbox() -> Result<()> {
     let request_log = mount_sse_sequence(&server, responses).await;
 
     let session_model = session_configured.model.clone();
+    let (sandbox_policy, permission_profile) =
+        turn_permission_fields(PermissionProfile::read_only(), cwd.path());
 
     codex
         .submit(Op::UserTurn {
@@ -2721,8 +2723,8 @@ async fn unified_exec_runs_under_sandbox() -> Result<()> {
             approval_policy: AskForApproval::Never,
             approvals_reviewer: None,
             // Important!
-            sandbox_policy: SandboxPolicy::new_read_only_policy(),
-            permission_profile: None,
+            sandbox_policy,
+            permission_profile,
             model: session_model,
             effort: None,
             summary: None,
@@ -2753,7 +2755,6 @@ async fn unified_exec_runs_under_sandbox() -> Result<()> {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn unified_exec_enforces_glob_deny_read_policy() -> Result<()> {
     use codex_config::Constrained;
-    use codex_protocol::models::PermissionProfile;
     use codex_protocol::permissions::FileSystemAccessMode;
     use codex_protocol::permissions::FileSystemPath;
     use codex_protocol::permissions::FileSystemSandboxEntry;
@@ -2764,16 +2765,11 @@ async fn unified_exec_enforces_glob_deny_read_policy() -> Result<()> {
     skip_if_sandbox!(Ok(()));
 
     let server = start_mock_server().await;
-    let read_only_policy = SandboxPolicy::new_read_only_policy();
-    let read_only_policy_for_config = read_only_policy.clone();
     let mut builder = test_codex().with_config(move |config| {
         config
             .features
             .enable(Feature::UnifiedExec)
             .expect("test config should allow feature update");
-        config
-            .set_legacy_sandbox_policy(read_only_policy_for_config)
-            .expect("set sandbox policy");
         let mut file_system_sandbox_policy = FileSystemSandboxPolicy::default();
         file_system_sandbox_policy
             .entries
@@ -2828,6 +2824,8 @@ async fn unified_exec_enforces_glob_deny_read_policy() -> Result<()> {
     let request_log = mount_sse_sequence(&server, responses).await;
 
     let session_model = session_configured.model.clone();
+    let (sandbox_policy, permission_profile) =
+        turn_permission_fields(session_configured.permission_profile.clone(), cwd.path());
     codex
         .submit(Op::UserTurn {
             environments: None,
@@ -2839,8 +2837,8 @@ async fn unified_exec_enforces_glob_deny_read_policy() -> Result<()> {
             cwd: cwd.path().to_path_buf(),
             approval_policy: AskForApproval::Never,
             approvals_reviewer: None,
-            sandbox_policy: read_only_policy,
-            permission_profile: None,
+            sandbox_policy,
+            permission_profile,
             model: session_model,
             effort: None,
             summary: None,
@@ -2957,6 +2955,8 @@ async fn unified_exec_python_prompt_under_seatbelt() -> Result<()> {
     let request_log = mount_sse_sequence(&server, responses).await;
 
     let session_model = session_configured.model.clone();
+    let (sandbox_policy, permission_profile) =
+        turn_permission_fields(PermissionProfile::read_only(), cwd.path());
 
     codex
         .submit(Op::UserTurn {
@@ -2969,8 +2969,8 @@ async fn unified_exec_python_prompt_under_seatbelt() -> Result<()> {
             cwd: cwd.path().to_path_buf(),
             approval_policy: AskForApproval::Never,
             approvals_reviewer: None,
-            sandbox_policy: SandboxPolicy::new_read_only_policy(),
-            permission_profile: None,
+            sandbox_policy,
+            permission_profile,
             model: session_model,
             effort: None,
             summary: None,
@@ -3053,12 +3053,7 @@ async fn unified_exec_runs_on_all_platforms() -> Result<()> {
     ];
     let request_log = mount_sse_sequence(&server, responses).await;
 
-    submit_unified_exec_turn(
-        &test,
-        "summarize large output",
-        SandboxPolicy::DangerFullAccess,
-    )
-    .await?;
+    submit_unified_exec_turn(&test, "summarize large output", PermissionProfile::Disabled).await?;
 
     wait_for_event(&test.codex, |event| {
         matches!(event, EventMsg::TurnComplete(_))
@@ -3176,7 +3171,7 @@ async fn unified_exec_prunes_exited_sessions_first() -> Result<()> {
     let response_mock =
         mount_sse_sequence(&server, vec![first_response, completion_response]).await;
 
-    submit_unified_exec_turn(&test, "fill session cache", SandboxPolicy::DangerFullAccess).await?;
+    submit_unified_exec_turn(&test, "fill session cache", PermissionProfile::Disabled).await?;
 
     wait_for_event(&test.codex, |event| {
         matches!(event, EventMsg::TurnComplete(_))
