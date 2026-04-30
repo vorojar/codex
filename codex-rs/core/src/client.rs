@@ -118,6 +118,7 @@ use codex_login::auth_env_telemetry::AuthEnvTelemetry;
 use codex_login::auth_env_telemetry::collect_auth_env_telemetry;
 use codex_model_provider::SharedModelProvider;
 use codex_model_provider::create_model_provider;
+use codex_model_provider_info::CHATGPT_CODEX_BASE_URL;
 #[cfg(test)]
 use codex_model_provider_info::DEFAULT_WEBSOCKET_CONNECT_TIMEOUT_MS;
 use codex_model_provider_info::ModelProviderInfo;
@@ -424,6 +425,8 @@ impl ModelClient {
             return Ok(Vec::new());
         }
         let client_setup = self.current_client_setup().await?;
+        let should_send_attestation =
+            should_send_attestation(&client_setup.api_provider, AttestationPurpose::Compaction);
         let transport = ReqwestTransport::new(build_reqwest_client());
         let request_telemetry = Self::build_request_telemetry(
             session_telemetry,
@@ -477,6 +480,9 @@ impl ModelClient {
         extra_headers.extend(build_conversation_headers(Some(
             self.state.conversation_id.to_string(),
         )));
+        if should_send_attestation && let Some(header_value) = macos_devicecheck_header() {
+            extra_headers.insert(X_OAI_ATTESTATION_HEADER, header_value);
+        }
         let trace_attempt = compaction_trace.start_attempt(&payload);
         let result = client
             .compact_input(&payload, extra_headers)
@@ -495,10 +501,18 @@ impl ModelClient {
         // Create the media call over HTTP first, then retain matching auth so realtime can attach
         // the server-side control WebSocket to the call id from that HTTP response.
         let client_setup = self.current_client_setup().await?;
+        let should_send_attestation = should_send_attestation(
+            &client_setup.api_provider,
+            AttestationPurpose::RealtimeWebrtcCallSetup,
+        );
         let mut sideband_headers = extra_headers.clone();
         sideband_headers.extend(sideband_websocket_auth_headers(
             client_setup.api_auth.as_ref(),
         ));
+        let mut extra_headers = extra_headers;
+        if should_send_attestation && let Some(header_value) = macos_devicecheck_header() {
+            extra_headers.insert(X_OAI_ATTESTATION_HEADER, header_value);
+        }
         let transport = ReqwestTransport::new(build_reqwest_client());
         let response =
             ApiRealtimeCallClient::new(transport, client_setup.api_provider, client_setup.api_auth)
@@ -1627,18 +1641,32 @@ fn build_responses_headers(
     headers
 }
 
-fn provider_base_url_is_chatgpt_codex(provider: &codex_api::Provider) -> bool {
-    provider
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum AttestationPurpose {
+    Response,
+    Compaction,
+    RealtimeWebrtcCallSetup,
+}
+
+fn should_send_attestation(provider: &codex_api::Provider, purpose: AttestationPurpose) -> bool {
+    let provider_is_chatgpt_codex = provider
         .base_url
         .trim_end_matches('/')
-        .eq_ignore_ascii_case("https://chatgpt.com/backend-api/codex")
+        .eq_ignore_ascii_case(CHATGPT_CODEX_BASE_URL);
+    provider_is_chatgpt_codex
+        && matches!(
+            purpose,
+            AttestationPurpose::Response
+                | AttestationPurpose::Compaction
+                | AttestationPurpose::RealtimeWebrtcCallSetup
+        )
 }
 
 fn extend_devicecheck_header_for_responses_endpoint(
     headers: &mut ApiHeaderMap,
     provider: &codex_api::Provider,
 ) {
-    if provider_base_url_is_chatgpt_codex(provider)
+    if should_send_attestation(provider, AttestationPurpose::Response)
         && let Some(header_value) = macos_devicecheck_header()
     {
         headers.insert(X_OAI_ATTESTATION_HEADER, header_value);

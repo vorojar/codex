@@ -60,6 +60,9 @@ jobs:
           PACK_OUTPUT="${OUTPUT_DIR}/codex-npm-${CODEX_VERSION}.tgz"
           echo "pack_output=$PACK_OUTPUT" >> "$GITHUB_OUTPUT"
 
+      - name: Test Darwin arm64 npm staging
+        run: python3 codex-cli/scripts/test_build_npm_package.py
+
       - name: Upload staged npm package artifact
         uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7
         with:

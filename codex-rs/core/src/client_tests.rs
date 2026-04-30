@@ -1,3 +1,5 @@
+use super::AttestationPurpose;
+use super::AttestationPurpose;
 use super::AuthRequestTelemetryContext;
 use super::ModelClient;
 use super::PendingUnauthorizedRetry;
@@ -8,7 +10,9 @@ use super::X_CODEX_TURN_METADATA_HEADER;
 use super::X_CODEX_WINDOW_ID_HEADER;
 use super::X_OPENAI_SUBAGENT_HEADER;
 use codex_api::ApiError;
+use codex_api::Provider as ApiProvider;
 use codex_api::ResponseEvent;
+use codex_api::RetryConfig as ApiRetryConfig;
 use codex_app_server_protocol::AuthMode;
 use codex_model_provider::BearerAuthProvider;
 use codex_model_provider_info::WireApi;
@@ -382,4 +386,44 @@ fn auth_request_telemetry_context_tracks_attached_auth_and_retry_phase() {
     assert!(auth_context.retry_after_unauthorized);
     assert_eq!(auth_context.recovery_mode, Some("managed"));
     assert_eq!(auth_context.recovery_phase, Some("refresh_token"));
+}
+
+fn api_provider(base_url: &str) -> ApiProvider {
+    ApiProvider {
+        name: "test".to_string(),
+        base_url: base_url.to_string(),
+        query_params: None,
+        headers: http::HeaderMap::new(),
+        retry: ApiRetryConfig {
+            max_attempts: 1,
+            base_delay: Duration::from_millis(1),
+            retry_429: false,
+            retry_5xx: true,
+            retry_transport: true,
+        },
+        stream_idle_timeout: Duration::from_secs(1),
+    }
+}
+
+#[test]
+fn should_send_attestation_for_allowed_chatgpt_codex_purposes() {
+    let provider = api_provider("https://chatgpt.com/backend-api/codex/");
+
+    for purpose in [
+        AttestationPurpose::Response,
+        AttestationPurpose::Compaction,
+        AttestationPurpose::RealtimeWebrtcCallSetup,
+    ] {
+        assert!(super::should_send_attestation(&provider, purpose));
+    }
+}
+
+#[test]
+fn should_not_send_attestation_for_non_chatgpt_codex_provider() {
+    let provider = api_provider("https://api.openai.com/v1");
+
+    assert!(!super::should_send_attestation(
+        &provider,
+        AttestationPurpose::Response,
+    ));
 }
