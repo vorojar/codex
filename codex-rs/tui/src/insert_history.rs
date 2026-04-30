@@ -93,36 +93,8 @@ where
     let last_cursor_pos = terminal.last_known_cursor_pos;
     let writer = terminal.backend_mut();
 
-    // Pre-wrap lines for terminal scrollback. Three paths:
-    //
-    // - URL-only-ish lines are kept intact (no hard newlines inserted) so that
-    //   terminal emulators can match them as clickable links. The
-    //   terminal will character-wrap these lines at the viewport
-    //   boundary.
-    // - Mixed lines (URL + non-URL prose) are adaptively wrapped so
-    //   non-URL text still wraps naturally while URL tokens remain
-    //   unsplit.
-    // - Non-URL lines also flow through adaptive wrapping; behavior is
-    //   equivalent to standard wrapping when no URL is present.
     let wrap_width = area.width.max(1) as usize;
-    let mut wrapped = Vec::new();
-    let mut wrapped_rows = 0usize;
-
-    for line in &lines {
-        let should_keep_line_intact = is_preformatted_box_table_line(line)
-            || (line_contains_url_like(line) && !line_has_mixed_url_and_non_url_tokens(line));
-        let line_wrapped = if should_keep_line_intact {
-            vec![line.clone()]
-        } else {
-            adaptive_wrap_line(line, RtOptions::new(wrap_width))
-        };
-        wrapped_rows += line_wrapped
-            .iter()
-            .map(|wrapped_line| wrapped_line.width().max(1).div_ceil(wrap_width))
-            .sum::<usize>();
-        wrapped.extend(line_wrapped);
-    }
-    let wrapped_lines = wrapped_rows as u16;
+    let (wrapped, wrapped_lines) = wrap_history_lines(&lines, wrap_width);
 
     match mode {
         InsertHistoryMode::Zellij => {
@@ -219,6 +191,75 @@ where
     }
 
     Ok(())
+}
+
+/// Replay history rows after the caller has cleared terminal scrollback/screen.
+///
+/// Unlike [`insert_history_lines_with_mode`], this does not use scroll regions or
+/// reverse-index insertion. Resize reflow already owns replacing the visible
+/// transcript from source-backed cells, so this path writes the rebuilt rows
+/// from the top of the terminal and leaves the inline viewport directly after
+/// the visible history tail.
+pub(crate) fn replay_history_lines_after_clear<B>(
+    terminal: &mut crate::custom_terminal::Terminal<B>,
+    lines: Vec<Line<'static>>,
+) -> io::Result<()>
+where
+    B: Backend + Write,
+{
+    let screen_size = terminal.backend().size().unwrap_or(Size::new(0, 0));
+    let mut area = terminal.viewport_area;
+    area.width = screen_size.width;
+    area.y = 0;
+
+    let wrap_width = area.width.max(1) as usize;
+    let (wrapped, wrapped_rows) = wrap_history_lines(&lines, wrap_width);
+    let max_visible_history_rows = screen_size.height.saturating_sub(area.height);
+    area.y = wrapped_rows.min(max_visible_history_rows);
+    terminal.set_viewport_area(area);
+
+    if wrapped_rows == 0 {
+        return Ok(());
+    }
+
+    let writer = terminal.backend_mut();
+    queue!(writer, MoveTo(/*x*/ 0, /*y*/ 0))?;
+    for (index, line) in wrapped.iter().enumerate() {
+        if index > 0 {
+            queue!(writer, Print("\r\n"))?;
+        }
+        write_history_line(writer, line, wrap_width)?;
+    }
+    for _ in 0..area.height {
+        queue!(writer, Print("\r\n"), Clear(ClearType::UntilNewLine))?;
+    }
+
+    let _ = writer;
+    terminal.note_history_rows_inserted(wrapped_rows);
+
+    Ok(())
+}
+
+fn wrap_history_lines<'a>(lines: &'a [Line<'a>], wrap_width: usize) -> (Vec<Line<'a>>, u16) {
+    let mut wrapped = Vec::new();
+    let mut wrapped_rows = 0usize;
+
+    for line in lines {
+        let should_keep_line_intact = is_preformatted_box_table_line(line)
+            || (line_contains_url_like(line) && !line_has_mixed_url_and_non_url_tokens(line));
+        let line_wrapped = if should_keep_line_intact {
+            vec![line.clone()]
+        } else {
+            adaptive_wrap_line(line, RtOptions::new(wrap_width))
+        };
+        wrapped_rows += line_wrapped
+            .iter()
+            .map(|wrapped_line| wrapped_line.width().max(1).div_ceil(wrap_width))
+            .sum::<usize>();
+        wrapped.extend(line_wrapped);
+    }
+
+    (wrapped, wrapped_rows as u16)
 }
 
 fn is_preformatted_box_table_line(line: &Line<'_>) -> bool {
@@ -869,5 +910,66 @@ mod tests {
         );
         assert_eq!(term.viewport_area, Rect::new(0, 5, width, 2));
         assert_eq!(term.visible_history_rows(), 1);
+    }
+
+    #[test]
+    fn vt100_resize_replay_replaces_cleared_history_without_incremental_insert() {
+        let width: u16 = 36;
+        let height: u16 = 14;
+        let backend = VT100Backend::new(width, height);
+        let mut term = crate::custom_terminal::Terminal::with_options(backend).expect("terminal");
+        term.set_viewport_area(Rect::new(
+            /*x*/ 0, /*y*/ 0, width, /*height*/ 3,
+        ));
+
+        insert_history_lines(&mut term, vec![Line::from("stale row that must disappear")])
+            .expect("insert stale history");
+        term.clear_scrollback_and_visible_screen_ansi()
+            .expect("clear before replay");
+
+        let lines = vec![
+            Line::from("┌─────────┬────────────────────┐"),
+            Line::from("│   Label │ Alpha              │"),
+            Line::from("│ Content │ first value        │"),
+            Line::from("├─────────┼────────────────────┤"),
+            Line::from("│   Label │ Beta               │"),
+            Line::from("│ Content │ second value       │"),
+            Line::from("└─────────┴────────────────────┘"),
+        ];
+        replay_history_lines_after_clear(&mut term, lines).expect("replay history");
+
+        let rows: Vec<String> = term.backend().vt100().screen().rows(0, width).collect();
+        assert_eq!(term.viewport_area, Rect::new(0, 7, width, 3));
+        assert_eq!(term.visible_history_rows(), 7);
+        assert!(rows[0].contains("┌─────────┬────────────────────┐"));
+        assert!(rows[6].contains("└─────────┴────────────────────┘"));
+        assert!(
+            !rows.iter().any(|row| row.contains("stale row")),
+            "stale history survived resize replay: {rows:?}"
+        );
+    }
+
+    #[test]
+    fn vt100_resize_replay_keeps_visible_tail_above_viewport_when_history_overflows() {
+        let width: u16 = 20;
+        let height: u16 = 8;
+        let backend = VT100Backend::new(width, height);
+        let mut term = crate::custom_terminal::Terminal::with_options(backend).expect("terminal");
+        term.set_viewport_area(Rect::new(
+            /*x*/ 0, /*y*/ 0, width, /*height*/ 2,
+        ));
+
+        let lines = (1..=10)
+            .map(|index| Line::from(format!("history row {index:02}")))
+            .collect();
+        replay_history_lines_after_clear(&mut term, lines).expect("replay overflowing history");
+
+        let rows: Vec<String> = term.backend().vt100().screen().rows(0, width).collect();
+        assert_eq!(term.viewport_area, Rect::new(0, 6, width, 2));
+        assert_eq!(term.visible_history_rows(), 6);
+        assert!(rows[0].contains("history row 05"), "rows: {rows:?}");
+        assert!(rows[5].contains("history row 10"), "rows: {rows:?}");
+        assert!(rows[6].trim().is_empty(), "rows: {rows:?}");
+        assert!(rows[7].trim().is_empty(), "rows: {rows:?}");
     }
 }

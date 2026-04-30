@@ -181,20 +181,6 @@ impl App {
         crate::resize_reflow_cap::resize_reflow_max_rows(self.config.terminal_resize_reflow)
     }
 
-    fn clear_terminal_for_resize_replay(&mut self, tui: &mut tui::Tui) -> Result<()> {
-        if tui.is_alt_screen_active() {
-            tui.terminal.clear_visible_screen()?;
-        } else {
-            tui.terminal.clear_scrollback_and_visible_screen_ansi()?;
-        }
-        let mut area = tui.terminal.viewport_area;
-        if area.y > 0 {
-            area.y = 0;
-            tui.terminal.set_viewport_area(area);
-        }
-        Ok(())
-    }
-
     /// Finish stream consolidation by repairing any resize work that happened during streaming.
     ///
     /// This is called after agent-message stream cells have either been replaced by an
@@ -270,7 +256,7 @@ impl App {
                 }
                 // Reflow immediately on the draw that observes the resize. Leaving a debounced
                 // gap lets the terminal emulator's native scrollback reflow show stale rows under
-                // Codex's next table repaint, especially in xterm.js-backed split panes.
+                // Codex's next table repaint.
                 self.transcript_reflow.schedule_immediate();
                 frame_requester.schedule_frame();
             } else if !self.terminal_resize_reflow_enabled() && width.changed {
@@ -375,6 +361,7 @@ impl App {
         if self.transcript_cells.is_empty() {
             // Drop any queued pre-resize/pre-consolidation inserts before rebuilding from cells.
             tui.clear_pending_history_lines();
+            tui.replay_history_lines_after_resize(Vec::new());
             self.reset_history_emission_state();
             return Ok(width);
         }
@@ -384,12 +371,9 @@ impl App {
 
         // Drop any queued pre-resize/pre-consolidation inserts before rebuilding from cells.
         tui.clear_pending_history_lines();
-        self.clear_terminal_for_resize_replay(tui)?;
 
         self.deferred_history_lines.clear();
-        if !reflowed_lines.is_empty() {
-            tui.insert_history_lines(reflowed_lines);
-        }
+        tui.replay_history_lines_after_resize(reflowed_lines);
 
         Ok(width)
     }

@@ -316,6 +316,7 @@ pub struct Tui {
     event_broker: Arc<EventBroker>,
     pub(crate) terminal: Terminal,
     pending_history_lines: Vec<Line<'static>>,
+    pending_resize_replay_lines: Option<Vec<Line<'static>>>,
     alt_saved_viewport: Option<ratatui::layout::Rect>,
     #[cfg(unix)]
     suspend_context: SuspendContext,
@@ -354,6 +355,7 @@ impl Tui {
             event_broker: Arc::new(EventBroker::new()),
             terminal,
             pending_history_lines: vec![],
+            pending_resize_replay_lines: None,
             alt_saved_viewport: None,
             #[cfg(unix)]
             suspend_context: SuspendContext::new(),
@@ -532,6 +534,12 @@ impl Tui {
         self.frame_requester().schedule_frame();
     }
 
+    pub(crate) fn replay_history_lines_after_resize(&mut self, lines: Vec<Line<'static>>) {
+        self.pending_history_lines.clear();
+        self.pending_resize_replay_lines = Some(lines);
+        self.frame_requester().schedule_frame();
+    }
+
     pub fn clear_pending_history_lines(&mut self) {
         self.pending_history_lines.clear();
     }
@@ -669,6 +677,25 @@ impl Tui {
         Ok(is_zellij)
     }
 
+    fn flush_pending_resize_replay(
+        terminal: &mut Terminal,
+        pending_resize_replay_lines: &mut Option<Vec<Line<'static>>>,
+        alt_screen_active: bool,
+    ) -> Result<bool> {
+        let Some(lines) = pending_resize_replay_lines.take() else {
+            return Ok(false);
+        };
+
+        if alt_screen_active {
+            terminal.clear_visible_screen()?;
+        } else {
+            terminal.clear_scrollback_and_visible_screen_ansi()?;
+        }
+        crate::insert_history::replay_history_lines_after_clear(terminal, lines)?;
+
+        Ok(true)
+    }
+
     pub fn draw(
         &mut self,
         height: u16,
@@ -755,12 +782,21 @@ impl Tui {
             let terminal = &mut self.terminal;
             let mut needs_full_repaint =
                 Self::update_inline_viewport_for_resize_reflow(terminal, height, self.is_zellij)?;
-            let flushed_history = Self::flush_pending_history_lines(
+            let replayed_history = Self::flush_pending_resize_replay(
                 terminal,
-                &mut self.pending_history_lines,
-                self.is_zellij,
+                &mut self.pending_resize_replay_lines,
+                self.alt_screen_active.load(Ordering::Relaxed),
             )?;
-            needs_full_repaint |= flushed_history;
+            if replayed_history {
+                self.pending_history_lines.clear();
+            } else {
+                needs_full_repaint |= Self::flush_pending_history_lines(
+                    terminal,
+                    &mut self.pending_history_lines,
+                    self.is_zellij,
+                )?;
+            }
+            needs_full_repaint |= replayed_history;
 
             if needs_full_repaint {
                 terminal.invalidate_viewport();
