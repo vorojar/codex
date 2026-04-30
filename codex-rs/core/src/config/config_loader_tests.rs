@@ -29,7 +29,6 @@ use codex_protocol::config_types::TrustLevel;
 use codex_protocol::config_types::WebSearchMode;
 use codex_protocol::models::PermissionProfile;
 use codex_protocol::protocol::AskForApproval;
-use codex_protocol::protocol::SandboxPolicy;
 use codex_utils_absolute_path::AbsolutePathBuf;
 use pretty_assertions::assert_eq;
 use std::collections::BTreeMap;
@@ -37,6 +36,13 @@ use std::collections::HashMap;
 use std::path::Path;
 use tempfile::tempdir;
 use toml::Value as TomlValue;
+
+#[cfg(target_os = "macos")]
+use codex_protocol::models::ManagedFileSystemPermissions;
+#[cfg(target_os = "macos")]
+use codex_protocol::permissions::FileSystemAccessMode;
+#[cfg(target_os = "macos")]
+use codex_protocol::permissions::FileSystemPath;
 
 fn config_error_from_io(err: &std::io::Error) -> &ConfigError {
     err.get_ref()
@@ -526,17 +532,25 @@ writable_roots = ["~/code"]
         .await?;
 
     let expected_root = AbsolutePathBuf::from_absolute_path(home.join("code"))?;
-    match &config.legacy_sandbox_policy() {
-        SandboxPolicy::WorkspaceWrite { writable_roots, .. } => {
-            assert_eq!(
-                writable_roots
-                    .iter()
-                    .filter(|root| **root == expected_root)
-                    .count(),
-                1,
-            );
-        }
-        other => panic!("expected workspace-write policy, got {other:?}"),
+    match config.permissions.permission_profile() {
+        PermissionProfile::Managed {
+            file_system:
+                ManagedFileSystemPermissions::Restricted {
+                    entries,
+                    glob_scan_max_depth: _,
+                },
+            network: _,
+        } => assert_eq!(
+            entries
+                .iter()
+                .filter(|entry| {
+                    entry.access == FileSystemAccessMode::Write
+                        && matches!(&entry.path, FileSystemPath::Path { path } if path == &expected_root)
+                })
+                .count(),
+            1,
+        ),
+        other => panic!("expected workspace-write profile, got {other:?}"),
     }
 
     Ok(())
@@ -591,14 +605,7 @@ allowed_sandbox_modes = ["read-only"]
         state
             .requirements()
             .permission_profile
-            .can_set(&PermissionProfile::from_legacy_sandbox_policy(
-                &SandboxPolicy::WorkspaceWrite {
-                    writable_roots: Vec::new(),
-                    network_access: false,
-                    exclude_tmpdir_env_var: false,
-                    exclude_slash_tmp: false,
-                },
-            ))
+            .can_set(&PermissionProfile::workspace_write())
             .is_err()
     );
 
@@ -904,11 +911,9 @@ allowed_sandbox_modes = ["read-only"]
     let config_requirements: ConfigRequirements = config_requirements_toml.try_into()?;
 
     assert_eq!(
-        config_requirements.permission_profile.can_set(
-            &PermissionProfile::from_legacy_sandbox_policy(
-                &SandboxPolicy::new_workspace_write_policy()
-            )
-        ),
+        config_requirements
+            .permission_profile
+            .can_set(&PermissionProfile::workspace_write()),
         Err(ConstraintError::InvalidValue {
             field_name: "sandbox_mode",
             candidate: "WorkspaceWrite".into(),
@@ -1233,9 +1238,7 @@ async fn load_config_layers_applies_matching_remote_sandbox_config() -> anyhow::
         layers
             .requirements()
             .permission_profile
-            .can_set(&PermissionProfile::from_legacy_sandbox_policy(
-                &SandboxPolicy::new_workspace_write_policy()
-            ))
+            .can_set(&PermissionProfile::workspace_write())
             .is_ok()
     );
 
