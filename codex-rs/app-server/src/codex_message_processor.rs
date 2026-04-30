@@ -4581,6 +4581,7 @@ impl CodexMessageProcessor {
             let command = crate::thread_state::ThreadListenerCommand::SendThreadResumeResponse(
                 Box::new(crate::thread_state::PendingThreadResumeRequest {
                     request_id: request_id.clone(),
+                    analytics_events_client: self.analytics_events_client.clone(),
                     history_items,
                     config_snapshot,
                     instruction_sources,
@@ -8309,6 +8310,13 @@ async fn handle_pending_thread_resume_request(
         permission_profile,
         reasoning_effort,
     };
+    pending.analytics_events_client.track_response(
+        connection_id.0,
+        ClientResponse::ThreadResume {
+            request_id: request_id.request_id.clone(),
+            response: response.clone(),
+        },
+    );
     let token_usage_thread = pending.include_turns.then(|| response.thread.clone());
     outgoing.send_response(request_id, response).await;
     // Match cold resume: metadata-only resume should attach the listener without

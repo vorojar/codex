@@ -1,5 +1,6 @@
 use crate::outgoing_message::ConnectionId;
 use crate::outgoing_message::ConnectionRequestId;
+use codex_analytics::AnalyticsEventsClient;
 use codex_app_server_protocol::RequestId;
 use codex_app_server_protocol::ThreadGoal;
 use codex_app_server_protocol::ThreadHistoryBuilder;
@@ -29,6 +30,7 @@ type PendingInterruptQueue = Vec<(
 
 pub(crate) struct PendingThreadResumeRequest {
     pub(crate) request_id: ConnectionRequestId,
+    pub(crate) analytics_events_client: AnalyticsEventsClient,
     pub(crate) history_items: Vec<RolloutItem>,
     pub(crate) config_snapshot: ThreadConfigSnapshot,
     pub(crate) instruction_sources: Vec<AbsolutePathBuf>,

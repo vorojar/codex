@@ -278,9 +278,17 @@ impl AnalyticsReducer {
         input: SubAgentThreadStartedInput,
         out: &mut Vec<TrackEventRequest>,
     ) {
-        out.push(TrackEventRequest::ThreadInitialized(
-            subagent_thread_started_event_request(input),
-        ));
+        let parent_thread_id = input
+            .parent_thread_id
+            .clone()
+            .or_else(|| subagent_parent_thread_id(&input.subagent_source));
+        let execution_environment = parent_thread_id
+            .as_ref()
+            .and_then(|parent_thread_id| self.thread_metadata.get(parent_thread_id))
+            .and_then(|thread_metadata| thread_metadata.execution_environment);
+        let mut event = subagent_thread_started_event_request(input);
+        event.event_params.execution_environment = execution_environment;
+        out.push(TrackEventRequest::ThreadInitialized(event));
     }
 
     fn ingest_guardian_review(
@@ -732,6 +740,11 @@ impl AnalyticsReducer {
         let Some(connection_state) = self.connections.get(&connection_id) else {
             return;
         };
+        let execution_environment = execution_environment.or_else(|| {
+            self.thread_metadata
+                .get(&thread_id)
+                .and_then(|thread_metadata| thread_metadata.execution_environment)
+        });
         let thread_metadata = ThreadMetadataState::from_thread_metadata(
             &thread_source,
             initialization_mode,

@@ -72,6 +72,7 @@ use codex_app_server_protocol::ServerNotification;
 use codex_app_server_protocol::SessionSource as AppServerSessionSource;
 use codex_app_server_protocol::Thread;
 use codex_app_server_protocol::ThreadExecutionEnvironment;
+use codex_app_server_protocol::ThreadResumeParams;
 use codex_app_server_protocol::ThreadResumeResponse;
 use codex_app_server_protocol::ThreadStartParams;
 use codex_app_server_protocol::ThreadStartResponse;
@@ -2188,6 +2189,67 @@ async fn thread_execution_environment_flows_to_thread_turn_and_steer_events() {
     let thread_payload = serde_json::to_value(&out[0]).expect("serialize thread event");
     assert_eq!(
         thread_payload["event_params"]["execution_environment"],
+        json!("remote")
+    );
+    out.clear();
+
+    reducer
+        .ingest(
+            AnalyticsFact::ClientRequest {
+                connection_id: 7,
+                request_id: RequestId::Integer(2),
+                request: Box::new(ClientRequest::ThreadResume {
+                    request_id: RequestId::Integer(2),
+                    params: ThreadResumeParams {
+                        thread_id: "thread-2".to_string(),
+                        ..Default::default()
+                    },
+                }),
+            },
+            &mut out,
+        )
+        .await;
+    reducer
+        .ingest(
+            AnalyticsFact::ClientResponse {
+                connection_id: 7,
+                response: Box::new(sample_thread_resume_response(
+                    "thread-2", /*ephemeral*/ false, "gpt-5",
+                )),
+            },
+            &mut out,
+        )
+        .await;
+
+    let resume_payload = serde_json::to_value(&out[0]).expect("serialize resume thread event");
+    assert_eq!(
+        resume_payload["event_params"]["execution_environment"],
+        json!("remote")
+    );
+    out.clear();
+
+    reducer
+        .ingest(
+            AnalyticsFact::Custom(CustomAnalyticsFact::SubAgentThreadStarted(
+                SubAgentThreadStartedInput {
+                    thread_id: "thread-subagent".to_string(),
+                    parent_thread_id: Some("thread-2".to_string()),
+                    product_client_id: "codex-tui".to_string(),
+                    client_name: "codex-tui".to_string(),
+                    client_version: "1.0.0".to_string(),
+                    model: "gpt-5".to_string(),
+                    ephemeral: false,
+                    subagent_source: SubAgentSource::Review,
+                    created_at: 123,
+                },
+            )),
+            &mut out,
+        )
+        .await;
+
+    let subagent_payload = serde_json::to_value(&out[0]).expect("serialize subagent thread event");
+    assert_eq!(
+        subagent_payload["event_params"]["execution_environment"],
         json!("remote")
     );
     out.clear();
