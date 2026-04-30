@@ -45,6 +45,7 @@ use codex_protocol::permissions::FileSystemPath;
 use codex_protocol::permissions::FileSystemSandboxEntry;
 use codex_protocol::permissions::FileSystemSandboxPolicy;
 use codex_protocol::permissions::FileSystemSpecialPath;
+use codex_protocol::permissions::NetworkSandboxPolicy;
 use codex_protocol::protocol::NonSteerableTurnKind;
 use codex_protocol::protocol::SandboxPolicy;
 use codex_protocol::request_permissions::PermissionGrantScope;
@@ -1590,11 +1591,13 @@ async fn session_configured_reports_permission_profile_for_external_sandbox() ->
     let sandbox_policy = SandboxPolicy::ExternalSandbox {
         network_access: codex_protocol::protocol::NetworkAccess::Restricted,
     };
-    let expected_sandbox_policy = sandbox_policy.clone();
+    let expected_permission_profile = PermissionProfile::External {
+        network: NetworkSandboxPolicy::Restricted,
+    };
+    let config_permission_profile = expected_permission_profile.clone();
     let mut builder = test_codex().with_config(move |config| {
-        config.permissions.permission_profile = codex_config::Constrained::allow_any(
-            PermissionProfile::from_legacy_sandbox_policy(&sandbox_policy),
-        );
+        config.permissions.permission_profile =
+            codex_config::Constrained::allow_any(config_permission_profile);
         config
             .set_legacy_sandbox_policy(sandbox_policy)
             .expect("set sandbox policy");
@@ -1602,10 +1605,6 @@ async fn session_configured_reports_permission_profile_for_external_sandbox() ->
 
     let test = builder.build(&server).await?;
 
-    let expected_permission_profile =
-        codex_protocol::models::PermissionProfile::from_legacy_sandbox_policy(
-            &expected_sandbox_policy,
-        );
     assert_eq!(
         test.session_configured.permission_profile, expected_permission_profile,
         "ExternalSandbox is represented explicitly instead of as a lossy root-write profile"

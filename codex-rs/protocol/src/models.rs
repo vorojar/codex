@@ -475,14 +475,6 @@ impl PermissionProfile {
         }
     }
 
-    pub fn from_legacy_sandbox_policy(sandbox_policy: &SandboxPolicy) -> Self {
-        Self::from_runtime_permissions_with_enforcement(
-            SandboxEnforcement::from_legacy_sandbox_policy(sandbox_policy),
-            &FileSystemSandboxPolicy::from(sandbox_policy),
-            NetworkSandboxPolicy::from(sandbox_policy),
-        )
-    }
-
     pub fn from_legacy_sandbox_policy_for_cwd(sandbox_policy: &SandboxPolicy, cwd: &Path) -> Self {
         Self::from_runtime_permissions_with_enforcement(
             SandboxEnforcement::from_legacy_sandbox_policy(sandbox_policy),
@@ -1838,24 +1830,9 @@ mod tests {
     }
 
     #[test]
-    fn permission_profile_presets_match_legacy_defaults() {
-        assert_eq!(
-            PermissionProfile::read_only(),
-            PermissionProfile::from_legacy_sandbox_policy(&SandboxPolicy::new_read_only_policy())
-        );
-        assert_eq!(
-            PermissionProfile::workspace_write(),
-            PermissionProfile::from_legacy_sandbox_policy(
-                &SandboxPolicy::new_workspace_write_policy()
-            )
-        );
-    }
-
-    #[test]
     fn permission_profile_round_trip_preserves_disabled_sandbox() -> Result<()> {
         let cwd = tempdir()?;
-        let permission_profile =
-            PermissionProfile::from_legacy_sandbox_policy(&SandboxPolicy::DangerFullAccess);
+        let permission_profile = PermissionProfile::Disabled;
 
         assert_eq!(permission_profile, PermissionProfile::Disabled);
         assert_eq!(
@@ -1937,7 +1914,9 @@ mod tests {
         let sandbox_policy = SandboxPolicy::ExternalSandbox {
             network_access: crate::protocol::NetworkAccess::Restricted,
         };
-        let permission_profile = PermissionProfile::from_legacy_sandbox_policy(&sandbox_policy);
+        let permission_profile = PermissionProfile::External {
+            network: NetworkSandboxPolicy::Restricted,
+        };
 
         assert_eq!(
             permission_profile,
