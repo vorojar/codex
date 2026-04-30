@@ -1893,10 +1893,9 @@ mod tests {
             instruction_sources: vec![test_path_buf("/tmp/project/AGENTS.md").abs()],
             approval_policy: codex_protocol::protocol::AskForApproval::Never.into(),
             approvals_reviewer: codex_app_server_protocol::ApprovalsReviewer::User,
-            sandbox: read_only_profile
-                .to_legacy_sandbox_policy(test_path_buf("/tmp/project").as_path())
-                .expect("read-only profile must be legacy-compatible")
-                .into(),
+            sandbox: codex_app_server_protocol::SandboxPolicy::ReadOnly {
+                network_access: false,
+            },
             permission_profile: Some(read_only_profile.clone().into()),
             active_permission_profile: None,
             reasoning_effort: None,

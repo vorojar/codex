@@ -3001,7 +3001,7 @@ async fn side_fork_config_is_ephemeral_and_appends_developer_guardrails() {
     let mut app = make_test_app().await;
     app.config.developer_instructions = Some("Existing developer policy.".to_string());
     let original_approval_policy = app.config.permissions.approval_policy.value();
-    let original_sandbox_policy = app.config.legacy_sandbox_policy();
+    let original_permission_profile = app.config.permissions.permission_profile();
 
     let fork_config = app.side_fork_config();
 
@@ -3010,7 +3010,10 @@ async fn side_fork_config_is_ephemeral_and_appends_developer_guardrails() {
         fork_config.permissions.approval_policy.value(),
         original_approval_policy
     );
-    assert_eq!(fork_config.legacy_sandbox_policy(), original_sandbox_policy);
+    assert_eq!(
+        fork_config.permissions.permission_profile(),
+        original_permission_profile
+    );
     let developer_instructions = fork_config
         .developer_instructions
         .as_deref()

@@ -276,9 +276,6 @@ async fn session_configured_syncs_widget_config_permissions_and_cwd() {
             &expected_file_system_policy,
             NetworkSandboxPolicy::Restricted,
         );
-    let expected_sandbox = expected_permission_profile
-        .to_legacy_sandbox_policy(expected_cwd.as_path())
-        .expect("permission profile should project to legacy sandbox policy");
     let configured = codex_protocol::protocol::SessionConfiguredEvent {
         session_id: ThreadId::new(),
         forked_from_id: None,
@@ -309,10 +306,6 @@ async fn session_configured_syncs_widget_config_permissions_and_cwd() {
         AskForApproval::Never
     );
     assert_eq!(
-        &chat.config_ref().legacy_sandbox_policy(),
-        &expected_sandbox
-    );
-    assert_eq!(
         chat.config_ref().permissions.permission_profile(),
         expected_permission_profile
     );
@@ -335,9 +328,6 @@ async fn session_configured_external_sandbox_keeps_external_runtime_policy() {
     let expected_permission_profile = PermissionProfile::External {
         network: NetworkSandboxPolicy::Restricted,
     };
-    let expected_sandbox = expected_permission_profile
-        .to_legacy_sandbox_policy(test_path_buf("/home/user/external").as_path())
-        .expect("external profile should project to legacy sandbox policy");
     let configured = codex_protocol::protocol::SessionConfiguredEvent {
         session_id: ThreadId::new(),
         forked_from_id: None,
@@ -347,7 +337,7 @@ async fn session_configured_external_sandbox_keeps_external_runtime_policy() {
         service_tier: None,
         approval_policy: AskForApproval::Never,
         approvals_reviewer: ApprovalsReviewer::User,
-        permission_profile: expected_permission_profile,
+        permission_profile: expected_permission_profile.clone(),
         active_permission_profile: None,
         cwd: test_path_buf("/home/user/external").abs(),
         reasoning_effort: Some(ReasoningEffortConfig::default()),
@@ -364,8 +354,8 @@ async fn session_configured_external_sandbox_keeps_external_runtime_policy() {
     });
 
     assert_eq!(
-        &chat.config_ref().legacy_sandbox_policy(),
-        &expected_sandbox
+        chat.config_ref().permissions.permission_profile(),
+        expected_permission_profile
     );
     assert_eq!(
         chat.config_ref()
