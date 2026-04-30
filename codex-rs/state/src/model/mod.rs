@@ -44,3 +44,4 @@ pub(crate) use thread_metadata::anchor_from_item;
 pub(crate) use thread_metadata::datetime_to_epoch_millis;
 pub(crate) use thread_metadata::datetime_to_epoch_seconds;
 pub(crate) use thread_metadata::epoch_millis_to_datetime;
+pub(crate) use thread_metadata::legacy_sandbox_policy_string;

@@ -75,7 +75,10 @@ fn apply_turn_context(metadata: &mut ThreadMetadata, turn_ctx: &TurnContextItem)
     }
     metadata.model = Some(turn_ctx.model.clone());
     metadata.reasoning_effort = turn_ctx.effort;
-    metadata.sandbox_policy = enum_to_string(&turn_ctx.sandbox_policy);
+    metadata.sandbox_policy = crate::model::legacy_sandbox_policy_string(
+        &turn_ctx.permission_profile(),
+        turn_ctx.cwd.as_path(),
+    );
     metadata.approval_mode = enum_to_string(&turn_ctx.approval_policy);
 }
 
@@ -150,12 +153,12 @@ mod tests {
     use codex_protocol::ThreadId;
     use codex_protocol::config_types::ReasoningSummary;
     use codex_protocol::models::ContentItem;
+    use codex_protocol::models::PermissionProfile;
     use codex_protocol::models::ResponseItem;
     use codex_protocol::openai_models::ReasoningEffort;
     use codex_protocol::protocol::AskForApproval;
     use codex_protocol::protocol::EventMsg;
     use codex_protocol::protocol::RolloutItem;
-    use codex_protocol::protocol::SandboxPolicy;
     use codex_protocol::protocol::SessionMeta;
     use codex_protocol::protocol::SessionMetaLine;
     use codex_protocol::protocol::SessionSource;
@@ -165,6 +168,7 @@ mod tests {
     use codex_protocol::protocol::UserMessageEvent;
 
     use pretty_assertions::assert_eq;
+    use std::path::Path;
     use std::path::PathBuf;
     use uuid::Uuid;
 
@@ -299,8 +303,10 @@ mod tests {
                 current_date: None,
                 timezone: None,
                 approval_policy: AskForApproval::Never,
-                sandbox_policy: SandboxPolicy::DangerFullAccess,
-                permission_profile: None,
+                sandbox_policy: PermissionProfile::read_only()
+                    .to_legacy_sandbox_policy(Path::new("/"))
+                    .expect("read-only profile should project to legacy sandbox"),
+                permission_profile: Some(PermissionProfile::Disabled),
                 network: None,
                 file_system_sandbox_policy: None,
                 model: "gpt-5".to_string(),
@@ -318,10 +324,7 @@ mod tests {
         );
 
         assert_eq!(metadata.cwd, PathBuf::from("/child/worktree"));
-        assert_eq!(
-            metadata.sandbox_policy,
-            super::enum_to_string(&SandboxPolicy::DangerFullAccess)
-        );
+        assert_eq!(metadata.sandbox_policy, r#"{"type":"danger-full-access"}"#);
         assert_eq!(metadata.approval_mode, "never");
     }
 
@@ -339,7 +342,9 @@ mod tests {
                 current_date: None,
                 timezone: None,
                 approval_policy: AskForApproval::OnRequest,
-                sandbox_policy: SandboxPolicy::new_read_only_policy(),
+                sandbox_policy: PermissionProfile::read_only()
+                    .to_legacy_sandbox_policy(Path::new("/"))
+                    .expect("read-only profile should project to legacy sandbox"),
                 permission_profile: None,
                 network: None,
                 file_system_sandbox_policy: None,
@@ -373,7 +378,9 @@ mod tests {
                 current_date: None,
                 timezone: None,
                 approval_policy: AskForApproval::OnRequest,
-                sandbox_policy: SandboxPolicy::new_read_only_policy(),
+                sandbox_policy: PermissionProfile::read_only()
+                    .to_legacy_sandbox_policy(Path::new("/"))
+                    .expect("read-only profile should project to legacy sandbox"),
                 permission_profile: None,
                 network: None,
                 file_system_sandbox_policy: None,

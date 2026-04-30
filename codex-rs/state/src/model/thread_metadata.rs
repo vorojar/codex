@@ -8,6 +8,7 @@ use codex_protocol::protocol::AskForApproval;
 use codex_protocol::protocol::SessionSource;
 use sqlx::Row;
 use sqlx::sqlite::SqliteRow;
+use std::path::Path;
 use std::path::PathBuf;
 
 /// The sort key to use when listing threads.
@@ -176,11 +177,8 @@ impl ThreadMetadataBuilder {
     /// Build canonical thread metadata, filling missing values from defaults.
     pub fn build(&self, default_provider: &str) -> ThreadMetadata {
         let source = crate::extract::enum_to_string(&self.source);
-        let sandbox_policy = self
-            .permission_profile
-            .to_legacy_sandbox_policy(self.cwd.as_path())
-            .map(|policy| crate::extract::enum_to_string(&policy))
-            .unwrap_or_else(|_| "custom".to_string());
+        let sandbox_policy =
+            legacy_sandbox_policy_string(&self.permission_profile, self.cwd.as_path());
         let approval_mode = crate::extract::enum_to_string(&self.approval_mode);
         let created_at = canonicalize_datetime(self.created_at);
         let updated_at = self
@@ -218,6 +216,16 @@ impl ThreadMetadataBuilder {
             git_origin_url: self.git_origin_url.clone(),
         }
     }
+}
+
+pub(crate) fn legacy_sandbox_policy_string(
+    permission_profile: &PermissionProfile,
+    cwd: &Path,
+) -> String {
+    permission_profile
+        .to_legacy_sandbox_policy(cwd)
+        .map(|policy| crate::extract::enum_to_string(&policy))
+        .unwrap_or_else(|_| "custom".to_string())
 }
 
 impl ThreadMetadata {
