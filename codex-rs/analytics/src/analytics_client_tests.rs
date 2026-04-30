@@ -98,7 +98,6 @@ use codex_protocol::protocol::AskForApproval;
 use codex_protocol::protocol::HookEventName;
 use codex_protocol::protocol::HookRunStatus;
 use codex_protocol::protocol::HookSource;
-use codex_protocol::protocol::SandboxPolicy;
 use codex_protocol::protocol::SessionSource;
 use codex_protocol::protocol::SubAgentSource;
 use codex_protocol::protocol::TokenUsage;
@@ -313,9 +312,7 @@ fn sample_turn_resolved_config(turn_id: &str) -> TurnResolvedConfigFact {
         session_source: SessionSource::Exec,
         model: "gpt-5".to_string(),
         model_provider: "openai".to_string(),
-        permission_profile: CorePermissionProfile::from_legacy_sandbox_policy(
-            &SandboxPolicy::new_read_only_policy(),
-        ),
+        permission_profile: CorePermissionProfile::read_only(),
         permission_profile_cwd: PathBuf::from("/tmp"),
         reasoning_effort: None,
         reasoning_summary: None,

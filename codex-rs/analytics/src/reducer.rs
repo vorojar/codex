@@ -979,7 +979,7 @@ fn sandbox_policy_mode(permission_profile: &PermissionProfile, cwd: &Path) -> &'
                 if permission_profile.network_sandbox_policy().is_enabled() {
                     "full_access"
                 } else {
-                    "external_sandbox"
+                    "custom_permissions"
                 }
             } else if file_system_policy
                 .get_writable_roots_with_cwd(cwd)
@@ -1089,7 +1089,7 @@ mod tests {
     use codex_protocol::permissions::NetworkSandboxPolicy;
 
     #[test]
-    fn managed_full_disk_with_restricted_network_reports_external_sandbox() {
+    fn managed_full_disk_with_restricted_network_reports_custom_permissions() {
         let permission_profile = PermissionProfile::from_runtime_permissions_with_enforcement(
             SandboxEnforcement::Managed,
             &FileSystemSandboxPolicy::unrestricted(),
@@ -1098,7 +1098,7 @@ mod tests {
 
         assert_eq!(
             sandbox_policy_mode(&permission_profile, Path::new("/")),
-            "external_sandbox"
+            "custom_permissions"
         );
     }
 }
