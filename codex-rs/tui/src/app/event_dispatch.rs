@@ -883,10 +883,7 @@ impl App {
                             /*hint*/ None,
                         ));
 
-                    let policy = self
-                        .config
-                        .permissions
-                        .legacy_sandbox_policy(self.config.cwd.as_path());
+                    let permission_profile = self.config.permissions.permission_profile();
                     let policy_cwd = self.config.cwd.clone();
                     let command_cwd = self.config.cwd.clone();
                     let env_map: std::collections::HashMap<String, String> =
@@ -897,7 +894,7 @@ impl App {
                     tokio::task::spawn_blocking(move || {
                         let requested_path = PathBuf::from(path);
                         let event = match crate::legacy_core::grant_read_root_non_elevated(
-                            &policy,
+                            &permission_profile,
                             policy_cwd.as_path(),
                             command_cwd.as_path(),
                             &env_map,
