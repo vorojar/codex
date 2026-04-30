@@ -303,6 +303,14 @@ async fn web_search_item_is_emitted() -> anyhow::Result<()> {
         })
         .await?;
 
+    let started = wait_for_event_match(&codex, |ev| match ev {
+        EventMsg::ItemStarted(ItemStartedEvent {
+            item: TurnItem::WebSearch(item),
+            ..
+        }) => Some(item.clone()),
+        _ => None,
+    })
+    .await;
     let begin = wait_for_event_match(&codex, |ev| match ev {
         EventMsg::WebSearchBegin(event) => Some(event.clone()),
         _ => None,
@@ -317,8 +325,21 @@ async fn web_search_item_is_emitted() -> anyhow::Result<()> {
     })
     .await;
 
+    assert_eq!(started.id, "web-search-1");
+    assert!(started.started_at_ms.is_some());
+    assert_eq!(started.completed_at_ms, None);
+    assert_eq!(started.duration_ms, None);
     assert_eq!(begin.call_id, "web-search-1");
     assert_eq!(completed.id, begin.call_id);
+    assert_eq!(completed.started_at_ms, started.started_at_ms);
+    assert!(completed.completed_at_ms.is_some());
+    assert_eq!(
+        completed.duration_ms,
+        completed
+            .started_at_ms
+            .zip(completed.completed_at_ms)
+            .and_then(|(started_at_ms, completed_at_ms)| completed_at_ms.checked_sub(started_at_ms))
+    );
     assert_eq!(
         completed.action,
         WebSearchAction::Search {

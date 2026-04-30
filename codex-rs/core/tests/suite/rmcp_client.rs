@@ -1101,6 +1101,8 @@ async fn stdio_image_responses_round_trip() -> anyhow::Result<()> {
     let EventMsg::McpToolCallBegin(begin) = begin_event else {
         unreachable!("begin");
     };
+    let started_at_ms = begin.started_at_ms;
+    assert!(started_at_ms.is_some());
     assert_eq!(
         begin,
         McpToolCallBeginEvent {
@@ -1111,6 +1113,7 @@ async fn stdio_image_responses_round_trip() -> anyhow::Result<()> {
                 arguments: Some(json!({})),
             },
             mcp_app_resource_uri: None,
+            started_at_ms,
         },
     );
 
