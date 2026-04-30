@@ -293,7 +293,7 @@ impl CodexMessageProcessor {
                     .app_ids
                     .iter()
                     .cloned()
-                    .map(codex_core::plugins::AppConnectorId)
+                    .map(codex_core_plugins::AppConnectorId)
                     .collect::<Vec<_>>();
                 let environment_manager = self.thread_manager.environment_manager();
                 let app_summaries = plugin_app_helpers::load_plugin_app_summaries(
@@ -618,7 +618,7 @@ impl CodexMessageProcessor {
         config: &Config,
         is_chatgpt_auth: bool,
         plugin_id: &str,
-        plugin_apps: &[codex_core::plugins::AppConnectorId],
+        plugin_apps: &[codex_core_plugins::AppConnectorId],
     ) -> Vec<AppSummary> {
         if plugin_apps.is_empty() || !config.features.apps_enabled_for_auth(is_chatgpt_auth) {
             return Vec::new();
@@ -691,14 +691,14 @@ impl CodexMessageProcessor {
         params: PluginUninstallParams,
     ) -> Result<PluginUninstallResponse, JSONRPCErrorError> {
         let PluginUninstallParams { plugin_id } = params;
-        if codex_core::plugins::PluginId::parse(&plugin_id).is_err()
-            && (plugin_id.is_empty() || !is_valid_remote_plugin_id(&plugin_id))
+        if codex_core_plugins::PluginId::parse(&plugin_id).is_err()
+            && !is_valid_remote_uninstall_plugin_id(&plugin_id)
         {
             return Err(invalid_request(
-                "invalid plugin id: expected a local plugin id or remote plugin id",
+                "invalid plugin id: expected a local plugin id in the form `plugin@marketplace` or a remote plugin id starting with `plugins~`, `app_`, `asdk_app_`, or `connector_`",
             ));
         }
-        if !plugin_id.is_empty() && is_valid_remote_plugin_id(&plugin_id) {
+        if is_valid_remote_uninstall_plugin_id(&plugin_id) {
             return self.remote_plugin_uninstall_response(plugin_id).await;
         }
         let plugins_manager = self.thread_manager.plugins_manager();
@@ -833,6 +833,15 @@ fn is_valid_remote_plugin_id(plugin_name: &str) -> bool {
     plugin_name
         .chars()
         .all(|ch| ch.is_ascii_alphanumeric() || ch == '-' || ch == '_' || ch == '~')
+}
+
+fn is_valid_remote_uninstall_plugin_id(plugin_name: &str) -> bool {
+    !plugin_name.is_empty()
+        && is_valid_remote_plugin_id(plugin_name)
+        && (plugin_name.starts_with("plugins~")
+            || plugin_name.starts_with("app_")
+            || plugin_name.starts_with("asdk_app_")
+            || plugin_name.starts_with("connector_"))
 }
 
 fn remote_marketplace_to_info(marketplace: RemoteMarketplace) -> PluginMarketplaceEntry {

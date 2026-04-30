@@ -1,11 +1,11 @@
 use std::collections::HashSet;
 
+use codex_plugin::PluginCapabilitySummary;
 use codex_protocol::user_input::UserInput;
 use pretty_assertions::assert_eq;
 
 use super::collect_explicit_app_ids;
 use super::collect_explicit_plugin_mentions;
-use crate::plugins::PluginCapabilitySummary;
 
 fn text_input(text: &str) -> UserInput {
     UserInput::Text {

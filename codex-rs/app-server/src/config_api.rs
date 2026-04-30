@@ -32,7 +32,7 @@ use codex_config::ResidencyRequirement as CoreResidencyRequirement;
 use codex_config::SandboxModeRequirement as CoreSandboxModeRequirement;
 use codex_core::ThreadManager;
 use codex_core::config::Config;
-use codex_core::plugins::PluginId;
+use codex_core_plugins::PluginId;
 use codex_core_plugins::loader::installed_plugin_telemetry_metadata;
 use codex_core_plugins::toggles::collect_plugin_enabled_candidates;
 use codex_features::canonical_feature_for_key;

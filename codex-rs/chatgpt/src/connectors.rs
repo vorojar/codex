@@ -16,7 +16,7 @@ pub use codex_core::connectors::list_accessible_connectors_from_mcp_tools_with_o
 pub use codex_core::connectors::list_accessible_connectors_from_mcp_tools_with_options_and_status;
 pub use codex_core::connectors::list_cached_accessible_connectors_from_mcp_tools;
 pub use codex_core::connectors::with_app_enabled_state;
-use codex_core::plugins::AppConnectorId;
+use codex_core_plugins::AppConnectorId;
 use codex_core_plugins::PluginsManager;
 use codex_login::AuthManager;
 use codex_login::CodexAuth;
@@ -135,7 +135,7 @@ fn all_connectors_cache_key(config: &Config, auth: &CodexAuth) -> AllConnectorsC
     )
 }
 
-async fn plugin_apps_for_config(config: &Config) -> Vec<codex_core::plugins::AppConnectorId> {
+async fn plugin_apps_for_config(config: &Config) -> Vec<AppConnectorId> {
     PluginsManager::new(config.codex_home.to_path_buf())
         .plugins_for_config(&config.config_layer_stack, config.plugin_feature_flags())
         .await
@@ -188,7 +188,6 @@ pub fn merge_connectors_with_accessible(
 mod tests {
     use super::*;
     use codex_connectors::metadata::connector_install_url;
-    use codex_core::plugins::AppConnectorId;
     use pretty_assertions::assert_eq;
 
     fn app(id: &str) -> AppInfo {

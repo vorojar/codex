@@ -71,6 +71,7 @@ use codex_hooks::HookEvent;
 use codex_hooks::HookEventAfterAgent;
 use codex_hooks::HookPayload;
 use codex_hooks::HookResult;
+use codex_plugin::PluginCapabilitySummary;
 use codex_protocol::config_types::ModeKind;
 use codex_protocol::error::CodexErr;
 use codex_protocol::error::Result as CodexResult;
@@ -275,7 +276,7 @@ pub(crate) async fn run_turn(
         build_plugin_injections(&mentioned_plugins, &mcp_tools, &available_connectors);
     let mentioned_plugin_metadata = mentioned_plugins
         .iter()
-        .filter_map(crate::plugins::PluginCapabilitySummary::telemetry_metadata)
+        .filter_map(PluginCapabilitySummary::telemetry_metadata)
         .collect::<Vec<_>>();
 
     let mut explicitly_enabled_connectors = collect_explicit_app_ids(&input);

@@ -2,7 +2,7 @@
 use crate::context::AvailablePluginsInstructions;
 #[cfg(test)]
 use crate::context::ContextualUserFragment;
-use crate::plugins::PluginCapabilitySummary;
+use codex_plugin::PluginCapabilitySummary;
 
 #[cfg(test)]
 pub(crate) fn render_plugins_section(plugins: &[PluginCapabilitySummary]) -> Option<String> {

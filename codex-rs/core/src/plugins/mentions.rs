@@ -12,8 +12,7 @@ use crate::injection::plugin_config_name_from_path;
 use crate::injection::tool_kind_for_path;
 use crate::mention_syntax::PLUGIN_TEXT_MENTION_SIGIL;
 use crate::mention_syntax::TOOL_MENTION_SIGIL;
-
-use super::PluginCapabilitySummary;
+use codex_plugin::PluginCapabilitySummary;
 
 pub(crate) struct CollectedToolMentions {
     pub(crate) plain_names: HashSet<String>,

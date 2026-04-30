@@ -4,7 +4,7 @@ use codex_app_server_protocol::AppInfo;
 use codex_app_server_protocol::AppSummary;
 use codex_chatgpt::connectors;
 use codex_core::config::Config;
-use codex_core::plugins::AppConnectorId;
+use codex_core_plugins::AppConnectorId;
 use codex_exec_server::EnvironmentManager;
 use tracing::warn;
 
@@ -113,7 +113,7 @@ pub(super) fn plugin_apps_needing_auth(
 #[cfg(test)]
 mod tests {
     use codex_app_server_protocol::AppInfo;
-    use codex_core::plugins::AppConnectorId;
+    use codex_core_plugins::AppConnectorId;
     use pretty_assertions::assert_eq;
 
     use super::plugin_apps_needing_auth;

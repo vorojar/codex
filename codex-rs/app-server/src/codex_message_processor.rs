@@ -6395,7 +6395,7 @@ impl CodexMessageProcessor {
                     .plugins_for_layer_stack(&config.config_layer_stack, plugin_feature_flags)
                     .await
             } else {
-                codex_core::plugins::PluginLoadOutcome::default()
+                codex_core_plugins::PluginLoadOutcome::default()
             };
             let hooks = codex_hooks::list_hooks(codex_hooks::HooksConfig {
                 feature_enabled: config.features.enabled(Feature::CodexHooks),

@@ -39,6 +39,8 @@ pub const TOOL_SUGGEST_DISCOVERABLE_PLUGIN_ALLOWLIST: &[&str] = &[
     "computer-use@openai-bundled",
 ];
 
+pub use codex_plugin::AppConnectorId;
+pub use codex_plugin::PluginId;
 pub use discoverable::list_tool_suggest_discoverable_plugins;
 pub use manager::ConfiguredMarketplace;
 pub use manager::ConfiguredMarketplaceListOutcome;
@@ -58,4 +60,4 @@ pub use manager::RemotePluginSyncResult;
 
 #[cfg(test)]
 pub(crate) type LoadedPlugin = codex_plugin::LoadedPlugin<McpServerConfig>;
-pub(crate) type PluginLoadOutcome = codex_plugin::PluginLoadOutcome<McpServerConfig>;
+pub type PluginLoadOutcome = codex_plugin::PluginLoadOutcome<McpServerConfig>;
