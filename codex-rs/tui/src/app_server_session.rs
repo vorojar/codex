@@ -376,7 +376,7 @@ impl AppServerSession {
             })
             .await
             .wrap_err("thread/start failed during TUI bootstrap")?;
-        started_thread_from_start_response(response, config, self.thread_params_mode()).await
+        started_thread_from_start_response(response, config).await
     }
 
     pub(crate) async fn resume_thread(
@@ -401,9 +401,7 @@ impl AppServerSession {
         let fork_parent_title = self
             .fork_parent_title_from_app_server(response.thread.forked_from_id.as_deref())
             .await;
-        let mut started =
-            started_thread_from_resume_response(response, &config, self.thread_params_mode())
-                .await?;
+        let mut started = started_thread_from_resume_response(response, &config).await?;
         started.session.fork_parent_title = fork_parent_title;
         Ok(started)
     }
@@ -430,8 +428,7 @@ impl AppServerSession {
         let fork_parent_title = self
             .fork_parent_title_from_app_server(response.thread.forked_from_id.as_deref())
             .await;
-        let mut started =
-            started_thread_from_fork_response(response, &config, self.thread_params_mode()).await?;
+        let mut started = started_thread_from_fork_response(response, &config).await?;
         started.session.fork_parent_title = fork_parent_title;
         Ok(started)
     }
@@ -1301,12 +1298,10 @@ fn thread_cwd_from_config(
 async fn started_thread_from_start_response(
     response: ThreadStartResponse,
     config: &Config,
-    thread_params_mode: ThreadParamsMode,
 ) -> Result<AppServerStartedThread> {
-    let session =
-        thread_session_state_from_thread_start_response(&response, config, thread_params_mode)
-            .await
-            .map_err(color_eyre::eyre::Report::msg)?;
+    let session = thread_session_state_from_thread_start_response(&response, config)
+        .await
+        .map_err(color_eyre::eyre::Report::msg)?;
     Ok(AppServerStartedThread {
         session,
         turns: response.thread.turns,
@@ -1316,12 +1311,10 @@ async fn started_thread_from_start_response(
 async fn started_thread_from_resume_response(
     response: ThreadResumeResponse,
     config: &Config,
-    thread_params_mode: ThreadParamsMode,
 ) -> Result<AppServerStartedThread> {
-    let session =
-        thread_session_state_from_thread_resume_response(&response, config, thread_params_mode)
-            .await
-            .map_err(color_eyre::eyre::Report::msg)?;
+    let session = thread_session_state_from_thread_resume_response(&response, config)
+        .await
+        .map_err(color_eyre::eyre::Report::msg)?;
     Ok(AppServerStartedThread {
         session,
         turns: response.thread.turns,
@@ -1331,12 +1324,10 @@ async fn started_thread_from_resume_response(
 async fn started_thread_from_fork_response(
     response: ThreadForkResponse,
     config: &Config,
-    thread_params_mode: ThreadParamsMode,
 ) -> Result<AppServerStartedThread> {
-    let session =
-        thread_session_state_from_thread_fork_response(&response, config, thread_params_mode)
-            .await
-            .map_err(color_eyre::eyre::Report::msg)?;
+    let session = thread_session_state_from_thread_fork_response(&response, config)
+        .await
+        .map_err(color_eyre::eyre::Report::msg)?;
     Ok(AppServerStartedThread {
         session,
         turns: response.thread.turns,
@@ -1346,15 +1337,9 @@ async fn started_thread_from_fork_response(
 async fn thread_session_state_from_thread_start_response(
     response: &ThreadStartResponse,
     config: &Config,
-    thread_params_mode: ThreadParamsMode,
 ) -> Result<ThreadSessionState, String> {
-    let permission_profile = permission_profile_from_thread_response(
-        &response.sandbox,
-        response.permission_profile.as_ref(),
-        response.cwd.as_path(),
-        config,
-        thread_params_mode,
-    );
+    let permission_profile =
+        permission_profile_from_thread_response(response.permission_profile.as_ref(), config);
     thread_session_state_from_thread_response(
         &response.thread.id,
         response.thread.forked_from_id.clone(),
@@ -1378,15 +1363,9 @@ async fn thread_session_state_from_thread_start_response(
 async fn thread_session_state_from_thread_resume_response(
     response: &ThreadResumeResponse,
     config: &Config,
-    thread_params_mode: ThreadParamsMode,
 ) -> Result<ThreadSessionState, String> {
-    let permission_profile = permission_profile_from_thread_response(
-        &response.sandbox,
-        response.permission_profile.as_ref(),
-        response.cwd.as_path(),
-        config,
-        thread_params_mode,
-    );
+    let permission_profile =
+        permission_profile_from_thread_response(response.permission_profile.as_ref(), config);
     thread_session_state_from_thread_response(
         &response.thread.id,
         response.thread.forked_from_id.clone(),
@@ -1410,15 +1389,9 @@ async fn thread_session_state_from_thread_resume_response(
 async fn thread_session_state_from_thread_fork_response(
     response: &ThreadForkResponse,
     config: &Config,
-    thread_params_mode: ThreadParamsMode,
 ) -> Result<ThreadSessionState, String> {
-    let permission_profile = permission_profile_from_thread_response(
-        &response.sandbox,
-        response.permission_profile.as_ref(),
-        response.cwd.as_path(),
-        config,
-        thread_params_mode,
-    );
+    let permission_profile =
+        permission_profile_from_thread_response(response.permission_profile.as_ref(), config);
     thread_session_state_from_thread_response(
         &response.thread.id,
         response.thread.forked_from_id.clone(),
@@ -1440,21 +1413,16 @@ async fn thread_session_state_from_thread_fork_response(
 }
 
 fn permission_profile_from_thread_response(
-    sandbox: &codex_app_server_protocol::SandboxPolicy,
     permission_profile: Option<&codex_app_server_protocol::PermissionProfile>,
-    cwd: &std::path::Path,
     config: &Config,
-    thread_params_mode: ThreadParamsMode,
 ) -> PermissionProfile {
     if let Some(permission_profile) = permission_profile {
         return permission_profile.clone().into();
     }
-    match thread_params_mode {
-        ThreadParamsMode::Embedded => config.permissions.permission_profile(),
-        ThreadParamsMode::Remote => {
-            PermissionProfile::from_legacy_sandbox_policy_for_cwd(&sandbox.to_core(), cwd)
-        }
-    }
+    // Current app-server responses include `permissionProfile`. If it is absent,
+    // keep the TUI on its configured profile rather than rebuilding a lossy
+    // profile from the legacy `sandbox` compatibility field.
+    config.permissions.permission_profile()
 }
 
 fn review_target_to_app_server(
@@ -1942,13 +1910,9 @@ mod tests {
             reasoning_effort: None,
         };
 
-        let started = started_thread_from_resume_response(
-            response.clone(),
-            &config,
-            ThreadParamsMode::Remote,
-        )
-        .await
-        .expect("resume response should map");
+        let started = started_thread_from_resume_response(response.clone(), &config)
+            .await
+            .expect("resume response should map");
         assert_eq!(started.session.forked_from_id, Some(forked_from_id));
         assert_eq!(
             started.session.instruction_source_paths,
@@ -1960,14 +1924,9 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn remote_thread_response_prefers_permission_profile_over_legacy_sandbox() {
+    async fn thread_response_prefers_permission_profile_when_present() {
         let temp_dir = tempfile::tempdir().expect("tempdir");
         let config = build_config(&temp_dir).await;
-        let cwd = test_path_buf("/tmp/project").abs();
-        let fallback_sandbox = PermissionProfile::read_only()
-            .to_legacy_sandbox_policy(cwd.as_path())
-            .expect("read-only profile must be legacy-compatible")
-            .into();
         let split_profile = PermissionProfile::Managed {
             file_system: ManagedFileSystemPermissions::Restricted {
                 entries: vec![
@@ -1993,33 +1952,19 @@ mod tests {
         let response_profile = split_profile.clone().into();
 
         assert_eq!(
-            permission_profile_from_thread_response(
-                &fallback_sandbox,
-                Some(&response_profile),
-                cwd.as_path(),
-                &config,
-                ThreadParamsMode::Remote,
-            ),
+            permission_profile_from_thread_response(Some(&response_profile), &config),
             split_profile
         );
     }
 
     #[tokio::test]
-    async fn embedded_thread_response_prefers_permission_profile_when_present() {
+    async fn thread_response_uses_config_profile_when_response_omits_profile() {
         let temp_dir = tempfile::tempdir().expect("tempdir");
         let config = build_config(&temp_dir).await;
-        let cwd = test_path_buf("/tmp/project").abs();
-        let response_profile = PermissionProfile::read_only().into();
 
         assert_eq!(
-            permission_profile_from_thread_response(
-                &codex_app_server_protocol::SandboxPolicy::DangerFullAccess,
-                Some(&response_profile),
-                cwd.as_path(),
-                &config,
-                ThreadParamsMode::Embedded,
-            ),
-            PermissionProfile::read_only()
+            permission_profile_from_thread_response(None, &config),
+            config.permissions.permission_profile()
         );
     }
 
