@@ -866,6 +866,37 @@ async fn powershell_outer_allow_does_not_override_unmatched_wrapper_prompt() {
     .await;
 }
 
+#[cfg(windows)]
+#[tokio::test]
+async fn powershell_outer_allow_still_allows_inner_prefix_rule_suggestion() {
+    assert_exec_approval_requirement_for_command(
+        ExecApprovalRequirementScenario {
+            policy_src: Some(
+                r#"prefix_rule(pattern=["powershell.exe"], decision="allow")"#.to_string(),
+            ),
+            command: vec_str(&[
+                "powershell.exe",
+                "-WindowStyle",
+                "Hidden",
+                "-Command",
+                "Get-Content Cargo.toml",
+            ]),
+            approval_policy: AskForApproval::OnRequest,
+            sandbox_policy: SandboxPolicy::new_read_only_policy(),
+            file_system_sandbox_policy: read_only_file_system_sandbox_policy(),
+            sandbox_permissions: SandboxPermissions::UseDefault,
+            prefix_rule: Some(vec_str(&["Get-Content"])),
+        },
+        ExecApprovalRequirement::NeedsApproval {
+            reason: None,
+            proposed_execpolicy_amendment: Some(ExecPolicyAmendment::new(vec_str(&[
+                "Get-Content",
+            ]))),
+        },
+    )
+    .await;
+}
+
 #[test]
 fn commands_for_exec_policy_falls_back_for_empty_shell_script() {
     let command = vec!["bash".to_string(), "-lc".to_string(), "".to_string()];

@@ -801,7 +801,10 @@ fn try_derive_execpolicy_amendment_for_prompt_rules(
 fn try_derive_execpolicy_amendment_for_allow_rules(
     matched_rules: &[RuleMatch],
 ) -> Option<ExecPolicyAmendment> {
-    if matched_rules.iter().any(is_policy_match) {
+    if matched_rules
+        .iter()
+        .any(|rule_match| is_policy_match(rule_match) && rule_match.decision() != Decision::Allow)
+    {
         return None;
     }
 
@@ -843,7 +846,14 @@ fn derive_requested_execpolicy_amendment_from_prefix_rule(
     }
 
     // if any policy rule already matches, don't suggest an additional rule that might conflict or not apply
-    if matched_rules.iter().any(is_policy_match) {
+    // PowerShell evaluation can combine outer wrapper matches with unmatched
+    // inner commands. Existing explicit allow rules should not suppress a
+    // requested inner-command prefix rule that would resolve the remaining
+    // prompt, but explicit prompt/forbidden matches still should.
+    if matched_rules
+        .iter()
+        .any(|rule_match| is_policy_match(rule_match) && rule_match.decision() != Decision::Allow)
+    {
         return None;
     }
 
