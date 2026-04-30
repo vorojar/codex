@@ -160,10 +160,6 @@ use std::time::Duration as StdDuration;
 
 mod guardian_tests;
 
-fn permission_profile_for_sandbox_policy(sandbox_policy: &SandboxPolicy) -> PermissionProfile {
-    PermissionProfile::from_legacy_sandbox_policy(sandbox_policy)
-}
-
 struct InstructionsTestCase {
     slug: &'static str,
     expects_apply_patch_description: bool,
@@ -613,10 +609,11 @@ fn validated_network_policy_amendment_host_rejects_mismatch() {
 
 #[tokio::test]
 async fn start_managed_network_proxy_applies_execpolicy_network_rules() -> anyhow::Result<()> {
+    let permission_profile = PermissionProfile::workspace_write();
     let spec = crate::config::NetworkProxySpec::from_config_and_constraints(
         NetworkProxyConfig::default(),
         /*requirements*/ None,
-        &permission_profile_for_sandbox_policy(&SandboxPolicy::new_workspace_write_policy()),
+        &permission_profile,
     )?;
     let mut exec_policy = Policy::empty();
     exec_policy.add_network_rule(
@@ -629,7 +626,7 @@ async fn start_managed_network_proxy_applies_execpolicy_network_rules() -> anyho
     let (started_proxy, _) = Session::start_managed_network_proxy(
         &spec,
         &exec_policy,
-        &permission_profile_for_sandbox_policy(&SandboxPolicy::new_workspace_write_policy()),
+        &permission_profile,
         /*network_policy_decider*/ None,
         /*blocked_request_observer*/ None,
         /*managed_network_requirements_enabled*/ false,
@@ -648,6 +645,7 @@ async fn start_managed_network_proxy_applies_execpolicy_network_rules() -> anyho
 #[tokio::test]
 async fn start_managed_network_proxy_ignores_invalid_execpolicy_network_rules() -> anyhow::Result<()>
 {
+    let permission_profile = PermissionProfile::workspace_write();
     let spec = crate::config::NetworkProxySpec::from_config_and_constraints(
         NetworkProxyConfig::default(),
         Some(NetworkConstraints {
@@ -660,7 +658,7 @@ async fn start_managed_network_proxy_ignores_invalid_execpolicy_network_rules() 
             managed_allowed_domains_only: Some(true),
             ..Default::default()
         }),
-        &permission_profile_for_sandbox_policy(&SandboxPolicy::new_workspace_write_policy()),
+        &permission_profile,
     )?;
     let mut exec_policy = Policy::empty();
     exec_policy.add_network_rule(
@@ -673,7 +671,7 @@ async fn start_managed_network_proxy_ignores_invalid_execpolicy_network_rules() 
     let (started_proxy, _) = Session::start_managed_network_proxy(
         &spec,
         &exec_policy,
-        &permission_profile_for_sandbox_policy(&SandboxPolicy::new_workspace_write_policy()),
+        &permission_profile,
         /*network_policy_decider*/ None,
         /*blocked_request_observer*/ None,
         /*managed_network_requirements_enabled*/ false,
@@ -691,13 +689,15 @@ async fn start_managed_network_proxy_ignores_invalid_execpolicy_network_rules() 
 
 #[tokio::test]
 async fn managed_network_proxy_decider_survives_full_access_start() -> anyhow::Result<()> {
+    let disabled_permission_profile = PermissionProfile::Disabled;
+    let workspace_permission_profile = PermissionProfile::workspace_write();
     let spec = crate::config::NetworkProxySpec::from_config_and_constraints(
         NetworkProxyConfig::default(),
         Some(NetworkConstraints {
             enabled: Some(true),
             ..Default::default()
         }),
-        &permission_profile_for_sandbox_policy(&SandboxPolicy::DangerFullAccess),
+        &disabled_permission_profile,
     )?;
     let exec_policy = Policy::empty();
     let decider_calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
@@ -712,7 +712,7 @@ async fn managed_network_proxy_decider_survives_full_access_start() -> anyhow::R
     let (started_proxy, _) = Session::start_managed_network_proxy(
         &spec,
         &exec_policy,
-        &permission_profile_for_sandbox_policy(&SandboxPolicy::DangerFullAccess),
+        &disabled_permission_profile,
         Some(network_policy_decider),
         /*blocked_request_observer*/ None,
         /*managed_network_requirements_enabled*/ true,
@@ -720,9 +720,7 @@ async fn managed_network_proxy_decider_survives_full_access_start() -> anyhow::R
     )
     .await?;
 
-    let spec = spec.recompute_for_permission_profile(&permission_profile_for_sandbox_policy(
-        &SandboxPolicy::new_workspace_write_policy(),
-    ))?;
+    let spec = spec.recompute_for_permission_profile(&workspace_permission_profile)?;
     spec.apply_to_started_proxy(&started_proxy).await?;
     let current_cfg = started_proxy.proxy().current_cfg().await?;
     assert_eq!(current_cfg.network.allowed_domains(), None);
@@ -762,6 +760,7 @@ async fn managed_network_proxy_decider_survives_full_access_start() -> anyhow::R
 async fn new_turn_refreshes_managed_network_proxy_for_sandbox_change() -> anyhow::Result<()> {
     let (mut session, _turn_context) = make_session_and_context().await;
     let initial_policy = SandboxPolicy::new_workspace_write_policy();
+    let initial_permission_profile = PermissionProfile::workspace_write();
 
     let mut network_config = NetworkProxyConfig::default();
     network_config
@@ -779,12 +778,12 @@ async fn new_turn_refreshes_managed_network_proxy_for_sandbox_change() -> anyhow
     let spec = crate::config::NetworkProxySpec::from_config_and_constraints(
         network_config,
         Some(requirements),
-        &permission_profile_for_sandbox_policy(&initial_policy),
+        &initial_permission_profile,
     )?;
     let (started_proxy, _) = Session::start_managed_network_proxy(
         &spec,
         &Policy::empty(),
-        &permission_profile_for_sandbox_policy(&initial_policy),
+        &initial_permission_profile,
         /*network_policy_decider*/ None,
         /*blocked_request_observer*/ None,
         /*managed_network_requirements_enabled*/ false,
@@ -814,9 +813,7 @@ async fn new_turn_refreshes_managed_network_proxy_for_sandbox_change() -> anyhow
         state
             .session_configuration
             .permission_profile
-            .set(PermissionProfile::from_legacy_sandbox_policy(
-                &initial_policy,
-            ))
+            .set(initial_permission_profile)
             .expect("test setup should allow permission profile");
     }
     session.services.network_proxy = Some(started_proxy);
@@ -857,7 +854,7 @@ async fn danger_full_access_turns_do_not_expose_managed_network_proxy() -> anyho
             enabled: Some(true),
             ..Default::default()
         }),
-        &permission_profile_for_sandbox_policy(&SandboxPolicy::DangerFullAccess),
+        &PermissionProfile::Disabled,
     )?;
 
     let session = make_session_with_config(move |config| {
@@ -923,7 +920,7 @@ async fn danger_full_access_tool_attempts_do_not_enforce_managed_network() -> an
             enabled: Some(true),
             ..Default::default()
         }),
-        &permission_profile_for_sandbox_policy(&SandboxPolicy::DangerFullAccess),
+        &PermissionProfile::Disabled,
     )?;
 
     let session = make_session_with_config(move |config| {
@@ -998,7 +995,7 @@ async fn workspace_write_turns_continue_to_expose_managed_network_proxy() -> any
             enabled: Some(true),
             ..Default::default()
         }),
-        &permission_profile_for_sandbox_policy(&sandbox_policy),
+        &PermissionProfile::workspace_write(),
     )?;
 
     let session = make_session_with_config(move |config| {
@@ -1025,7 +1022,7 @@ async fn user_shell_commands_do_not_inherit_managed_network_proxy() -> anyhow::R
             enabled: Some(true),
             ..Default::default()
         }),
-        &permission_profile_for_sandbox_policy(&sandbox_policy),
+        &PermissionProfile::workspace_write(),
     )?;
 
     let (session, rx) = make_session_with_config_and_rx(move |config| {
