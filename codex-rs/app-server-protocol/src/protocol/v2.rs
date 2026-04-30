@@ -30,6 +30,7 @@ use codex_protocol::config_types::Verbosity;
 use codex_protocol::config_types::WebSearchMode;
 use codex_protocol::config_types::WebSearchToolConfig;
 use codex_protocol::items::AgentMessageContent as CoreAgentMessageContent;
+use codex_protocol::items::FileChangeStatus as CoreFileChangeStatus;
 use codex_protocol::items::TurnItem as CoreTurnItem;
 use codex_protocol::mcp::CallToolResult as CoreMcpCallToolResult;
 use codex_protocol::mcp::Resource as McpResource;
@@ -6412,6 +6413,13 @@ impl From<CoreTurnItem> for ThreadItem {
                 summary: reasoning.summary_text,
                 content: reasoning.raw_content,
             },
+            CoreTurnItem::FileChange(file_change) => ThreadItem::FileChange {
+                id: file_change.id,
+                changes: crate::protocol::item_builders::convert_patch_changes(
+                    &file_change.changes,
+                ),
+                status: PatchApplyStatus::from(file_change.status),
+            },
             CoreTurnItem::WebSearch(search) => ThreadItem::WebSearch {
                 id: search.id,
                 query: search.query,
@@ -6529,6 +6537,17 @@ impl From<&CorePatchApplyStatus> for PatchApplyStatus {
             CorePatchApplyStatus::Completed => PatchApplyStatus::Completed,
             CorePatchApplyStatus::Failed => PatchApplyStatus::Failed,
             CorePatchApplyStatus::Declined => PatchApplyStatus::Declined,
+        }
+    }
+}
+
+impl From<CoreFileChangeStatus> for PatchApplyStatus {
+    fn from(value: CoreFileChangeStatus) -> Self {
+        match value {
+            CoreFileChangeStatus::InProgress => PatchApplyStatus::InProgress,
+            CoreFileChangeStatus::Completed => PatchApplyStatus::Completed,
+            CoreFileChangeStatus::Failed => PatchApplyStatus::Failed,
+            CoreFileChangeStatus::Declined => PatchApplyStatus::Declined,
         }
     }
 }
@@ -8033,11 +8052,14 @@ mod tests {
     use super::*;
     use codex_protocol::items::AgentMessageContent;
     use codex_protocol::items::AgentMessageItem;
+    use codex_protocol::items::FileChangeItem;
+    use codex_protocol::items::FileChangeStatus;
     use codex_protocol::items::ReasoningItem;
     use codex_protocol::items::TurnItem;
     use codex_protocol::items::UserMessageItem;
     use codex_protocol::items::WebSearchItem;
     use codex_protocol::models::WebSearchAction as CoreWebSearchAction;
+    use codex_protocol::protocol::FileChange;
     use codex_protocol::protocol::NetworkAccess as CoreNetworkAccess;
     use codex_protocol::user_input::UserInput as CoreUserInput;
     use codex_utils_absolute_path::test_support::PathBufExt;
@@ -10290,6 +10312,48 @@ mod tests {
                 id: "reasoning-1".to_string(),
                 summary: vec!["line one".to_string(), "line two".to_string()],
                 content: vec![],
+            }
+        );
+
+        let file_change_item = TurnItem::FileChange(FileChangeItem {
+            id: "patch-1".to_string(),
+            changes: HashMap::from([
+                (
+                    PathBuf::from("z.txt"),
+                    FileChange::Delete {
+                        content: "bye".to_string(),
+                    },
+                ),
+                (
+                    PathBuf::from("a.txt"),
+                    FileChange::Add {
+                        content: "hello".to_string(),
+                    },
+                ),
+            ]),
+            status: FileChangeStatus::Completed,
+            stdout: Some("Success.".to_string()),
+            stderr: Some(String::new()),
+            success: Some(true),
+        });
+
+        assert_eq!(
+            ThreadItem::from(file_change_item),
+            ThreadItem::FileChange {
+                id: "patch-1".to_string(),
+                changes: vec![
+                    FileUpdateChange {
+                        path: "a.txt".to_string(),
+                        kind: PatchChangeKind::Add,
+                        diff: "hello".to_string(),
+                    },
+                    FileUpdateChange {
+                        path: "z.txt".to_string(),
+                        kind: PatchChangeKind::Delete,
+                        diff: "bye".to_string(),
+                    },
+                ],
+                status: PatchApplyStatus::Completed,
             }
         );
 

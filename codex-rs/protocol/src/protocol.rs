@@ -1862,6 +1862,10 @@ impl HasLegacyEvent for ItemStartedEvent {
                     call_id: item.id.clone(),
                 })]
             }
+            TurnItem::FileChange(item) => item
+                .as_legacy_begin_event(self.turn_id.clone())
+                .into_iter()
+                .collect(),
             _ => Vec::new(),
         }
     }
@@ -1880,7 +1884,13 @@ pub trait HasLegacyEvent {
 
 impl HasLegacyEvent for ItemCompletedEvent {
     fn as_legacy_events(&self, show_raw_agent_reasoning: bool) -> Vec<EventMsg> {
-        self.item.as_legacy_events(show_raw_agent_reasoning)
+        match &self.item {
+            TurnItem::FileChange(item) => item
+                .as_legacy_end_event(self.turn_id.clone())
+                .into_iter()
+                .collect(),
+            _ => self.item.as_legacy_events(show_raw_agent_reasoning),
+        }
     }
 }
 

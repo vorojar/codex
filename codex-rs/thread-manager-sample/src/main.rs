@@ -309,7 +309,6 @@ async fn run_turn(thread: &CodexThread, thread_id: &str, prompt: String) -> anyh
             | EventMsg::AgentReasoningSectionBreak(_)
             | EventMsg::ItemStarted(_)
             | EventMsg::ItemCompleted(_)
-            | EventMsg::PatchApplyBegin(_)
             | EventMsg::PatchApplyUpdated(_)
             | EventMsg::TerminalInteraction(_)
             | EventMsg::ExecCommandBegin(_)

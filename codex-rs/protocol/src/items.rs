@@ -8,7 +8,11 @@ use crate::protocol::AgentReasoningEvent;
 use crate::protocol::AgentReasoningRawContentEvent;
 use crate::protocol::ContextCompactedEvent;
 use crate::protocol::EventMsg;
+use crate::protocol::FileChange;
 use crate::protocol::ImageGenerationEndEvent;
+use crate::protocol::PatchApplyBeginEvent;
+use crate::protocol::PatchApplyEndEvent;
+use crate::protocol::PatchApplyStatus;
 use crate::protocol::UserMessageEvent;
 use crate::protocol::WebSearchEndEvent;
 use crate::user_input::ByteRange;
@@ -20,6 +24,8 @@ use quick_xml::se::to_string as to_xml_string;
 use schemars::JsonSchema;
 use serde::Deserialize;
 use serde::Serialize;
+use std::collections::HashMap;
+use std::path::PathBuf;
 use ts_rs::TS;
 
 #[derive(Debug, Clone, Deserialize, Serialize, TS, JsonSchema)]
@@ -31,6 +37,7 @@ pub enum TurnItem {
     AgentMessage(AgentMessageItem),
     Plan(PlanItem),
     Reasoning(ReasoningItem),
+    FileChange(FileChangeItem),
     WebSearch(WebSearchItem),
     ImageGeneration(ImageGenerationItem),
     ContextCompaction(ContextCompactionItem),
@@ -105,6 +112,41 @@ pub struct ReasoningItem {
     pub summary_text: Vec<String>,
     #[serde(default)]
     pub raw_content: Vec<String>,
+}
+
+#[derive(Debug, Clone, Copy, Deserialize, Serialize, TS, JsonSchema, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum FileChangeStatus {
+    InProgress,
+    Completed,
+    Failed,
+    Declined,
+}
+
+impl From<PatchApplyStatus> for FileChangeStatus {
+    fn from(value: PatchApplyStatus) -> Self {
+        match value {
+            PatchApplyStatus::Completed => FileChangeStatus::Completed,
+            PatchApplyStatus::Failed => FileChangeStatus::Failed,
+            PatchApplyStatus::Declined => FileChangeStatus::Declined,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, TS, JsonSchema, PartialEq)]
+pub struct FileChangeItem {
+    pub id: String,
+    pub changes: HashMap<PathBuf, FileChange>,
+    pub status: FileChangeStatus,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub stdout: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub stderr: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub success: Option<bool>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, TS, JsonSchema, PartialEq)]
@@ -389,6 +431,7 @@ impl TurnItem {
             TurnItem::AgentMessage(item) => item.id.clone(),
             TurnItem::Plan(item) => item.id.clone(),
             TurnItem::Reasoning(item) => item.id.clone(),
+            TurnItem::FileChange(item) => item.id.clone(),
             TurnItem::WebSearch(item) => item.id.clone(),
             TurnItem::ImageGeneration(item) => item.id.clone(),
             TurnItem::ContextCompaction(item) => item.id.clone(),
@@ -401,11 +444,47 @@ impl TurnItem {
             TurnItem::HookPrompt(_) => Vec::new(),
             TurnItem::AgentMessage(item) => item.as_legacy_events(),
             TurnItem::Plan(_) => Vec::new(),
+            TurnItem::FileChange(_) => Vec::new(),
             TurnItem::WebSearch(item) => vec![item.as_legacy_event()],
             TurnItem::ImageGeneration(item) => vec![item.as_legacy_event()],
             TurnItem::Reasoning(item) => item.as_legacy_events(show_raw_agent_reasoning),
             TurnItem::ContextCompaction(item) => vec![item.as_legacy_event()],
         }
+    }
+}
+
+impl FileChangeItem {
+    pub fn as_legacy_begin_event(&self, turn_id: String) -> Option<EventMsg> {
+        if self.status != FileChangeStatus::InProgress {
+            return None;
+        }
+
+        Some(EventMsg::PatchApplyBegin(PatchApplyBeginEvent {
+            call_id: self.id.clone(),
+            turn_id,
+            auto_approved: false,
+            changes: self.changes.clone(),
+        }))
+    }
+
+    pub fn as_legacy_end_event(&self, turn_id: String) -> Option<EventMsg> {
+        let status = match self.status {
+            FileChangeStatus::InProgress => return None,
+            FileChangeStatus::Completed => PatchApplyStatus::Completed,
+            FileChangeStatus::Failed => PatchApplyStatus::Failed,
+            FileChangeStatus::Declined => PatchApplyStatus::Declined,
+        };
+        Some(EventMsg::PatchApplyEnd(PatchApplyEndEvent {
+            call_id: self.id.clone(),
+            turn_id,
+            stdout: self.stdout.clone().unwrap_or_default(),
+            stderr: self.stderr.clone().unwrap_or_default(),
+            success: self
+                .success
+                .unwrap_or(matches!(self.status, FileChangeStatus::Completed)),
+            changes: self.changes.clone(),
+            status,
+        }))
     }
 }
 

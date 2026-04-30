@@ -2197,8 +2197,8 @@ async fn turn_start_file_change_approval_v2() -> Result<()> {
     )
     .await?;
     let mut saw_resolved = false;
-    let mut completed_file_change: Option<ThreadItem> = None;
-    while completed_file_change.is_none() {
+    let mut completed_file_changes = Vec::new();
+    loop {
         let message = timeout(DEFAULT_READ_TIMEOUT, mcp.read_next_message()).await??;
         let JSONRPCMessage::Notification(notification) = message else {
             continue;
@@ -2221,14 +2221,21 @@ async fn turn_start_file_change_approval_v2() -> Result<()> {
                 )?;
                 if let ThreadItem::FileChange { .. } = completed.item {
                     assert!(saw_resolved, "serverRequest/resolved should arrive first");
-                    completed_file_change = Some(completed.item);
+                    completed_file_changes.push(completed.item);
                 }
             }
+            "turn/completed" => break,
             _ => {}
         }
     }
-    let completed_file_change =
-        completed_file_change.expect("file change completion should be observed");
+    assert_eq!(
+        completed_file_changes.len(),
+        1,
+        "file change should complete exactly once"
+    );
+    let completed_file_change = completed_file_changes
+        .pop()
+        .expect("file change completion should be observed");
     let ThreadItem::FileChange { ref id, status, .. } = completed_file_change else {
         unreachable!("loop ensures we break on file change items");
     };
@@ -2237,12 +2244,6 @@ async fn turn_start_file_change_approval_v2() -> Result<()> {
 
     let readme_contents = std::fs::read_to_string(expected_readme_path)?;
     assert_eq!(readme_contents, "new line\n");
-
-    timeout(
-        DEFAULT_READ_TIMEOUT,
-        mcp.read_stream_until_notification_message("turn/completed"),
-    )
-    .await??;
 
     Ok(())
 }

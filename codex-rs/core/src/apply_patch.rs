@@ -26,7 +26,6 @@ pub(crate) enum InternalApplyPatchInvocation {
 #[derive(Debug)]
 pub(crate) struct ApplyPatchRuntimeInvocation {
     pub(crate) action: ApplyPatchAction,
-    pub(crate) auto_approved: bool,
     pub(crate) exec_approval_requirement: ExecApprovalRequirement,
 }
 
@@ -43,24 +42,21 @@ pub(crate) async fn apply_patch(
         &turn_context.cwd,
         turn_context.windows_sandbox_level,
     ) {
-        SafetyCheck::AutoApprove {
-            user_explicitly_approved,
-            ..
-        } => InternalApplyPatchInvocation::DelegateToRuntime(ApplyPatchRuntimeInvocation {
-            action,
-            auto_approved: !user_explicitly_approved,
-            exec_approval_requirement: ExecApprovalRequirement::Skip {
-                bypass_sandbox: false,
-                proposed_execpolicy_amendment: None,
-            },
-        }),
+        SafetyCheck::AutoApprove { .. } => {
+            InternalApplyPatchInvocation::DelegateToRuntime(ApplyPatchRuntimeInvocation {
+                action,
+                exec_approval_requirement: ExecApprovalRequirement::Skip {
+                    bypass_sandbox: false,
+                    proposed_execpolicy_amendment: None,
+                },
+            })
+        }
         SafetyCheck::AskUser => {
             // Delegate the approval prompt (including cached approvals) to the
             // tool runtime, consistent with how shell/unified_exec approvals
             // are orchestrator-driven.
             InternalApplyPatchInvocation::DelegateToRuntime(ApplyPatchRuntimeInvocation {
                 action,
-                auto_approved: false,
                 exec_approval_requirement: ExecApprovalRequirement::NeedsApproval {
                     reason: None,
                     proposed_execpolicy_amendment: None,

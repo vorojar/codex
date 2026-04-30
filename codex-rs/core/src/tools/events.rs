@@ -6,6 +6,9 @@ use crate::tools::sandboxing::ToolError;
 use codex_protocol::error::CodexErr;
 use codex_protocol::error::SandboxErr;
 use codex_protocol::exec_output::ExecToolCallOutput;
+use codex_protocol::items::FileChangeItem;
+use codex_protocol::items::FileChangeStatus;
+use codex_protocol::items::TurnItem;
 use codex_protocol::parse_command::ParsedCommand;
 use codex_protocol::protocol::EventMsg;
 use codex_protocol::protocol::ExecCommandBeginEvent;
@@ -13,8 +16,6 @@ use codex_protocol::protocol::ExecCommandEndEvent;
 use codex_protocol::protocol::ExecCommandSource;
 use codex_protocol::protocol::ExecCommandStatus;
 use codex_protocol::protocol::FileChange;
-use codex_protocol::protocol::PatchApplyBeginEvent;
-use codex_protocol::protocol::PatchApplyEndEvent;
 use codex_protocol::protocol::PatchApplyStatus;
 use codex_protocol::protocol::TurnDiffEvent;
 use codex_shell_command::parse_command::parse_command;
@@ -97,7 +98,6 @@ pub(crate) enum ToolEmitter {
     },
     ApplyPatch {
         changes: HashMap<PathBuf, FileChange>,
-        auto_approved: bool,
     },
     UnifiedExec {
         command: Vec<String>,
@@ -125,11 +125,8 @@ impl ToolEmitter {
         }
     }
 
-    pub fn apply_patch(changes: HashMap<PathBuf, FileChange>, auto_approved: bool) -> Self {
-        Self::ApplyPatch {
-            changes,
-            auto_approved,
-        }
+    pub fn apply_patch(changes: HashMap<PathBuf, FileChange>) -> Self {
+        Self::ApplyPatch { changes }
     }
 
     pub fn unified_exec(
@@ -171,28 +168,20 @@ impl ToolEmitter {
                 .await;
             }
 
-            (
-                Self::ApplyPatch {
-                    changes,
-                    auto_approved,
-                },
-                ToolEventStage::Begin,
-            ) => {
+            (Self::ApplyPatch { changes, .. }, ToolEventStage::Begin) => {
                 if let Some(tracker) = ctx.turn_diff_tracker {
                     let mut guard = tracker.lock().await;
                     guard.on_patch_begin(changes);
                 }
-                ctx.session
-                    .send_event(
-                        ctx.turn,
-                        EventMsg::PatchApplyBegin(PatchApplyBeginEvent {
-                            call_id: ctx.call_id.to_string(),
-                            turn_id: ctx.turn.sub_id.clone(),
-                            auto_approved: *auto_approved,
-                            changes: changes.clone(),
-                        }),
-                    )
-                    .await;
+                let item = TurnItem::FileChange(FileChangeItem {
+                    id: ctx.call_id.to_string(),
+                    changes: changes.clone(),
+                    status: FileChangeStatus::InProgress,
+                    stdout: None,
+                    stderr: None,
+                    success: None,
+                });
+                ctx.session.emit_turn_item_started(ctx.turn, &item).await;
             }
             (Self::ApplyPatch { changes, .. }, ToolEventStage::Success(output)) => {
                 emit_patch_end(
@@ -499,20 +488,15 @@ async fn emit_patch_end(
     success: bool,
     status: PatchApplyStatus,
 ) {
-    ctx.session
-        .send_event(
-            ctx.turn,
-            EventMsg::PatchApplyEnd(PatchApplyEndEvent {
-                call_id: ctx.call_id.to_string(),
-                turn_id: ctx.turn.sub_id.clone(),
-                stdout,
-                stderr,
-                success,
-                changes,
-                status,
-            }),
-        )
-        .await;
+    let item = TurnItem::FileChange(FileChangeItem {
+        id: ctx.call_id.to_string(),
+        changes: changes.clone(),
+        status: status.clone().into(),
+        stdout: Some(stdout),
+        stderr: Some(stderr),
+        success: Some(success),
+    });
+    ctx.session.emit_turn_item_completed(ctx.turn, item).await;
 
     if let Some(tracker) = ctx.turn_diff_tracker {
         let unified_diff = {

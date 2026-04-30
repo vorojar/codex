@@ -18,7 +18,6 @@ use codex_protocol::protocol::ExecCommandSource;
 use codex_protocol::protocol::ExecCommandStatus;
 use codex_protocol::protocol::McpToolCallBeginEvent;
 use codex_protocol::protocol::McpToolCallEndEvent;
-use codex_protocol::protocol::PatchApplyBeginEvent;
 use codex_protocol::protocol::PatchApplyEndEvent;
 use codex_protocol::protocol::PatchApplyStatus;
 use codex_protocol::protocol::TurnAbortReason;
@@ -98,7 +97,6 @@ pub(crate) enum ToolRuntimeTraceEvent<'a> {
 pub(crate) enum ToolRuntimePayload<'a> {
     ExecCommandBegin(&'a ExecCommandBeginEvent),
     ExecCommandEnd(&'a ExecCommandEndEvent),
-    PatchApplyBegin(&'a PatchApplyBeginEvent),
     PatchApplyEnd(&'a PatchApplyEndEvent),
     McpToolCallBegin(&'a McpToolCallBeginEvent),
     McpToolCallEnd(&'a McpToolCallEndEvent),
@@ -120,7 +118,6 @@ impl Serialize for ToolRuntimePayload<'_> {
         match self {
             ToolRuntimePayload::ExecCommandBegin(event) => event.serialize(serializer),
             ToolRuntimePayload::ExecCommandEnd(event) => event.serialize(serializer),
-            ToolRuntimePayload::PatchApplyBegin(event) => event.serialize(serializer),
             ToolRuntimePayload::PatchApplyEnd(event) => event.serialize(serializer),
             ToolRuntimePayload::McpToolCallBegin(event) => event.serialize(serializer),
             ToolRuntimePayload::McpToolCallEnd(event) => event.serialize(serializer),
@@ -151,10 +148,6 @@ pub(crate) fn tool_runtime_trace_event(event: &EventMsg) -> Option<ToolRuntimeTr
                 payload: ToolRuntimePayload::ExecCommandEnd(event),
             })
         }
-        EventMsg::PatchApplyBegin(event) => Some(ToolRuntimeTraceEvent::Started {
-            tool_call_id: &event.call_id,
-            payload: ToolRuntimePayload::PatchApplyBegin(event),
-        }),
         EventMsg::PatchApplyEnd(event) => Some(ToolRuntimeTraceEvent::Ended {
             tool_call_id: &event.call_id,
             status: event.status.trace_execution_status(),
@@ -264,6 +257,7 @@ pub(crate) fn tool_runtime_trace_event(event: &EventMsg) -> Option<ToolRuntimeTr
         | EventMsg::UndoStarted(_)
         | EventMsg::UndoCompleted(_)
         | EventMsg::StreamError(_)
+        | EventMsg::PatchApplyBegin(_)
         | EventMsg::PatchApplyUpdated(_)
         | EventMsg::TurnDiff(_)
         | EventMsg::GetHistoryEntryResponse(_)
