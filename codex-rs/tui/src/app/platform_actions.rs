@@ -21,10 +21,10 @@ impl App {
         permission_profile: PermissionProfile,
         tx: AppEventSender,
     ) {
-        let Ok(sandbox_policy) = permission_profile.to_legacy_sandbox_policy(cwd.as_path()) else {
-            send_world_writable_scan_failed(&tx);
-            return;
-        };
+        let sandbox_policy = crate::permission_compat::legacy_compatible_sandbox_policy(
+            &permission_profile,
+            cwd.as_path(),
+        );
 
         tokio::task::spawn_blocking(move || {
             let logs_base_dir_path = logs_base_dir.as_path();

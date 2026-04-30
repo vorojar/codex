@@ -24,7 +24,7 @@ use codex_protocol::user_input::UserInput;
 use serde::Serialize;
 use serde_json::Value;
 
-use crate::permission_compat::legacy_compatible_permission_profile;
+use crate::permission_compat::legacy_compatible_sandbox_policy;
 
 #[allow(clippy::large_enum_variant)]
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -371,15 +371,8 @@ impl AppCommand {
                 collaboration_mode,
                 personality,
             } => {
-                let legacy_profile =
-                    legacy_compatible_permission_profile(&permission_profile, cwd.as_path());
-                let sandbox_policy = legacy_profile
-                    .to_legacy_sandbox_policy(cwd.as_path())
-                    .unwrap_or_else(|err| {
-                        unreachable!(
-                            "legacy-compatible permissions must project to legacy policy: {err}"
-                        )
-                    });
+                let sandbox_policy =
+                    legacy_compatible_sandbox_policy(&permission_profile, cwd.as_path());
                 Op::UserTurn {
                     items,
                     environments: None,
@@ -613,9 +606,8 @@ impl From<Op> for AppCommand {
                 personality,
             } => {
                 if environments.is_none()
-                    && legacy_compatible_permission_profile(&permission_profile, cwd.as_path())
-                        .to_legacy_sandbox_policy(cwd.as_path())
-                        .is_ok_and(|compatible_policy| compatible_policy == sandbox_policy)
+                    && legacy_compatible_sandbox_policy(&permission_profile, cwd.as_path())
+                        == sandbox_policy
                 {
                     Self::UserTurn {
                         items,

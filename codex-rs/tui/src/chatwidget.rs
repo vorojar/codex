@@ -9682,14 +9682,11 @@ impl ChatWidget {
         }
         let cwd = self.config.cwd.clone();
         let env_map: std::collections::HashMap<String, String> = std::env::vars().collect();
-        let Ok(policy) = self
-            .config
-            .permissions
-            .permission_profile()
-            .to_legacy_sandbox_policy(self.config.cwd.as_path())
-        else {
-            return Some((Vec::new(), 0, true));
-        };
+        let permission_profile = self.config.permissions.permission_profile();
+        let policy = crate::permission_compat::legacy_compatible_sandbox_policy(
+            &permission_profile,
+            self.config.cwd.as_path(),
+        );
         match codex_windows_sandbox::apply_world_writable_scan_and_denies(
             self.config.codex_home.as_path(),
             cwd.as_path(),
