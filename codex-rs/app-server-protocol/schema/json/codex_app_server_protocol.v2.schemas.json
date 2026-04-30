@@ -3958,6 +3958,12 @@
     },
     "ConfigRequirements": {
       "properties": {
+        "allowManagedHooksOnly": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
         "allowedApprovalPolicies": {
           "items": {
             "$ref": "#/definitions/AskForApproval"
