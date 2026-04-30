@@ -3043,8 +3043,14 @@ async fn session_configuration_apply_permission_profile_accepts_direct_write_roo
         updated.file_system_sandbox_policy(),
         file_system_sandbox_policy
     );
+    let updated_file_system_policy = updated.file_system_sandbox_policy();
     assert_eq!(
-        updated.sandbox_policy(),
+        codex_sandboxing::compatibility_sandbox_policy_for_permission_profile(
+            &updated.permission_profile(),
+            &updated_file_system_policy,
+            updated.network_sandbox_policy(),
+            updated.cwd.as_path(),
+        ),
         codex_sandboxing::compatibility_sandbox_policy_for_permission_profile(
             &permission_profile,
             &file_system_sandbox_policy,
@@ -3176,7 +3182,12 @@ async fn session_configuration_apply_rederives_legacy_file_system_policy_on_cwd_
         .expect("cwd-only update should succeed");
 
     let expected_file_system_policy = FileSystemSandboxPolicy::from_legacy_sandbox_policy_for_cwd(
-        &updated.sandbox_policy(),
+        &codex_sandboxing::compatibility_sandbox_policy_for_permission_profile(
+            &updated.permission_profile(),
+            &updated.file_system_sandbox_policy(),
+            updated.network_sandbox_policy(),
+            updated.cwd.as_path(),
+        ),
         &project_root,
     );
     assert!(

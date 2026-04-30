@@ -2,7 +2,6 @@ use super::*;
 use crate::goals::GoalRuntimeState;
 use codex_protocol::permissions::FileSystemPath;
 use codex_protocol::permissions::FileSystemSpecialPath;
-use codex_protocol::protocol::SandboxPolicy;
 use tokio::sync::Semaphore;
 
 /// Context for an initialized model agent
@@ -105,20 +104,6 @@ impl SessionConfiguration {
         self.active_permission_profile.clone()
     }
 
-    pub(super) fn sandbox_policy(&self) -> SandboxPolicy {
-        self.permission_profile()
-            .to_legacy_sandbox_policy(&self.cwd)
-            .unwrap_or_else(|_| {
-                let file_system_sandbox_policy = self.file_system_sandbox_policy();
-                codex_sandboxing::compatibility_sandbox_policy_for_permission_profile(
-                    self.permission_profile.get(),
-                    &file_system_sandbox_policy,
-                    self.network_sandbox_policy(),
-                    &self.cwd,
-                )
-            })
-    }
-
     pub(super) fn file_system_sandbox_policy(&self) -> FileSystemSandboxPolicy {
         self.permission_profile.get().file_system_sandbox_policy()
     }
@@ -146,9 +131,15 @@ impl SessionConfiguration {
 
     pub(crate) fn apply(&self, updates: &SessionSettingsUpdate) -> ConstraintResult<Self> {
         let mut next_configuration = self.clone();
-        let current_sandbox_policy = self.sandbox_policy();
         let current_file_system_sandbox_policy = self.file_system_sandbox_policy();
         let current_network_sandbox_policy = self.network_sandbox_policy();
+        let current_sandbox_policy =
+            codex_sandboxing::compatibility_sandbox_policy_for_permission_profile(
+                self.permission_profile.get(),
+                &current_file_system_sandbox_policy,
+                current_network_sandbox_policy,
+                &self.cwd,
+            );
         let legacy_file_system_projection =
             FileSystemSandboxPolicy::from_legacy_sandbox_policy_preserving_deny_entries(
                 &current_sandbox_policy,
