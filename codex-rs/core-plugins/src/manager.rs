@@ -37,6 +37,8 @@ use crate::remote::RemotePluginCatalogError;
 use crate::remote::RemotePluginServiceConfig;
 use crate::remote_legacy::RemotePluginFetchError;
 use crate::remote_legacy::RemotePluginMutationError;
+use crate::remote_startup_sync::RemoteStartupPluginSyncRequest;
+use crate::remote_startup_sync::start_startup_remote_plugin_sync_once;
 use crate::startup_sync::curated_plugins_repo_path;
 use crate::startup_sync::read_curated_plugins_sha;
 use crate::startup_sync::sync_openai_plugins_repo;
@@ -134,7 +136,7 @@ struct ConfiguredMarketplaceUpgradeState {
     in_flight: bool,
 }
 
-fn remote_plugin_service_config(chatgpt_base_url: &str) -> RemotePluginServiceConfig {
+pub(crate) fn remote_plugin_service_config(chatgpt_base_url: &str) -> RemotePluginServiceConfig {
     RemotePluginServiceConfig {
         chatgpt_base_url: chatgpt_base_url.to_string(),
     }
@@ -1079,19 +1081,14 @@ impl PluginsManager {
             }
 
             if remote_plugins_enabled {
-                let manager = Arc::clone(self);
-                let auth_manager = auth_manager.clone();
-                let on_effective_plugins_changed = on_effective_plugins_changed.clone();
-                let chatgpt_base_url = chatgpt_base_url.clone();
-                tokio::spawn(async move {
-                    let auth = auth_manager.auth().await;
-                    manager.maybe_start_remote_installed_plugins_cache_refresh(
-                        plugins_enabled,
-                        remote_plugins_enabled,
-                        chatgpt_base_url,
-                        auth,
-                        on_effective_plugins_changed,
-                    );
+                start_startup_remote_plugin_sync_once(RemoteStartupPluginSyncRequest {
+                    manager: Arc::clone(self),
+                    codex_home: self.codex_home.clone(),
+                    plugins_enabled,
+                    remote_plugins_enabled,
+                    chatgpt_base_url: chatgpt_base_url.clone(),
+                    auth_manager: auth_manager.clone(),
+                    on_effective_plugins_changed: on_effective_plugins_changed.clone(),
                 });
             }
 
@@ -1331,16 +1328,14 @@ impl PluginsManager {
                 }
             };
 
-            let installed_plugins = crate::remote::fetch_remote_installed_plugins(
-                &request.service_config,
-                request.auth.as_ref(),
-            )
-            .await;
-            match installed_plugins {
-                Ok(installed_plugins) => {
-                    // TODO(remote plugins): reconcile missing or stale local bundles before
-                    // publishing remote installed state as effective local plugin config.
-                    let changed = self.write_remote_installed_plugins_cache(installed_plugins);
+            match self
+                .refresh_remote_installed_plugins_cache(
+                    &request.service_config,
+                    request.auth.as_ref(),
+                )
+                .await
+            {
+                Ok(changed) => {
                     let should_notify = changed
                         || matches!(
                             request.notify,
@@ -1373,6 +1368,18 @@ impl PluginsManager {
                 }
             }
         }
+    }
+
+    pub(crate) async fn refresh_remote_installed_plugins_cache(
+        &self,
+        service_config: &RemotePluginServiceConfig,
+        auth: Option<&CodexAuth>,
+    ) -> Result<bool, RemotePluginCatalogError> {
+        let installed_plugins =
+            crate::remote::fetch_remote_installed_plugins(service_config, auth).await?;
+        // TODO(remote plugins): reconcile missing or stale local bundles before
+        // publishing remote installed state as effective local plugin config.
+        Ok(self.write_remote_installed_plugins_cache(installed_plugins))
     }
 
     fn run_non_curated_plugin_cache_refresh_loop(self: Arc<Self>) {

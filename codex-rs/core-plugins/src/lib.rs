@@ -10,6 +10,7 @@ pub mod marketplace_upgrade;
 pub mod remote;
 pub mod remote_bundle;
 pub mod remote_legacy;
+mod remote_startup_sync;
 pub mod startup_sync;
 pub mod store;
 pub mod toggles;
