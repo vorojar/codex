@@ -2849,7 +2849,7 @@ pub struct TurnContextNetworkItem {
 /// context updates, and again after mid-turn compaction when replacement
 /// history re-establishes full context, so resume/fork replay can recover the
 /// latest durable baseline.
-#[derive(Serialize, Deserialize, Clone, Debug, JsonSchema, TS)]
+#[derive(Serialize, Clone, Debug, JsonSchema, TS)]
 pub struct TurnContextItem {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub turn_id: Option<String>,
@@ -2861,14 +2861,9 @@ pub struct TurnContextItem {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub timezone: Option<String>,
     pub approval_policy: AskForApproval,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub sandbox_policy: Option<SandboxPolicy>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub permission_profile: Option<PermissionProfile>,
+    pub permission_profile: PermissionProfile,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub network: Option<TurnContextNetworkItem>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub file_system_sandbox_policy: Option<FileSystemSandboxPolicy>,
     pub model: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub personality: Option<Personality>,
@@ -2891,24 +2886,96 @@ pub struct TurnContextItem {
 
 impl TurnContextItem {
     pub fn permission_profile(&self) -> PermissionProfile {
-        self.permission_profile.clone().unwrap_or_else(|| {
-            let Some(sandbox_policy) = self.sandbox_policy.as_ref() else {
-                panic!(
-                    "turn context item must contain permission_profile or legacy sandbox_policy"
-                );
-            };
-            let file_system_sandbox_policy =
-                self.file_system_sandbox_policy.clone().unwrap_or_else(|| {
-                    FileSystemSandboxPolicy::from_legacy_sandbox_policy_for_cwd(
-                        sandbox_policy,
-                        &self.cwd,
-                    )
-                });
-            PermissionProfile::from_runtime_permissions_with_enforcement(
-                SandboxEnforcement::from_legacy_sandbox_policy(sandbox_policy),
-                &file_system_sandbox_policy,
-                NetworkSandboxPolicy::from(sandbox_policy),
-            )
+        self.permission_profile.clone()
+    }
+}
+
+impl<'de> Deserialize<'de> for TurnContextItem {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        struct Wire {
+            #[serde(default)]
+            turn_id: Option<String>,
+            #[serde(default)]
+            trace_id: Option<String>,
+            cwd: PathBuf,
+            #[serde(default)]
+            current_date: Option<String>,
+            #[serde(default)]
+            timezone: Option<String>,
+            approval_policy: AskForApproval,
+            #[serde(default)]
+            sandbox_policy: Option<SandboxPolicy>,
+            #[serde(default)]
+            permission_profile: Option<PermissionProfile>,
+            #[serde(default)]
+            network: Option<TurnContextNetworkItem>,
+            #[serde(default)]
+            file_system_sandbox_policy: Option<FileSystemSandboxPolicy>,
+            model: String,
+            #[serde(default)]
+            personality: Option<Personality>,
+            #[serde(default)]
+            collaboration_mode: Option<CollaborationMode>,
+            #[serde(default)]
+            realtime_active: Option<bool>,
+            #[serde(default)]
+            effort: Option<ReasoningEffortConfig>,
+            summary: ReasoningSummaryConfig,
+            #[serde(default)]
+            user_instructions: Option<String>,
+            #[serde(default)]
+            developer_instructions: Option<String>,
+            #[serde(default)]
+            final_output_json_schema: Option<Value>,
+            #[serde(default)]
+            truncation_policy: Option<TruncationPolicy>,
+        }
+
+        let wire = Wire::deserialize(deserializer)?;
+        let permission_profile = match (wire.permission_profile, wire.sandbox_policy) {
+            (Some(permission_profile), _) => permission_profile,
+            (None, Some(sandbox_policy)) => {
+                let file_system_sandbox_policy =
+                    wire.file_system_sandbox_policy.unwrap_or_else(|| {
+                        FileSystemSandboxPolicy::from_legacy_sandbox_policy_for_cwd(
+                            &sandbox_policy,
+                            &wire.cwd,
+                        )
+                    });
+                PermissionProfile::from_runtime_permissions_with_enforcement(
+                    SandboxEnforcement::from_legacy_sandbox_policy(&sandbox_policy),
+                    &file_system_sandbox_policy,
+                    NetworkSandboxPolicy::from(&sandbox_policy),
+                )
+            }
+            (None, None) => {
+                return Err(serde::de::Error::missing_field("permission_profile"));
+            }
+        };
+
+        Ok(Self {
+            turn_id: wire.turn_id,
+            trace_id: wire.trace_id,
+            cwd: wire.cwd,
+            current_date: wire.current_date,
+            timezone: wire.timezone,
+            approval_policy: wire.approval_policy,
+            permission_profile,
+            network: wire.network,
+            model: wire.model,
+            personality: wire.personality,
+            collaboration_mode: wire.collaboration_mode,
+            realtime_active: wire.realtime_active,
+            effort: wire.effort,
+            summary: wire.summary,
+            user_instructions: wire.user_instructions,
+            developer_instructions: wire.developer_instructions,
+            final_output_json_schema: wire.final_output_json_schema,
+            truncation_policy: wire.truncation_policy,
         })
     }
 }
@@ -5099,12 +5166,21 @@ mod tests {
 
         assert_eq!(item.trace_id, None);
         assert_eq!(item.network, None);
-        assert_eq!(item.file_system_sandbox_policy, None);
+        assert_eq!(item.permission_profile, PermissionProfile::Disabled);
         Ok(())
     }
 
     #[test]
     fn turn_context_item_serializes_network_when_present() -> Result<()> {
+        let permission_profile = PermissionProfile::from_runtime_permissions(
+            &FileSystemSandboxPolicy::restricted(vec![FileSystemSandboxEntry {
+                path: FileSystemPath::GlobPattern {
+                    pattern: "/tmp/private/**/*.txt".to_string(),
+                },
+                access: FileSystemAccessMode::None,
+            }]),
+            NetworkSandboxPolicy::Restricted,
+        );
         let item = TurnContextItem {
             turn_id: None,
             trace_id: None,
@@ -5112,20 +5188,11 @@ mod tests {
             current_date: None,
             timezone: None,
             approval_policy: AskForApproval::Never,
-            sandbox_policy: Some(SandboxPolicy::DangerFullAccess),
-            permission_profile: None,
+            permission_profile,
             network: Some(TurnContextNetworkItem {
                 allowed_domains: vec!["api.example.com".to_string()],
                 denied_domains: vec!["blocked.example.com".to_string()],
             }),
-            file_system_sandbox_policy: Some(FileSystemSandboxPolicy::restricted(vec![
-                FileSystemSandboxEntry {
-                    path: FileSystemPath::GlobPattern {
-                        pattern: "/tmp/private/**/*.txt".to_string(),
-                    },
-                    access: FileSystemAccessMode::None,
-                },
-            ])),
             model: "gpt-5".to_string(),
             personality: None,
             collaboration_mode: None,
@@ -5147,9 +5214,9 @@ mod tests {
             })
         );
         assert_eq!(
-            value["file_system_sandbox_policy"],
+            value["permission_profile"]["file_system"],
             json!({
-                "kind": "restricted",
+                "type": "restricted",
                 "entries": [{
                     "path": {
                         "type": "glob_pattern",

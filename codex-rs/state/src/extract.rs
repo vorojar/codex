@@ -168,7 +168,6 @@ mod tests {
     use codex_protocol::protocol::UserMessageEvent;
 
     use pretty_assertions::assert_eq;
-    use std::path::Path;
     use std::path::PathBuf;
     use uuid::Uuid;
 
@@ -303,10 +302,8 @@ mod tests {
                 current_date: None,
                 timezone: None,
                 approval_policy: AskForApproval::Never,
-                sandbox_policy: None,
-                permission_profile: Some(PermissionProfile::Disabled),
+                permission_profile: PermissionProfile::Disabled,
                 network: None,
-                file_system_sandbox_policy: None,
                 model: "gpt-5".to_string(),
                 personality: None,
                 collaboration_mode: None,
@@ -340,14 +337,8 @@ mod tests {
                 current_date: None,
                 timezone: None,
                 approval_policy: AskForApproval::OnRequest,
-                sandbox_policy: Some(
-                    PermissionProfile::read_only()
-                        .to_legacy_sandbox_policy(Path::new("/"))
-                        .expect("read-only profile should project to legacy sandbox"),
-                ),
-                permission_profile: None,
+                permission_profile: PermissionProfile::read_only(),
                 network: None,
-                file_system_sandbox_policy: None,
                 model: "gpt-5".to_string(),
                 personality: None,
                 collaboration_mode: None,
@@ -378,14 +369,8 @@ mod tests {
                 current_date: None,
                 timezone: None,
                 approval_policy: AskForApproval::OnRequest,
-                sandbox_policy: Some(
-                    PermissionProfile::read_only()
-                        .to_legacy_sandbox_policy(Path::new("/"))
-                        .expect("read-only profile should project to legacy sandbox"),
-                ),
-                permission_profile: None,
+                permission_profile: PermissionProfile::read_only(),
                 network: None,
-                file_system_sandbox_policy: None,
                 model: "gpt-5".to_string(),
                 personality: None,
                 collaboration_mode: None,
