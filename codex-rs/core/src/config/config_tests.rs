@@ -71,7 +71,6 @@ use codex_protocol::permissions::FileSystemSandboxEntry;
 use codex_protocol::permissions::FileSystemSandboxPolicy;
 use codex_protocol::permissions::FileSystemSpecialPath;
 use codex_protocol::permissions::NetworkSandboxPolicy;
-use codex_protocol::protocol::NetworkAccess;
 use codex_protocol::protocol::RealtimeVoice;
 use codex_protocol::protocol::SandboxPolicy;
 use serde::Deserialize;
@@ -929,10 +928,6 @@ async fn permission_profile_override_populates_runtime_permissions() -> std::io:
 
     assert_eq!(config.permissions.permission_profile(), permission_profile);
     assert_eq!(config.permissions.active_permission_profile(), None);
-    assert_eq!(
-        &config.legacy_sandbox_policy(),
-        &SandboxPolicy::DangerFullAccess
-    );
     Ok(())
 }
 
@@ -959,10 +954,12 @@ async fn permission_profile_override_preserves_managed_unrestricted_filesystem()
 
     assert_eq!(config.permissions.permission_profile(), permission_profile);
     assert_eq!(
-        &config.legacy_sandbox_policy(),
-        &SandboxPolicy::ExternalSandbox {
-            network_access: NetworkAccess::Restricted,
-        }
+        config.permissions.file_system_sandbox_policy(),
+        FileSystemSandboxPolicy::unrestricted()
+    );
+    assert_eq!(
+        config.permissions.network_sandbox_policy(),
+        NetworkSandboxPolicy::Restricted
     );
     Ok(())
 }
@@ -981,17 +978,13 @@ async fn managed_unrestricted_permission_profile_still_enables_network_requireme
         ConfigToml::default(),
         ConfigOverrides {
             cwd: Some(cwd.path().to_path_buf()),
-            permission_profile: Some(permission_profile),
+            permission_profile: Some(permission_profile.clone()),
             ..Default::default()
         },
         codex_home.abs(),
     )
     .await?;
-    assert_eq!(
-        &config.legacy_sandbox_policy(),
-        &SandboxPolicy::DangerFullAccess,
-        "the legacy projection is intentionally lossy for managed unrestricted profiles"
-    );
+    assert_eq!(config.permissions.permission_profile(), permission_profile);
 
     let layers = config
         .config_layer_stack
@@ -1818,10 +1811,8 @@ async fn permissions_profiles_allow_unknown_special_paths() -> std::io::Result<(
         }]),
     );
     assert_eq!(
-        &config.legacy_sandbox_policy(),
-        &SandboxPolicy::ReadOnly {
-            network_access: false,
-        }
+        config.permissions.network_sandbox_policy(),
+        NetworkSandboxPolicy::Restricted
     );
     assert!(
         config.startup_warnings.iter().any(|warning| warning.contains(
@@ -1883,10 +1874,8 @@ async fn permissions_profiles_allow_missing_filesystem_with_warning() -> std::io
         FileSystemSandboxPolicy::restricted(Vec::new())
     );
     assert_eq!(
-        &config.legacy_sandbox_policy(),
-        &SandboxPolicy::ReadOnly {
-            network_access: false,
-        }
+        config.permissions.network_sandbox_policy(),
+        NetworkSandboxPolicy::Restricted
     );
     assert!(
         config.startup_warnings.iter().any(|warning| warning.contains(
@@ -2010,7 +1999,6 @@ async fn permissions_profiles_allow_network_enablement() -> std::io::Result<()> 
         config.permissions.network_sandbox_policy().is_enabled(),
         "expected network sandbox policy to be enabled",
     );
-    assert!(config.legacy_sandbox_policy().has_full_network_access());
     Ok(())
 }
 
@@ -7618,8 +7606,6 @@ async fn permission_profile_override_falls_back_when_disallowed_by_requirements(
         .build()
         .await?;
 
-    let expected_sandbox_policy = SandboxPolicy::new_read_only_policy();
-    assert_eq!(config.legacy_sandbox_policy(), expected_sandbox_policy);
     assert_eq!(
         config.permissions.permission_profile(),
         PermissionProfile::read_only()
@@ -7707,10 +7693,18 @@ async fn permission_profile_override_preserves_split_write_roots() -> std::io::R
             .file_system_sandbox_policy()
             .can_write_path_with_cwd(outside_root.as_path(), config.cwd.as_path())
     );
-    assert!(matches!(
-        &config.legacy_sandbox_policy(),
-        SandboxPolicy::WorkspaceWrite { .. }
-    ));
+    assert!(
+        config
+            .permissions
+            .file_system_sandbox_policy()
+            .entries
+            .iter()
+            .any(|entry| matches!(
+                &entry.path,
+                FileSystemPath::Path { path } if path == &outside_root
+            ) && entry.access == FileSystemAccessMode::Write),
+        "expected explicit split write root to be preserved"
+    );
     assert_eq!(
         config.permissions.network_sandbox_policy(),
         NetworkSandboxPolicy::Restricted
