@@ -3,14 +3,12 @@ use crate::PluginLoadOutcome;
 use crate::installed_marketplaces::installed_marketplace_roots_from_layer_stack;
 use crate::loader::configured_curated_plugin_ids_from_codex_home;
 use crate::loader::curated_plugin_cache_version;
-use crate::loader::installed_plugin_telemetry_metadata;
 use crate::loader::load_plugin_apps;
 use crate::loader::load_plugin_mcp_servers;
 use crate::loader::load_plugin_skills;
 use crate::loader::load_plugins_from_layer_stack;
 use crate::loader::log_plugin_load_errors;
 use crate::loader::materialize_marketplace_plugin_source;
-use crate::loader::plugin_telemetry_metadata_from_root;
 use crate::loader::refresh_curated_plugin_cache;
 use crate::loader::refresh_non_curated_plugin_cache;
 use crate::loader::refresh_non_curated_plugin_cache_force_reinstall;
@@ -48,7 +46,7 @@ use crate::startup_sync::sync_openai_plugins_repo;
 use crate::store::PluginInstallResult as StorePluginInstallResult;
 use crate::store::PluginStore;
 use crate::store::PluginStoreError;
-use codex_analytics::AnalyticsEventsClient;
+use crate::store::validate_plugin_version_segment;
 use codex_config::ConfigEditsBuilder;
 use codex_config::ConfigLayerStack;
 use codex_config::types::PluginConfig;
@@ -358,12 +356,12 @@ pub struct PluginsManager {
     remote_installed_plugins_cache_refresh_state: RwLock<RemoteInstalledPluginsCacheRefreshState>,
     remote_sync_lock: Semaphore,
     restriction_product: Option<Product>,
-    analytics_events_client: RwLock<Option<AnalyticsEventsClient>>,
 }
 
 #[derive(Clone)]
 struct CachedPluginLoadOutcome {
     config_version: String,
+    remote_plugins_enabled: bool,
     plugin_hooks_enabled: bool,
     outcome: PluginLoadOutcome,
 }
@@ -399,16 +397,7 @@ impl PluginsManager {
             ),
             remote_sync_lock: Semaphore::new(/*permits*/ 1),
             restriction_product,
-            analytics_events_client: RwLock::new(None),
         }
-    }
-
-    pub fn set_analytics_events_client(&self, analytics_events_client: AnalyticsEventsClient) {
-        let mut stored_client = match self.analytics_events_client.write() {
-            Ok(client_guard) => client_guard,
-            Err(err) => err.into_inner(),
-        };
-        *stored_client = Some(analytics_events_client);
     }
 
     fn restriction_product_matches(&self, products: Option<&[Product]>) -> bool {
@@ -452,8 +441,11 @@ impl PluginsManager {
 
         let config_version = version_for_toml(&config_layer_stack.effective_config());
         if !force_reload
-            && let Some(outcome) =
-                self.cached_enabled_outcome(&config_version, plugin_hooks_enabled)
+            && let Some(outcome) = self.cached_enabled_outcome(
+                &config_version,
+                remote_plugins_enabled,
+                plugin_hooks_enabled,
+            )
         {
             return outcome;
         }
@@ -473,6 +465,7 @@ impl PluginsManager {
         };
         *cache = Some(CachedPluginLoadOutcome {
             config_version,
+            remote_plugins_enabled,
             plugin_hooks_enabled,
             outcome: outcome.clone(),
         });
@@ -538,6 +531,7 @@ impl PluginsManager {
     fn cached_enabled_outcome(
         &self,
         config_version: &str,
+        remote_plugins_enabled: bool,
         plugin_hooks_enabled: bool,
     ) -> Option<PluginLoadOutcome> {
         match self.cached_enabled_outcome.read() {
@@ -545,6 +539,7 @@ impl PluginsManager {
                 .as_ref()
                 .filter(|cached| {
                     cached.config_version == config_version
+                        && cached.remote_plugins_enabled == remote_plugins_enabled
                         && cached.plugin_hooks_enabled == plugin_hooks_enabled
                 })
                 .map(|cached| cached.outcome.clone()),
@@ -553,6 +548,7 @@ impl PluginsManager {
                 .as_ref()
                 .filter(|cached| {
                     cached.config_version == config_version
+                        && cached.remote_plugins_enabled == remote_plugins_enabled
                         && cached.plugin_hooks_enabled == plugin_hooks_enabled
                 })
                 .map(|cached| cached.outcome.clone()),
@@ -828,17 +824,6 @@ impl PluginsManager {
         .await
         .map_err(PluginInstallError::join)??;
 
-        let analytics_events_client = match self.analytics_events_client.read() {
-            Ok(client) => client.clone(),
-            Err(err) => err.into_inner().clone(),
-        };
-        if let Some(analytics_events_client) = analytics_events_client {
-            analytics_events_client.track_plugin_installed(
-                plugin_telemetry_metadata_from_root(&result.plugin_id, &result.installed_path)
-                    .await,
-            );
-        }
-
         Ok(PluginInstallOutcome {
             plugin_id: result.plugin_id,
             plugin_version: result.plugin_version,
@@ -874,26 +859,11 @@ impl PluginsManager {
     }
 
     async fn uninstall_plugin_id(&self, plugin_id: PluginId) -> Result<(), PluginUninstallError> {
-        let plugin_telemetry = if self.store.active_plugin_root(&plugin_id).is_some() {
-            Some(installed_plugin_telemetry_metadata(self.codex_home.as_path(), &plugin_id).await)
-        } else {
-            None
-        };
         let store = self.store.clone();
         let plugin_id_for_store = plugin_id.clone();
         tokio::task::spawn_blocking(move || store.uninstall(&plugin_id_for_store))
             .await
             .map_err(PluginUninstallError::join)??;
-
-        let analytics_events_client = match self.analytics_events_client.read() {
-            Ok(client) => client.clone(),
-            Err(err) => err.into_inner().clone(),
-        };
-        if let Some(plugin_telemetry) = plugin_telemetry
-            && let Some(analytics_events_client) = analytics_events_client
-        {
-            analytics_events_client.track_plugin_uninstalled(plugin_telemetry);
-        }
 
         Ok(())
     }
@@ -1708,18 +1678,112 @@ impl PluginsManager {
     ) -> Result<bool, RemotePluginCatalogError> {
         let installed_plugins =
             crate::remote::fetch_remote_installed_plugins(service_config, auth).await?;
+        let previous_plugins_by_key = {
+            let cache = match self.remote_installed_plugins_cache.read() {
+                Ok(cache) => cache,
+                Err(err) => err.into_inner(),
+            };
+            cache
+                .as_ref()
+                .map(|plugins| {
+                    plugins
+                        .iter()
+                        .map(|plugin| {
+                            (
+                                (
+                                    plugin.marketplace_name.clone(),
+                                    plugin.id.clone(),
+                                    plugin.name.clone(),
+                                ),
+                                plugin.clone(),
+                            )
+                        })
+                        .collect::<HashMap<_, _>>()
+                })
+                .unwrap_or_default()
+        };
         let mut bundles_changed = false;
         let mut publishable_plugins = Vec::new();
         for plugin in installed_plugins {
+            let previous_plugin = previous_plugins_by_key
+                .get(&(
+                    plugin.marketplace_name.clone(),
+                    plugin.id.clone(),
+                    plugin.name.clone(),
+                ))
+                .cloned();
+            let plugin_id =
+                match PluginId::new(plugin.name.clone(), plugin.marketplace_name.clone()) {
+                    Ok(plugin_id) => plugin_id,
+                    Err(err) => {
+                        warn!(
+                            remote_plugin_id = %plugin.id,
+                            marketplace = %plugin.marketplace_name,
+                            plugin = %plugin.name,
+                            error = %err,
+                            "ignoring remote installed plugin with invalid local plugin id"
+                        );
+                        continue;
+                    }
+                };
+
+            let release_version = plugin
+                .release_version
+                .as_deref()
+                .map(str::trim)
+                .filter(|version| !version.is_empty());
+
+            let Some(release_version) = release_version else {
+                if self.store.active_plugin_root(&plugin_id).is_some() {
+                    publishable_plugins.push(plugin);
+                } else if let Some(mut previous_plugin) = previous_plugin {
+                    previous_plugin.enabled = plugin.enabled;
+                    publishable_plugins.push(previous_plugin);
+                } else {
+                    warn!(
+                        remote_plugin_id = %plugin.id,
+                        marketplace = %plugin.marketplace_name,
+                        plugin = %plugin.name,
+                        "remote installed plugin is missing release metadata and no local bundle is available"
+                    );
+                }
+                continue;
+            };
+
+            if let Err(message) = validate_plugin_version_segment(release_version) {
+                if let Some(mut previous_plugin) = previous_plugin {
+                    previous_plugin.enabled = plugin.enabled;
+                    publishable_plugins.push(previous_plugin);
+                }
+                warn!(
+                    remote_plugin_id = %plugin.id,
+                    marketplace = %plugin.marketplace_name,
+                    plugin = %plugin.name,
+                    version = %release_version,
+                    error = %message,
+                    "ignoring remote installed plugin with invalid release version"
+                );
+                continue;
+            }
+
+            if self.store.active_plugin_version(&plugin_id).as_deref() == Some(release_version) {
+                publishable_plugins.push(plugin);
+                continue;
+            }
+
             let validated_bundle = match validate_remote_plugin_bundle(
                 &plugin.id,
                 &plugin.marketplace_name,
                 &plugin.name,
-                plugin.release_version.as_deref(),
+                Some(release_version),
                 plugin.bundle_download_url.as_deref(),
             ) {
                 Ok(bundle) => bundle,
                 Err(err) => {
+                    if let Some(mut previous_plugin) = previous_plugin {
+                        previous_plugin.enabled = plugin.enabled;
+                        publishable_plugins.push(previous_plugin);
+                    }
                     warn!(
                         remote_plugin_id = %plugin.id,
                         marketplace = %plugin.marketplace_name,
@@ -1730,14 +1794,6 @@ impl PluginsManager {
                     continue;
                 }
             };
-            let plugin_id = validated_bundle.plugin_id.clone();
-            let plugin_version = validated_bundle.plugin_version.clone();
-            if self.store.active_plugin_version(&plugin_id).as_deref()
-                == Some(plugin_version.as_str())
-            {
-                publishable_plugins.push(plugin);
-                continue;
-            }
             match download_and_install_remote_plugin_bundle(
                 self.codex_home.clone(),
                 validated_bundle,
@@ -1755,6 +1811,10 @@ impl PluginsManager {
                     publishable_plugins.push(plugin);
                 }
                 Err(err) => {
+                    if let Some(mut previous_plugin) = previous_plugin {
+                        previous_plugin.enabled = plugin.enabled;
+                        publishable_plugins.push(previous_plugin);
+                    }
                     warn!(
                         remote_plugin_id = %plugin.id,
                         marketplace = %plugin.marketplace_name,

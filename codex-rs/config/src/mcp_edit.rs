@@ -12,6 +12,8 @@ use toml_edit::Item as TomlItem;
 use toml_edit::Table as TomlTable;
 use toml_edit::value;
 
+use codex_utils_path::write_atomically;
+
 use crate::AppToolApproval;
 use crate::CONFIG_TOML_FILE;
 use crate::McpServerConfig;
@@ -117,8 +119,7 @@ impl ConfigEditsBuilder {
         for edit in &self.plugin_edits {
             apply_plugin_config_edit(&mut doc, edit);
         }
-        fs::create_dir_all(&self.codex_home)?;
-        fs::write(config_path, doc.to_string())
+        write_atomically(&config_path, &doc.to_string())
     }
 }
 

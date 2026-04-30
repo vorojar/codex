@@ -292,9 +292,6 @@ impl MessageProcessor {
             environment_manager,
             Some(analytics_events_client.clone()),
         ));
-        thread_manager
-            .plugins_manager()
-            .set_analytics_events_client(analytics_events_client.clone());
 
         let codex_message_processor = CodexMessageProcessor::new(CodexMessageProcessorArgs {
             auth_manager: auth_manager.clone(),

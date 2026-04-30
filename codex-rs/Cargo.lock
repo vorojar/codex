@@ -2504,7 +2504,6 @@ version = "0.0.0"
 dependencies = [
  "anyhow",
  "chrono",
- "codex-analytics",
  "codex-app-server-protocol",
  "codex-config",
  "codex-core-skills",

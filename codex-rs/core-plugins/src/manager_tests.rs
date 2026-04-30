@@ -596,6 +596,46 @@ remote_plugin = true
 }
 
 #[tokio::test]
+async fn remote_installed_cache_reloads_when_remote_feature_enablement_changes() {
+    let codex_home = TempDir::new().unwrap();
+    let plugin_base = codex_home
+        .path()
+        .join("plugins/cache/chatgpt-global/linear");
+    write_plugin(&plugin_base, "local", "linear");
+    write_file(
+        &codex_home.path().join(CONFIG_TOML_FILE),
+        r#"[features]
+plugins = true
+remote_plugin = true
+"#,
+    );
+
+    let config = load_config(codex_home.path(), codex_home.path()).await;
+    let manager = PluginsManager::new(codex_home.path().to_path_buf());
+    manager.write_remote_installed_plugins_cache(vec![RemoteInstalledPlugin {
+        marketplace_name: "chatgpt-global".to_string(),
+        id: "plugins~Plugin_linear".to_string(),
+        name: "linear".to_string(),
+        enabled: true,
+        release_version: Some("local".to_string()),
+        bundle_download_url: Some("https://example.com/linear.tar.gz".to_string()),
+    }]);
+
+    let enabled_outcome = manager.plugins_for_test_config(&config).await;
+    assert_eq!(enabled_outcome.plugins().len(), 1);
+
+    let disabled_outcome = PluginsManager::plugins_for_config(
+        &manager,
+        &config.config_layer_stack,
+        config.plugins_enabled,
+        /*remote_plugins_enabled*/ false,
+        config.plugin_hooks_enabled,
+    )
+    .await;
+    assert_eq!(disabled_outcome, PluginLoadOutcome::default());
+}
+
+#[tokio::test]
 async fn remote_installed_cache_ignores_plugins_missing_local_cache() {
     let codex_home = TempDir::new().unwrap();
     write_file(
@@ -622,8 +662,11 @@ remote_plugin = true
 }
 
 #[tokio::test]
-async fn remote_installed_cache_ignores_plugins_with_stale_local_version() {
+async fn remote_installed_cache_uses_available_local_cache_without_version_gate() {
     let codex_home = TempDir::new().unwrap();
+    let linear_root = codex_home
+        .path()
+        .join("plugins/cache/chatgpt-global/linear/1.0.0");
     write_plugin(
         &codex_home.path().join("plugins/cache/chatgpt-global"),
         "linear/1.0.0",
@@ -649,7 +692,51 @@ remote_plugin = true
     }]);
 
     let outcome = manager.plugins_for_test_config(&config).await;
-    assert_eq!(outcome, PluginLoadOutcome::default());
+    assert_eq!(
+        outcome.effective_skill_roots(),
+        vec![AbsolutePathBuf::try_from(linear_root.join("skills")).unwrap()]
+    );
+    assert_eq!(outcome.plugins().len(), 1);
+    assert_eq!(outcome.plugins()[0].config_name, "linear@chatgpt-global");
+}
+
+#[tokio::test]
+async fn remote_installed_cache_uses_available_local_cache_without_release_metadata() {
+    let codex_home = TempDir::new().unwrap();
+    let linear_root = codex_home
+        .path()
+        .join("plugins/cache/chatgpt-global/linear/local");
+    write_plugin(
+        &codex_home.path().join("plugins/cache/chatgpt-global"),
+        "linear/local",
+        "linear",
+    );
+    write_file(
+        &codex_home.path().join(CONFIG_TOML_FILE),
+        r#"[features]
+plugins = true
+remote_plugin = true
+"#,
+    );
+
+    let config = load_config(codex_home.path(), codex_home.path()).await;
+    let manager = PluginsManager::new(codex_home.path().to_path_buf());
+    manager.write_remote_installed_plugins_cache(vec![RemoteInstalledPlugin {
+        marketplace_name: "chatgpt-global".to_string(),
+        id: "plugins~Plugin_linear".to_string(),
+        name: "linear".to_string(),
+        enabled: true,
+        release_version: None,
+        bundle_download_url: None,
+    }]);
+
+    let outcome = manager.plugins_for_test_config(&config).await;
+    assert_eq!(
+        outcome.effective_skill_roots(),
+        vec![AbsolutePathBuf::try_from(linear_root.join("skills")).unwrap()]
+    );
+    assert_eq!(outcome.plugins().len(), 1);
+    assert_eq!(outcome.plugins()[0].config_name, "linear@chatgpt-global");
 }
 
 async fn mount_remote_installed_plugin_pages(
@@ -806,6 +893,62 @@ remote_plugin = true
     assert!(changed);
     let outcome = manager.plugins_for_test_config(&config).await;
     assert_eq!(outcome, PluginLoadOutcome::default());
+}
+
+#[tokio::test]
+async fn remote_installed_plugins_cache_refresh_preserves_previous_bundle_when_upgrade_unavailable()
+{
+    let tmp = tempfile::tempdir().unwrap();
+    let linear_root = tmp.path().join("plugins/cache/chatgpt-global/linear/1.0.0");
+    write_plugin(
+        &tmp.path().join("plugins/cache/chatgpt-global"),
+        "linear/1.0.0",
+        "linear",
+    );
+    write_file(
+        &tmp.path().join(CONFIG_TOML_FILE),
+        r#"[features]
+plugins = true
+remote_plugin = true
+"#,
+    );
+
+    let server = MockServer::start().await;
+    mount_remote_installed_plugin_pages(
+        &server,
+        &remote_installed_plugin_json_with_release(
+            "linear", /*enabled*/ true, "2.0.0", /*bundle_download_url*/ None,
+        ),
+        "",
+    )
+    .await;
+
+    let config = load_config(tmp.path(), tmp.path()).await;
+    let manager = PluginsManager::new(tmp.path().to_path_buf());
+    manager.write_remote_installed_plugins_cache(vec![RemoteInstalledPlugin {
+        marketplace_name: "chatgpt-global".to_string(),
+        id: "plugins~Plugin_linear".to_string(),
+        name: "linear".to_string(),
+        enabled: true,
+        release_version: Some("1.0.0".to_string()),
+        bundle_download_url: Some("https://example.com/linear-1.0.0.tar.gz".to_string()),
+    }]);
+    let changed = manager
+        .refresh_remote_installed_plugins_cache(
+            &remote_plugin_service_config(&format!("{}/backend-api/", server.uri())),
+            Some(&CodexAuth::create_dummy_chatgpt_auth_for_testing()),
+        )
+        .await
+        .unwrap();
+
+    assert!(!changed);
+    let outcome = manager.plugins_for_test_config(&config).await;
+    assert_eq!(
+        outcome.effective_skill_roots(),
+        vec![AbsolutePathBuf::try_from(linear_root.join("skills")).unwrap()]
+    );
+    assert_eq!(outcome.plugins().len(), 1);
+    assert_eq!(outcome.plugins()[0].config_name, "linear@chatgpt-global");
 }
 
 #[tokio::test]
