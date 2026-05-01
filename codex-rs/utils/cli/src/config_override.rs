@@ -17,6 +17,10 @@ use toml::Value;
 /// calling code can decide how to interpret the right-hand side.
 #[derive(Parser, Debug, Default, Clone)]
 pub struct CliConfigOverrides {
+    /// Error out when config.toml contains fields that are not recognized by this version of Codex.
+    #[arg(long = "strict-config", global = true, default_value_t = false)]
+    pub strict_config: bool,
+
     /// Override a configuration value that would otherwise be loaded from
     /// `~/.codex/config.toml`. Use a dotted path (`foo.bar.baz`) to override
     /// nested values. The `value` portion is parsed as TOML. If it fails to
@@ -184,6 +188,7 @@ mod tests {
     fn canonicalizes_use_legacy_landlock_alias() {
         let overrides = CliConfigOverrides {
             raw_overrides: vec!["use_legacy_landlock=true".to_string()],
+            strict_config: false,
         };
         let parsed = overrides.parse_overrides().expect("parse_overrides");
         assert_eq!(parsed[0].0.as_str(), "features.use_legacy_landlock");

@@ -2,7 +2,6 @@ use clap::Parser;
 use codex_app_server_client::legacy_core;
 use codex_arg0::Arg0DispatchPaths;
 use codex_arg0::arg0_dispatch_or_else;
-use codex_config::LoaderOverrides;
 use codex_tui::AppExitInfo;
 use codex_tui::Cli;
 use codex_tui::ExitReason;
@@ -49,6 +48,7 @@ fn main() -> anyhow::Result<()> {
     arg0_dispatch_or_else(|arg0_paths: Arg0DispatchPaths| async move {
         let top_cli = TopCli::parse();
         let mut inner = top_cli.inner;
+        inner.config_overrides.strict_config |= top_cli.config_overrides.strict_config;
         inner
             .config_overrides
             .raw_overrides
@@ -56,7 +56,7 @@ fn main() -> anyhow::Result<()> {
         let exit_info = run_main(
             inner,
             arg0_paths,
-            LoaderOverrides::default(),
+            Default::default(),
             /*remote*/ None,
             /*remote_auth_token*/ None,
         )
