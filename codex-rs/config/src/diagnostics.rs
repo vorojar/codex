@@ -134,6 +134,40 @@ pub fn config_error_from_typed_toml<T: DeserializeOwned>(
     }
 }
 
+pub fn config_error_from_ignored_toml_fields<T: DeserializeOwned>(
+    path: impl AsRef<Path>,
+    contents: &str,
+) -> Option<ConfigError> {
+    let path = path.as_ref();
+    if let Some(error) = config_error_from_typed_toml::<T>(path, contents) {
+        return Some(error);
+    }
+
+    let deserializer = toml::de::Deserializer::parse(contents).ok()?;
+
+    let mut ignored_paths = Vec::new();
+    let result: Result<T, _> = serde_ignored::deserialize(deserializer, |ignored_path| {
+        let path_segments = ignored_path_segments(&ignored_path);
+        if !path_segments.is_empty() {
+            ignored_paths.push(path_segments);
+        }
+    });
+    if let Err(err) = result {
+        return Some(config_error_from_toml(path, contents, err));
+    }
+
+    let path_segments = ignored_paths.into_iter().next()?;
+    let ignored_path = path_segments.join(".");
+    let range = span_for_ignored_path(contents, &path_segments)
+        .map(|span| text_range_from_span(contents, span))
+        .unwrap_or_else(default_range);
+    Some(ConfigError::new(
+        path.to_path_buf(),
+        range,
+        format!("unknown configuration field `{ignored_path}`"),
+    ))
+}
+
 pub async fn first_layer_config_error<T: DeserializeOwned>(
     layers: &ConfigLayerStack,
     config_toml_file: &str,
@@ -321,6 +355,70 @@ fn span_for_config_path(contents: &str, path: &SerdePath) -> Option<std::ops::Ra
         return Some(span);
     }
     span_for_path(contents, path)
+}
+
+fn span_for_ignored_path(contents: &str, path: &[String]) -> Option<std::ops::Range<usize>> {
+    let doc = contents.parse::<Document<String>>().ok()?;
+    let mut node = TomlNode::Item(doc.as_item());
+    for (index, segment) in path.iter().enumerate() {
+        if index + 1 == path.len() {
+            let key_span = match &node {
+                TomlNode::Item(item) => item
+                    .as_table_like()
+                    .and_then(|table| table.get_key_value(segment))
+                    .and_then(|(key, _)| key.span()),
+                TomlNode::Table(table) => {
+                    table.get_key_value(segment).and_then(|(key, _)| key.span())
+                }
+                TomlNode::Value(Value::InlineTable(table)) => {
+                    table.get_key_value(segment).and_then(|(key, _)| key.span())
+                }
+                _ => None,
+            };
+            if key_span.is_some() {
+                return key_span;
+            }
+        }
+
+        if let Some(next) = map_child(&node, segment) {
+            node = next;
+            continue;
+        }
+
+        let index = segment.parse::<usize>().ok()?;
+        node = seq_child(&node, index)?;
+    }
+
+    match node {
+        TomlNode::Item(item) => item.span(),
+        TomlNode::Table(table) => table.span(),
+        TomlNode::Value(value) => value.span(),
+    }
+}
+
+fn ignored_path_segments(path: &serde_ignored::Path<'_>) -> Vec<String> {
+    let mut segments = Vec::new();
+    push_ignored_path_segments(path, &mut segments);
+    segments
+}
+
+fn push_ignored_path_segments(path: &serde_ignored::Path<'_>, segments: &mut Vec<String>) {
+    match path {
+        serde_ignored::Path::Root => {}
+        serde_ignored::Path::Seq { parent, index } => {
+            push_ignored_path_segments(parent, segments);
+            segments.push(index.to_string());
+        }
+        serde_ignored::Path::Map { parent, key } => {
+            push_ignored_path_segments(parent, segments);
+            segments.push(key.clone());
+        }
+        serde_ignored::Path::Some { parent }
+        | serde_ignored::Path::NewtypeStruct { parent }
+        | serde_ignored::Path::NewtypeVariant { parent } => {
+            push_ignored_path_segments(parent, segments);
+        }
+    }
 }
 
 fn is_features_table_path(path: &SerdePath) -> bool {
