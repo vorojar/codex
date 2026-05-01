@@ -11426,7 +11426,11 @@ impl ChatWidget {
         let Some(controller) = self.stream_controller.as_ref() else {
             return;
         };
-        self.active_cell = controller.active_tail_cell();
+        let active_tail = controller.active_tail_cell();
+        if active_tail.is_some() {
+            self.bottom_pane.hide_status_indicator();
+        }
+        self.active_cell = active_tail;
         self.bump_active_cell_revision();
     }
 
@@ -11434,7 +11438,11 @@ impl ChatWidget {
         let Some(controller) = self.plan_stream_controller.as_ref() else {
             return;
         };
-        self.active_cell = controller.active_tail_cell();
+        let active_tail = controller.active_tail_cell();
+        if active_tail.is_some() {
+            self.bottom_pane.hide_status_indicator();
+        }
+        self.active_cell = active_tail;
         self.bump_active_cell_revision();
     }
 
