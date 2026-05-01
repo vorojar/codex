@@ -153,6 +153,18 @@ common:ci-macos --config=remote
 common:ci-macos --strategy=remote
 common:ci-macos --strategy=TestRunner=darwin-sandbox,local
 
+# On Windows, use Linux remote execution for build actions but keep test actions
+# on the Windows runner so Bazel's normal test sharding and flaky-test retries
+# still run against Windows binaries.
+common:ci-windows-cross --config=ci-windows
+common:ci-windows-cross --build_metadata=TAG_windows_cross_compile=true
+common:ci-windows-cross --config=remote
+common:ci-windows-cross --strategy=remote
+common:ci-windows-cross --strategy=TestRunner=local
+common:ci-windows-cross --local_test_jobs=8
+common:ci-windows-cross --platforms=//:windows_x86_64_gnullvm
+common:ci-windows-cross --extra_execution_platforms=//:rbe,//:windows_x86_64_gnullvm
+
 # Linux-only V8 CI config.
 common:ci-v8 --config=ci
 common:ci-v8 --build_metadata=TAG_workflow=v8
