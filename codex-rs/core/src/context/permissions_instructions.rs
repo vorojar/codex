@@ -24,6 +24,7 @@ const APPROVAL_POLICY_ON_REQUEST_RULE: &str =
 const APPROVAL_POLICY_ON_REQUEST_RULE_REQUEST_PERMISSION: &str =
     include_str!("prompts/permissions/approval_policy/on_request_rule_request_permission.md");
 const AUTO_REVIEW_APPROVAL_SUFFIX: &str = "`approvals_reviewer` is `auto_review`: Sandbox escalations with require_escalated will be reviewed for compliance with the policy. If a rejection happens, you should proceed only with a materially safer alternative, or inform the user of the risk and send a final message to ask for approval.";
+const NETWORK_PROXY: &str = include_str!("prompts/permissions/network_proxy.md");
 
 const SANDBOX_MODE_DANGER_FULL_ACCESS: &str =
     include_str!("prompts/permissions/sandbox_mode/danger_full_access.md");
@@ -50,6 +51,7 @@ struct PermissionsPromptConfig<'a> {
     exec_policy: &'a Policy,
     exec_permission_approvals_enabled: bool,
     request_permissions_tool_enabled: bool,
+    managed_network_proxy_active: bool,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -68,6 +70,7 @@ impl PermissionsInstructions {
         cwd: &Path,
         exec_permission_approvals_enabled: bool,
         request_permissions_tool_enabled: bool,
+        managed_network_proxy_active: bool,
     ) -> Self {
         let (sandbox_mode, writable_roots) = sandbox_prompt_from_profile(permission_profile, cwd);
 
@@ -80,6 +83,7 @@ impl PermissionsInstructions {
                 exec_policy,
                 exec_permission_approvals_enabled,
                 request_permissions_tool_enabled,
+                managed_network_proxy_active,
             },
             writable_roots,
         )
@@ -94,6 +98,7 @@ impl PermissionsInstructions {
         cwd: &Path,
         exec_permission_approvals_enabled: bool,
         request_permissions_tool_enabled: bool,
+        managed_network_proxy_active: bool,
     ) -> Self {
         Self::from_permission_profile(
             &PermissionProfile::from_legacy_sandbox_policy(sandbox_policy),
@@ -103,6 +108,7 @@ impl PermissionsInstructions {
             cwd,
             exec_permission_approvals_enabled,
             request_permissions_tool_enabled,
+            managed_network_proxy_active,
         )
     }
 
@@ -114,6 +120,9 @@ impl PermissionsInstructions {
     ) -> Self {
         let mut text = String::new();
         append_section(&mut text, &sandbox_text(sandbox_mode, network_access));
+        if config.managed_network_proxy_active {
+            append_section(&mut text, NETWORK_PROXY.trim_end());
+        }
         append_section(
             &mut text,
             &approval_text(

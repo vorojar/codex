@@ -2579,6 +2579,7 @@ impl Session {
                     turn_context
                         .features
                         .enabled(Feature::RequestPermissionsTool),
+                    turn_context.network.is_some(),
                 )
                 .render(),
             );
