@@ -363,6 +363,42 @@ mod tests {
     }
 
     #[test]
+    fn deprecated_block_decision_with_additional_context_blocks_processing() {
+        let parsed = parse_completed(
+            &handler(),
+            run_result(
+                Some(0),
+                r#"{"decision":"block","reason":"do not run that","hookSpecificOutput":{"hookEventName":"PreToolUse","additionalContext":"remember this"}}"#,
+                "",
+            ),
+            Some("turn-1".to_string()),
+        );
+
+        assert_eq!(
+            parsed.data,
+            PreToolUseHandlerData {
+                should_block: true,
+                block_reason: Some("do not run that".to_string()),
+                additional_contexts_for_model: vec!["remember this".to_string()],
+            }
+        );
+        assert_eq!(parsed.completed.run.status, HookRunStatus::Blocked);
+        assert_eq!(
+            parsed.completed.run.entries,
+            vec![
+                HookOutputEntry {
+                    kind: HookOutputEntryKind::Context,
+                    text: "remember this".to_string(),
+                },
+                HookOutputEntry {
+                    kind: HookOutputEntryKind::Feedback,
+                    text: "do not run that".to_string(),
+                },
+            ]
+        );
+    }
+
+    #[test]
     fn unsupported_permission_decision_fails_open() {
         let parsed = parse_completed(
             &handler(),

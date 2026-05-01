@@ -99,7 +99,6 @@ pub(crate) fn parse_pre_tool_use(stdout: &str) -> Option<PreToolUseOutput> {
         output.permission_decision.is_some()
             || output.permission_decision_reason.is_some()
             || output.updated_input.is_some()
-            || output.additional_context.is_some()
     });
     let invalid_reason = unsupported_pre_tool_use_universal(&universal).or_else(|| {
         if use_hook_specific_decision {
