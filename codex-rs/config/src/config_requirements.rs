@@ -5,6 +5,7 @@ use codex_protocol::models::PermissionProfile;
 use codex_protocol::protocol::AskForApproval;
 use codex_utils_absolute_path::AbsolutePathBuf;
 use serde::Deserialize;
+use serde::Deserializer;
 use serde::Serialize;
 use serde::de::Error as _;
 use serde::de::value::Error as ValueDeserializerError;
@@ -637,8 +638,27 @@ pub(crate) fn merge_enablement_settings_descending(
 }
 
 /// Base config deserialized from system `requirements.toml` or MDM.
-#[derive(Deserialize, Debug, Clone, Default, PartialEq)]
+#[derive(Debug, Clone, Default, PartialEq)]
 pub struct ConfigRequirementsToml {
+    pub allowed_approval_policies: Option<Vec<AskForApproval>>,
+    pub allowed_approvals_reviewers: Option<Vec<ApprovalsReviewer>>,
+    pub allowed_sandbox_modes: Option<Vec<SandboxModeRequirement>>,
+    pub remote_sandbox_config: Option<Vec<RemoteSandboxConfigToml>>,
+    pub allowed_web_search_modes: Option<Vec<WebSearchModeRequirement>>,
+    pub feature_requirements: Option<FeatureRequirementsToml>,
+    pub hooks: Option<ManagedHooksRequirementsToml>,
+    pub mcp_servers: Option<BTreeMap<String, McpServerRequirement>>,
+    pub plugins: Option<BTreeMap<String, PluginRequirementsToml>>,
+    pub apps: Option<AppsRequirementsToml>,
+    pub rules: Option<RequirementsExecPolicyToml>,
+    pub enforce_residency: Option<ResidencyRequirement>,
+    pub network: Option<NetworkRequirementsToml>,
+    pub permissions: Option<PermissionsRequirementsToml>,
+    pub guardian_policy_config: Option<String>,
+}
+
+#[derive(Deserialize, Debug, Clone, Default, PartialEq)]
+struct ConfigRequirementsTomlHelper {
     pub allowed_approval_policies: Option<Vec<AskForApproval>>,
     pub allowed_approvals_reviewers: Option<Vec<ApprovalsReviewer>>,
     pub allowed_sandbox_modes: Option<Vec<SandboxModeRequirement>>,
@@ -657,6 +677,56 @@ pub struct ConfigRequirementsToml {
     pub network: Option<NetworkRequirementsToml>,
     pub permissions: Option<PermissionsRequirementsToml>,
     pub guardian_policy_config: Option<String>,
+}
+
+impl<'de> Deserialize<'de> for ConfigRequirementsToml {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let ConfigRequirementsTomlHelper {
+            allowed_approval_policies,
+            allowed_approvals_reviewers,
+            allowed_sandbox_modes,
+            remote_sandbox_config,
+            allowed_web_search_modes,
+            allow_managed_hooks_only,
+            feature_requirements,
+            hooks,
+            mcp_servers,
+            plugins,
+            apps,
+            rules,
+            enforce_residency,
+            network,
+            permissions,
+            guardian_policy_config,
+        } = ConfigRequirementsTomlHelper::deserialize(deserializer)?;
+
+        if allow_managed_hooks_only.is_some() {
+            return Err(D::Error::custom(
+                "`allow_managed_hooks_only` must be set under `[hooks]` in requirements.toml",
+            ));
+        }
+
+        Ok(Self {
+            allowed_approval_policies,
+            allowed_approvals_reviewers,
+            allowed_sandbox_modes,
+            remote_sandbox_config,
+            allowed_web_search_modes,
+            feature_requirements,
+            hooks,
+            mcp_servers,
+            plugins,
+            apps,
+            rules,
+            enforce_residency,
+            network,
+            permissions,
+            guardian_policy_config,
+        })
+    }
 }
 
 #[derive(Deserialize, Debug, Clone, PartialEq)]
@@ -684,6 +754,35 @@ impl<T> std::ops::Deref for Sourced<T> {
 
     fn deref(&self) -> &Self::Target {
         &self.value
+    }
+}
+
+fn split_managed_hooks_requirements(
+    hooks: Option<ManagedHooksRequirementsToml>,
+) -> (Option<bool>, Option<ManagedHooksRequirementsToml>) {
+    let Some(mut hooks) = hooks else {
+        return (None, None);
+    };
+    let allow_managed_hooks_only = hooks.allow_managed_hooks_only.take();
+    let hooks = (!hooks.is_empty()).then_some(hooks);
+    (allow_managed_hooks_only, hooks)
+}
+
+fn combine_managed_hooks_requirements(
+    allow_managed_hooks_only: Option<bool>,
+    hooks: Option<ManagedHooksRequirementsToml>,
+) -> Option<ManagedHooksRequirementsToml> {
+    match hooks {
+        Some(mut hooks) => {
+            hooks.allow_managed_hooks_only = allow_managed_hooks_only;
+            Some(hooks)
+        }
+        None => {
+            allow_managed_hooks_only.map(|allow_managed_hooks_only| ManagedHooksRequirementsToml {
+                allow_managed_hooks_only: Some(allow_managed_hooks_only),
+                ..ManagedHooksRequirementsToml::default()
+            })
+        }
     }
 }
 
@@ -730,7 +829,6 @@ impl ConfigRequirementsWithSources {
             allowed_sandbox_modes: _,
             remote_sandbox_config: _,
             allowed_web_search_modes: _,
-            allow_managed_hooks_only: _,
             feature_requirements: _,
             hooks: _,
             mcp_servers: _,
@@ -751,6 +849,8 @@ impl ConfigRequirementsWithSources {
         {
             other.guardian_policy_config = None;
         }
+        let (incoming_allow_managed_hooks_only, incoming_hooks) =
+            split_managed_hooks_requirements(other.hooks.take());
         fill_missing_take!(
             self,
             other,
@@ -760,9 +860,7 @@ impl ConfigRequirementsWithSources {
                 allowed_approvals_reviewers,
                 allowed_sandbox_modes,
                 allowed_web_search_modes,
-                allow_managed_hooks_only,
                 feature_requirements,
-                hooks,
                 mcp_servers,
                 plugins,
                 rules,
@@ -772,6 +870,16 @@ impl ConfigRequirementsWithSources {
                 guardian_policy_config,
             }
         );
+        if self.allow_managed_hooks_only.is_none()
+            && let Some(value) = incoming_allow_managed_hooks_only
+        {
+            self.allow_managed_hooks_only = Some(Sourced::new(value, source.clone()));
+        }
+        if self.hooks.is_none()
+            && let Some(value) = incoming_hooks
+        {
+            self.hooks = Some(Sourced::new(value, source.clone()));
+        }
 
         if let Some(incoming_apps) = other.apps.take() {
             if let Some(existing_apps) = self.apps.as_mut() {
@@ -806,9 +914,11 @@ impl ConfigRequirementsWithSources {
             allowed_sandbox_modes: allowed_sandbox_modes.map(|sourced| sourced.value),
             remote_sandbox_config: None,
             allowed_web_search_modes: allowed_web_search_modes.map(|sourced| sourced.value),
-            allow_managed_hooks_only: allow_managed_hooks_only.map(|sourced| sourced.value),
             feature_requirements: feature_requirements.map(|sourced| sourced.value),
-            hooks: hooks.map(|sourced| sourced.value),
+            hooks: combine_managed_hooks_requirements(
+                allow_managed_hooks_only.map(|sourced| sourced.value),
+                hooks.map(|sourced| sourced.value),
+            ),
             mcp_servers: mcp_servers.map(|sourced| sourced.value),
             plugins: plugins.map(|sourced| sourced.value),
             apps: apps.map(|sourced| sourced.value),
@@ -890,7 +1000,6 @@ impl ConfigRequirementsToml {
             && self.allowed_sandbox_modes.is_none()
             && self.remote_sandbox_config.is_none()
             && self.allowed_web_search_modes.is_none()
-            && self.allow_managed_hooks_only.is_none()
             && self
                 .feature_requirements
                 .as_ref()
@@ -1099,9 +1208,10 @@ impl TryFrom<ConfigRequirementsWithSources> for ConfigRequirements {
             .filter(|managed_hooks| managed_hooks.value.handler_count() > 0)
             .map(|sourced_hooks| {
                 let Sourced {
-                    value,
+                    mut value,
                     source: requirement_source,
                 } = sourced_hooks;
+                value.allow_managed_hooks_only = None;
                 let allowed = value;
                 let allowed_for_error = format!("{allowed:?}");
                 let requirement_source_for_error = requirement_source.clone();
@@ -1237,7 +1347,6 @@ mod tests {
             allowed_sandbox_modes,
             remote_sandbox_config: _,
             allowed_web_search_modes,
-            allow_managed_hooks_only,
             feature_requirements,
             hooks,
             mcp_servers,
@@ -1249,6 +1358,7 @@ mod tests {
             permissions,
             guardian_policy_config,
         } = toml;
+        let (allow_managed_hooks_only, hooks) = split_managed_hooks_requirements(hooks);
         ConfigRequirementsWithSources {
             allowed_approval_policies: allowed_approval_policies
                 .map(|value| Sourced::new(value, RequirementSource::Unknown)),
@@ -1277,29 +1387,60 @@ mod tests {
     }
 
     #[test]
-    fn deserialize_allow_managed_hooks_only() -> Result<()> {
+    fn deserialize_allow_managed_hooks_only_under_hooks() -> Result<()> {
         let requirements: ConfigRequirementsToml = from_str(
             r#"
+                [hooks]
                 allow_managed_hooks_only = true
             "#,
         )?;
 
-        assert_eq!(requirements.allow_managed_hooks_only, Some(true));
+        assert_eq!(
+            requirements
+                .hooks
+                .as_ref()
+                .and_then(|hooks| hooks.allow_managed_hooks_only),
+            Some(true)
+        );
         assert!(!requirements.is_empty());
         Ok(())
     }
 
     #[test]
-    fn allow_managed_hooks_only_false_is_still_configured() -> Result<()> {
+    fn allow_managed_hooks_only_false_is_still_configured_under_hooks() -> Result<()> {
         let requirements: ConfigRequirementsToml = from_str(
             r#"
+                [hooks]
                 allow_managed_hooks_only = false
             "#,
         )?;
 
-        assert_eq!(requirements.allow_managed_hooks_only, Some(false));
+        assert_eq!(
+            requirements
+                .hooks
+                .as_ref()
+                .and_then(|hooks| hooks.allow_managed_hooks_only),
+            Some(false)
+        );
         assert!(!requirements.is_empty());
         Ok(())
+    }
+
+    #[test]
+    fn top_level_allow_managed_hooks_only_is_rejected() {
+        let err = from_str::<ConfigRequirementsToml>(
+            r#"
+                allow_managed_hooks_only = true
+            "#,
+        )
+        .expect_err("top-level allow_managed_hooks_only should be rejected");
+
+        assert!(
+            err.to_string().contains(
+                "`allow_managed_hooks_only` must be set under `[hooks]` in requirements.toml",
+            ),
+            "unexpected error: {err}"
+        );
     }
 
     #[test]
@@ -1333,9 +1474,11 @@ mod tests {
             allowed_sandbox_modes: Some(allowed_sandbox_modes.clone()),
             remote_sandbox_config: None,
             allowed_web_search_modes: Some(allowed_web_search_modes.clone()),
-            allow_managed_hooks_only: Some(true),
             feature_requirements: Some(feature_requirements.clone()),
-            hooks: None,
+            hooks: Some(ManagedHooksRequirementsToml {
+                allow_managed_hooks_only: Some(true),
+                ..ManagedHooksRequirementsToml::default()
+            }),
             mcp_servers: None,
             plugins: None,
             apps: None,
@@ -2390,6 +2533,7 @@ allowed_approvals_reviewers = ["user"]
     #[test]
     fn deserialize_managed_hooks_requirements() -> Result<()> {
         let toml_str = r#"
+allow_managed_hooks_only = true
 managed_dir = "/enterprise/hooks"
 windows_managed_dir = 'C:\enterprise\hooks'
 
@@ -2408,6 +2552,7 @@ statusMessage = "checking"
             hooks.managed_dir.as_deref(),
             Some(std::path::Path::new("/enterprise/hooks"))
         );
+        assert_eq!(hooks.allow_managed_hooks_only, Some(true));
         assert_eq!(hooks.handler_count(), 1);
         assert_eq!(hooks.hooks.pre_tool_use.len(), 1);
         Ok(())
@@ -2467,6 +2612,57 @@ command = "python3 /system/hooks/pre.py"
     }
 
     #[test]
+    fn merge_unset_fields_preserves_existing_hooks_and_fills_hook_policy() -> Result<()> {
+        let mut target = ConfigRequirementsWithSources::default();
+        target.merge_unset_fields(
+            RequirementSource::CloudRequirements,
+            from_str::<ConfigRequirementsToml>(
+                r#"
+[hooks]
+managed_dir = "/cloud/hooks"
+
+[[hooks.PreToolUse]]
+matcher = "^Bash$"
+
+[[hooks.PreToolUse.hooks]]
+type = "command"
+command = "python3 /cloud/hooks/pre.py"
+                "#,
+            )?,
+        );
+        target.merge_unset_fields(
+            RequirementSource::SystemRequirementsToml {
+                file: system_requirements_toml_file_for_test()?,
+            },
+            from_str::<ConfigRequirementsToml>(
+                r#"
+[hooks]
+allow_managed_hooks_only = true
+                "#,
+            )?,
+        );
+
+        assert_eq!(
+            target
+                .hooks
+                .as_ref()
+                .and_then(|hooks| hooks.value.managed_dir.as_ref())
+                .map(std::path::PathBuf::as_path),
+            Some(std::path::Path::new("/cloud/hooks"))
+        );
+        assert_eq!(
+            target.allow_managed_hooks_only,
+            Some(Sourced::new(
+                true,
+                RequirementSource::SystemRequirementsToml {
+                    file: system_requirements_toml_file_for_test()?,
+                },
+            ))
+        );
+        Ok(())
+    }
+
+    #[test]
     fn managed_hooks_constraint_rejects_drift() -> Result<()> {
         let config: ConfigRequirementsToml = from_str(
             r#"
@@ -2488,6 +2684,7 @@ command = "python3 /enterprise/hooks/pre.py"
 
         let err = managed_hooks
             .set(ManagedHooksRequirementsToml {
+                allow_managed_hooks_only: None,
                 managed_dir: Some(std::path::PathBuf::from("/other/hooks")),
                 windows_managed_dir: None,
                 hooks: HookEventsToml::default(),

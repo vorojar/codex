@@ -246,6 +246,60 @@ fn schema_error_points_to_feature_value() {
 }
 
 #[tokio::test]
+async fn returns_config_error_for_requirements_only_hook_policy_in_user_config() {
+    let tmp = tempdir().expect("tempdir");
+    let contents = "[hooks]\nallow_managed_hooks_only = true";
+    let config_path = tmp.path().join(CONFIG_TOML_FILE);
+    std::fs::write(&config_path, contents).expect("write config");
+
+    let err = ConfigBuilder::default()
+        .codex_home(tmp.path().to_path_buf())
+        .fallback_cwd(Some(tmp.path().to_path_buf()))
+        .build()
+        .await
+        .expect_err("expected error");
+
+    let config_error = config_error_from_io(&err);
+    let _guard = codex_utils_absolute_path::AbsolutePathBufGuard::new(tmp.path());
+    let expected_config_error =
+        codex_config::config_error_from_typed_toml::<ConfigToml>(&config_path, contents)
+            .expect("schema error");
+    assert_eq!(config_error, &expected_config_error);
+}
+
+#[tokio::test]
+async fn requirements_only_hook_policy_at_user_config_root_does_not_enable_policy() {
+    let tmp = tempdir().expect("tempdir");
+    let contents = "allow_managed_hooks_only = true";
+    let config_path = tmp.path().join(CONFIG_TOML_FILE);
+    std::fs::write(&config_path, contents).expect("write config");
+
+    let config = ConfigBuilder::default()
+        .codex_home(tmp.path().to_path_buf())
+        .fallback_cwd(Some(tmp.path().to_path_buf()))
+        .build()
+        .await
+        .expect("config should load");
+
+    assert!(
+        config
+            .config_layer_stack
+            .requirements()
+            .allow_managed_hooks_only
+            .is_none()
+    );
+    assert!(
+        config
+            .config_layer_stack
+            .requirements_toml()
+            .hooks
+            .as_ref()
+            .and_then(|hooks| hooks.allow_managed_hooks_only)
+            .is_none()
+    );
+}
+
+#[tokio::test]
 async fn merges_managed_config_layer_on_top() {
     let tmp = tempdir().expect("tempdir");
     let managed_path = tmp.path().join("managed_config.toml");
@@ -777,7 +831,6 @@ allowed_approval_policies = ["on-request"]
                 allowed_sandbox_modes: None,
                 remote_sandbox_config: None,
                 allowed_web_search_modes: None,
-                allow_managed_hooks_only: None,
                 feature_requirements: None,
                 hooks: None,
                 mcp_servers: None,
@@ -835,7 +888,6 @@ allowed_approval_policies = ["on-request"]
             allowed_sandbox_modes: None,
             remote_sandbox_config: None,
             allowed_web_search_modes: None,
-            allow_managed_hooks_only: None,
             feature_requirements: None,
             hooks: None,
             mcp_servers: None,
@@ -1044,7 +1096,6 @@ async fn load_config_layers_includes_cloud_requirements() -> anyhow::Result<()> 
         allowed_sandbox_modes: None,
         remote_sandbox_config: None,
         allowed_web_search_modes: None,
-        allow_managed_hooks_only: None,
         feature_requirements: None,
         hooks: None,
         mcp_servers: None,
@@ -1153,6 +1204,7 @@ async fn load_config_layers_includes_cloud_hook_requirements() -> anyhow::Result
 
     let requirements = ConfigRequirementsToml {
         hooks: Some(codex_config::ManagedHooksRequirementsToml {
+            allow_managed_hooks_only: None,
             managed_dir: Some(managed_dir.clone()),
             windows_managed_dir: None,
             hooks: codex_config::HookEventsToml {

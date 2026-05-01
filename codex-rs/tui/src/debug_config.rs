@@ -272,6 +272,11 @@ fn render_session_flag_details(config: &TomlValue) -> Vec<Line<'static>> {
 fn format_managed_hooks_requirements(hooks: &ManagedHooksRequirementsToml) -> String {
     let mut parts = Vec::new();
 
+    if let Some(allow_managed_hooks_only) = hooks.allow_managed_hooks_only {
+        parts.push(format!(
+            "allow_managed_hooks_only={allow_managed_hooks_only}"
+        ));
+    }
     if let Some(managed_dir) = hooks.managed_dir.as_ref() {
         parts.push(format!("managed_dir={}", managed_dir.display()));
     }
@@ -684,7 +689,6 @@ mod tests {
             allowed_sandbox_modes: Some(vec![SandboxModeRequirement::ReadOnly]),
             remote_sandbox_config: None,
             allowed_web_search_modes: Some(vec![WebSearchModeRequirement::Cached]),
-            allow_managed_hooks_only: None,
             guardian_policy_config: Some("Use the managed guardian policy.".to_string()),
             feature_requirements: Some(FeatureRequirementsToml {
                 entries: BTreeMap::from([("guardian_approval".to_string(), true)]),
@@ -894,7 +898,6 @@ approval_policy = "never"
             allowed_sandbox_modes: None,
             remote_sandbox_config: None,
             allowed_web_search_modes: Some(Vec::new()),
-            allow_managed_hooks_only: None,
             guardian_policy_config: None,
             feature_requirements: None,
             hooks: None,
@@ -921,6 +924,7 @@ approval_policy = "never"
         let requirements = ConfigRequirements {
             managed_hooks: Some(ConstrainedWithSource::new(
                 Constrained::allow_any(ManagedHooksRequirementsToml {
+                    allow_managed_hooks_only: None,
                     managed_dir: Some(if cfg!(windows) {
                         std::path::PathBuf::from(r"C:\enterprise\hooks")
                     } else {

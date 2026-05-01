@@ -41,6 +41,7 @@ fn managed_hooks_for_current_platform(
 ) -> ManagedHooksRequirementsToml {
     let managed_dir = managed_dir.as_ref().to_path_buf();
     ManagedHooksRequirementsToml {
+        allow_managed_hooks_only: None,
         managed_dir: if cfg!(windows) {
             None
         } else {
@@ -114,13 +115,23 @@ fn requirements_with_managed_hooks_only(
     allow_managed_hooks_only: bool,
     managed_hooks: Option<ManagedHooksRequirementsToml>,
 ) -> (ConfigRequirements, ConfigRequirementsToml) {
+    let requirements_hooks = match managed_hooks.clone() {
+        Some(mut hooks) => {
+            hooks.allow_managed_hooks_only = Some(allow_managed_hooks_only);
+            Some(hooks)
+        }
+        None => Some(ManagedHooksRequirementsToml {
+            allow_managed_hooks_only: Some(allow_managed_hooks_only),
+            ..ManagedHooksRequirementsToml::default()
+        }),
+    };
     (
         ConfigRequirements {
             allow_managed_hooks_only: Some(Sourced::new(
                 allow_managed_hooks_only,
                 RequirementSource::CloudRequirements,
             )),
-            managed_hooks: managed_hooks.clone().map(|hooks| {
+            managed_hooks: managed_hooks.map(|hooks| {
                 ConstrainedWithSource::new(
                     Constrained::allow_any(hooks),
                     Some(RequirementSource::CloudRequirements),
@@ -129,8 +140,7 @@ fn requirements_with_managed_hooks_only(
             ..ConfigRequirements::default()
         },
         ConfigRequirementsToml {
-            allow_managed_hooks_only: Some(allow_managed_hooks_only),
-            hooks: managed_hooks,
+            hooks: requirements_hooks,
             ..ConfigRequirementsToml::default()
         },
     )
@@ -646,7 +656,10 @@ fn allow_managed_hooks_only_in_config_toml_does_not_enable_policy() {
     let TomlValue::Table(config_table) = &mut config_toml else {
         unreachable!("config TOML root should be a table");
     };
-    config_table.insert(
+    let Some(TomlValue::Table(hooks_table)) = config_table.get_mut("hooks") else {
+        unreachable!("hooks config should be a table");
+    };
+    hooks_table.insert(
         "allow_managed_hooks_only".to_string(),
         TomlValue::Boolean(true),
     );
@@ -744,7 +757,7 @@ fn allow_managed_hooks_only_skips_unmanaged_plugin_hooks() {
         plugin_id,
         plugin_root,
         plugin_data_root,
-        source_path: source_path,
+        source_path,
         source_relative_path: "hooks/hooks.json".to_string(),
         hooks: pre_tool_use_hook_events("python3 /tmp/plugin-hook.py"),
     }];

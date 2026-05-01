@@ -5,6 +5,7 @@ use std::path::PathBuf;
 use codex_protocol::protocol::HookEventName;
 use schemars::JsonSchema;
 use serde::Deserialize;
+use serde::Deserializer;
 use serde::Serialize;
 
 #[derive(Debug, Default, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -13,7 +14,8 @@ pub struct HooksFile {
     pub hooks: HookEventsToml,
 }
 
-#[derive(Debug, Default, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Default, Clone, PartialEq, Eq, Serialize, JsonSchema)]
+#[schemars(deny_unknown_fields)]
 pub struct HooksToml {
     #[serde(flatten)]
     pub events: HookEventsToml,
@@ -127,6 +129,7 @@ pub enum HookHandlerConfig {
 
 #[derive(Debug, Default, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ManagedHooksRequirementsToml {
+    pub allow_managed_hooks_only: Option<bool>,
     pub managed_dir: Option<PathBuf>,
     pub windows_managed_dir: Option<PathBuf>,
     #[serde(flatten)]
@@ -136,11 +139,15 @@ pub struct ManagedHooksRequirementsToml {
 impl ManagedHooksRequirementsToml {
     pub fn is_empty(&self) -> bool {
         let Self {
+            allow_managed_hooks_only,
             managed_dir,
             windows_managed_dir,
             hooks,
         } = self;
-        managed_dir.is_none() && windows_managed_dir.is_none() && hooks.is_empty()
+        allow_managed_hooks_only.is_none()
+            && managed_dir.is_none()
+            && windows_managed_dir.is_none()
+            && hooks.is_empty()
     }
 
     pub fn handler_count(&self) -> usize {
@@ -157,6 +164,59 @@ impl ManagedHooksRequirementsToml {
         {
             self.managed_dir.as_deref()
         }
+    }
+}
+
+#[derive(Debug, Default, Clone, PartialEq, Eq, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct HooksTomlHelper {
+    #[serde(rename = "PreToolUse", default)]
+    pre_tool_use: Vec<MatcherGroup>,
+    #[serde(rename = "PermissionRequest", default)]
+    permission_request: Vec<MatcherGroup>,
+    #[serde(rename = "PostToolUse", default)]
+    post_tool_use: Vec<MatcherGroup>,
+    #[serde(rename = "SessionStart", default)]
+    session_start: Vec<MatcherGroup>,
+    #[serde(rename = "UserPromptSubmit", default)]
+    user_prompt_submit: Vec<MatcherGroup>,
+    #[serde(rename = "Stop", default)]
+    stop: Vec<MatcherGroup>,
+    #[serde(default)]
+    state: BTreeMap<String, HookStateToml>,
+}
+
+impl From<HooksTomlHelper> for HooksToml {
+    fn from(value: HooksTomlHelper) -> Self {
+        let HooksTomlHelper {
+            pre_tool_use,
+            permission_request,
+            post_tool_use,
+            session_start,
+            user_prompt_submit,
+            stop,
+            state,
+        } = value;
+        Self {
+            events: HookEventsToml {
+                pre_tool_use,
+                permission_request,
+                post_tool_use,
+                session_start,
+                user_prompt_submit,
+                stop,
+            },
+            state,
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for HooksToml {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        HooksTomlHelper::deserialize(deserializer).map(Into::into)
     }
 }
 

@@ -129,9 +129,26 @@ command = "python3 /tmp/pre.py"
 }
 
 #[test]
+fn hooks_toml_rejects_requirements_only_keys() {
+    let err = toml::from_str::<HooksToml>(
+        r#"
+allow_managed_hooks_only = true
+managed_dir = "/enterprise/place"
+"#,
+    )
+    .expect_err("config hooks TOML should reject managed requirements keys");
+
+    assert!(
+        err.to_string().contains("unknown field"),
+        "unexpected error: {err}"
+    );
+}
+
+#[test]
 fn managed_hooks_requirements_flatten_hook_events() {
     let parsed: ManagedHooksRequirementsToml = toml::from_str(
         r#"
+allow_managed_hooks_only = true
 managed_dir = "/enterprise/place"
 
 [[PreToolUse]]
@@ -147,6 +164,7 @@ command = "python3 /enterprise/place/pre.py"
     assert_eq!(
         parsed,
         ManagedHooksRequirementsToml {
+            allow_managed_hooks_only: Some(true),
             managed_dir: Some(std::path::PathBuf::from("/enterprise/place")),
             windows_managed_dir: None,
             hooks: HookEventsToml {
