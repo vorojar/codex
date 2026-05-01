@@ -2894,6 +2894,42 @@ async fn add_dir_override_extends_workspace_writable_roots() -> std::io::Result<
 }
 
 #[tokio::test]
+async fn project_roots_override_realizes_workspace_profile_for_each_root() -> std::io::Result<()> {
+    let codex_home = TempDir::new()?;
+    let temp_dir = TempDir::new()?;
+    let frontend = temp_dir.path().join("frontend");
+    let backend = temp_dir.path().join("backend");
+    std::fs::create_dir_all(frontend.join(".git"))?;
+    std::fs::create_dir_all(backend.join(".git"))?;
+
+    let config = Config::load_from_base_config_with_overrides(
+        ConfigToml {
+            default_permissions: Some(":workspace".to_string()),
+            ..Default::default()
+        },
+        ConfigOverrides {
+            cwd: Some(frontend.clone()),
+            project_roots: vec![backend.clone()],
+            ..Default::default()
+        },
+        codex_home.abs(),
+    )
+    .await?;
+
+    let policy = config.permissions.file_system_sandbox_policy();
+    assert!(policy.can_write_path_with_cwd(&frontend, &frontend));
+    assert!(policy.can_write_path_with_cwd(&backend, &frontend));
+    assert!(!policy.can_write_path_with_cwd(&frontend.join(".git"), &frontend));
+    assert!(!policy.can_write_path_with_cwd(&backend.join(".git"), &frontend));
+    assert_eq!(
+        config.permissions.active_permission_profile(),
+        Some(ActivePermissionProfile::new(":workspace"))
+    );
+
+    Ok(())
+}
+
+#[tokio::test]
 async fn sqlite_home_defaults_to_codex_home_for_workspace_write() -> std::io::Result<()> {
     let codex_home = TempDir::new()?;
     let config = Config::load_from_base_config_with_overrides(

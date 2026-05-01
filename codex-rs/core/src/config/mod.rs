@@ -1803,6 +1803,7 @@ pub struct ConfigOverrides {
     pub show_raw_agent_reasoning: Option<bool>,
     pub tools_web_search_request: Option<bool>,
     pub ephemeral: Option<bool>,
+    pub project_roots: Vec<PathBuf>,
     /// Additional directories that should be treated as writable roots for this session.
     pub additional_writable_roots: Vec<PathBuf>,
 }
@@ -2128,6 +2129,7 @@ impl Config {
             show_raw_agent_reasoning,
             tools_web_search_request: override_tools_web_search_request,
             ephemeral,
+            project_roots: override_project_roots,
             additional_writable_roots,
         } = overrides;
 
@@ -2221,6 +2223,14 @@ impl Config {
             .map(|path| AbsolutePathBuf::resolve_path_against_base(path, resolved_cwd.as_path()))
             .collect();
         let requested_additional_writable_roots = additional_writable_roots.clone();
+        let mut project_roots = vec![resolved_cwd.clone()];
+        project_roots.extend(
+            override_project_roots
+                .into_iter()
+                .map(|path| AbsolutePathBuf::resolve_path_against_base(path, resolved_cwd.as_path())),
+        );
+        project_roots.sort();
+        project_roots.dedup();
         let repo_root = resolve_root_git_project_for_trust(fs, &resolved_cwd).await;
         let active_project = cfg
             .get_active_project(
@@ -2279,8 +2289,8 @@ impl Config {
             permission_config_syntax.is_none() && default_permissions.is_none();
         let (
             configured_network_proxy_config,
-            permission_profile,
-            file_system_sandbox_policy,
+            mut permission_profile,
+            mut file_system_sandbox_policy,
             mut active_permission_profile,
         ) = if let Some(mut permission_profile) = permission_profile {
             let (mut file_system_sandbox_policy, network_sandbox_policy) =
@@ -2491,6 +2501,16 @@ impl Config {
                 None,
             )
         };
+        if project_roots.len() > 1 {
+            let network_sandbox_policy = permission_profile.network_sandbox_policy();
+            file_system_sandbox_policy =
+                file_system_sandbox_policy.materialize_project_roots(&project_roots);
+            permission_profile = PermissionProfile::from_runtime_permissions_with_enforcement(
+                permission_profile.enforcement(),
+                &file_system_sandbox_policy,
+                network_sandbox_policy,
+            );
+        }
         let approval_policy_was_explicit = approval_policy_override.is_some()
             || config_profile.approval_policy.is_some()
             || cfg.approval_policy.is_some();

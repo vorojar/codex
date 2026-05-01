@@ -728,6 +728,7 @@ impl ThreadRequestProcessor {
             model_provider,
             service_tier,
             cwd,
+            project_roots,
             approval_policy,
             approvals_reviewer,
             sandbox,
@@ -756,6 +757,7 @@ impl ThreadRequestProcessor {
             model_provider,
             service_tier,
             cwd,
+            project_roots,
             approval_policy,
             approvals_reviewer,
             sandbox,
@@ -1107,6 +1109,7 @@ impl ThreadRequestProcessor {
         model_provider: Option<String>,
         service_tier: Option<Option<codex_protocol::config_types::ServiceTier>>,
         cwd: Option<String>,
+        project_roots: Option<Vec<AbsolutePathBuf>>,
         approval_policy: Option<codex_app_server_protocol::AskForApproval>,
         approvals_reviewer: Option<codex_app_server_protocol::ApprovalsReviewer>,
         sandbox: Option<SandboxMode>,
@@ -1125,6 +1128,11 @@ impl ThreadRequestProcessor {
             approvals_reviewer: approvals_reviewer
                 .map(codex_app_server_protocol::ApprovalsReviewer::to_core),
             sandbox_mode: sandbox.map(SandboxMode::to_core),
+            project_roots: project_roots
+                .unwrap_or_default()
+                .into_iter()
+                .map(AbsolutePathBuf::into_path_buf)
+                .collect(),
             codex_linux_sandbox_exe: self.arg0_paths.codex_linux_sandbox_exe.clone(),
             main_execve_wrapper_exe: self.arg0_paths.main_execve_wrapper_exe.clone(),
             base_instructions,
@@ -2227,6 +2235,7 @@ impl ThreadRequestProcessor {
             model_provider,
             service_tier,
             cwd,
+            project_roots,
             approval_policy,
             approvals_reviewer,
             sandbox,
@@ -2262,6 +2271,7 @@ impl ThreadRequestProcessor {
             model_provider,
             service_tier,
             cwd,
+            project_roots,
             approval_policy,
             approvals_reviewer,
             sandbox,
@@ -2879,6 +2889,7 @@ impl ThreadRequestProcessor {
             model_provider,
             service_tier,
             cwd,
+            /*project_roots*/ None,
             approval_policy,
             approvals_reviewer,
             sandbox,

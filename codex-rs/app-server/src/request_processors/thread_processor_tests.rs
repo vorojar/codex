@@ -514,6 +514,7 @@ mod thread_processor_behavior_tests {
             model_provider: None,
             service_tier: Some(Some(codex_protocol::config_types::ServiceTier::Fast)),
             cwd: None,
+            project_roots: None,
             approval_policy: None,
             approvals_reviewer: None,
             sandbox: None,

@@ -658,25 +658,45 @@ impl FileSystemSandboxPolicy {
     }
 
     /// Replaces symbolic `:project_roots` entries with absolute paths resolved
+    /// against `project_roots`.
+    pub fn materialize_project_roots(mut self, project_roots: &[AbsolutePathBuf]) -> Self {
+        let mut materialized_entries = Vec::new();
+        for entry in self.entries {
+            let FileSystemPath::Special {
+                value: FileSystemSpecialPath::ProjectRoots { subpath },
+            } = &entry.path
+            else {
+                materialized_entries.push(entry);
+                continue;
+            };
+
+            for project_root in project_roots {
+                let path = match subpath.as_ref() {
+                    Some(subpath) => {
+                        AbsolutePathBuf::resolve_path_against_base(subpath, project_root.as_path())
+                    }
+                    None => project_root.clone(),
+                };
+                materialized_entries.push(FileSystemSandboxEntry {
+                    path: FileSystemPath::Path { path },
+                    access: entry.access,
+                });
+            }
+        }
+        self.entries = materialized_entries;
+        self
+    }
+
+    /// Replaces symbolic `:project_roots` entries with absolute paths resolved
     /// against `cwd`.
     ///
     /// Use this when a durable permission profile must survive a cwd-only
     /// update without rebinding its project-root authority to the new cwd.
-    pub fn materialize_project_roots_with_cwd(mut self, cwd: &Path) -> Self {
-        let cwd = AbsolutePathBuf::from_absolute_path(cwd).ok();
-        for entry in &mut self.entries {
-            let FileSystemPath::Special {
-                value: FileSystemSpecialPath::ProjectRoots { .. },
-            } = &entry.path
-            else {
-                continue;
-            };
-
-            if let Some(path) = resolve_file_system_path(&entry.path, cwd.as_ref()) {
-                entry.path = FileSystemPath::Path { path };
-            }
-        }
-        self
+    pub fn materialize_project_roots_with_cwd(self, cwd: &Path) -> Self {
+        let Some(cwd) = AbsolutePathBuf::from_absolute_path(cwd).ok() else {
+            return self;
+        };
+        self.materialize_project_roots(&[cwd])
     }
 
     pub fn with_additional_readable_roots(
@@ -2142,6 +2162,56 @@ mod tests {
             writable_roots[0]
                 .read_only_subpaths
                 .contains(&expected_codex)
+        );
+    }
+
+    #[test]
+    fn materialize_project_roots_expands_each_root_and_subpath() {
+        let cwd = AbsolutePathBuf::from_absolute_path("/tmp/workspace").expect("absolute cwd");
+        let extra = AbsolutePathBuf::from_absolute_path("/tmp/extra").expect("absolute extra");
+        let policy = FileSystemSandboxPolicy::restricted(vec![
+            FileSystemSandboxEntry {
+                path: FileSystemPath::Special {
+                    value: FileSystemSpecialPath::project_roots(/*subpath*/ None),
+                },
+                access: FileSystemAccessMode::Write,
+            },
+            FileSystemSandboxEntry {
+                path: FileSystemPath::Special {
+                    value: FileSystemSpecialPath::project_roots(Some(".git".into())),
+                },
+                access: FileSystemAccessMode::Read,
+            },
+        ]);
+
+        let actual = policy.materialize_project_roots(&[cwd.clone(), extra.clone()]);
+
+        assert_eq!(
+            actual,
+            FileSystemSandboxPolicy::restricted(vec![
+                FileSystemSandboxEntry {
+                    path: FileSystemPath::Path { path: cwd.clone() },
+                    access: FileSystemAccessMode::Write,
+                },
+                FileSystemSandboxEntry {
+                    path: FileSystemPath::Path {
+                        path: extra.clone()
+                    },
+                    access: FileSystemAccessMode::Write,
+                },
+                FileSystemSandboxEntry {
+                    path: FileSystemPath::Path {
+                        path: cwd.join(".git")
+                    },
+                    access: FileSystemAccessMode::Read,
+                },
+                FileSystemSandboxEntry {
+                    path: FileSystemPath::Path {
+                        path: extra.join(".git")
+                    },
+                    access: FileSystemAccessMode::Read,
+                },
+            ])
         );
     }
 

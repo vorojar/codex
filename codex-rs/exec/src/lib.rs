@@ -207,6 +207,7 @@ struct ExecRunArgs {
     oss: bool,
     output_schema_path: Option<PathBuf>,
     prompt: Option<String>,
+    project_roots: Option<Vec<AbsolutePathBuf>>,
     skip_git_repo_check: bool,
     stderr_with_ansi: bool,
 }
@@ -257,6 +258,7 @@ pub async fn run_main(cli: Cli, arg0_paths: Arg0DispatchPaths) -> anyhow::Result
         cwd,
         add_dir,
     } = shared;
+    let add_dir_for_project_roots = add_dir.clone();
 
     let (_stdout_with_ansi, stderr_with_ansi) = match color {
         cli::Color::Always => (true, true),
@@ -420,7 +422,8 @@ pub async fn run_main(cli: Cli, arg0_paths: Arg0DispatchPaths) -> anyhow::Result
         show_raw_agent_reasoning: oss.then_some(true),
         tools_web_search_request: None,
         ephemeral: ephemeral.then_some(true),
-        additional_writable_roots: add_dir,
+        project_roots: add_dir,
+        additional_writable_roots: Vec::new(),
     };
 
     let config = ConfigBuilder::default()
@@ -430,6 +433,7 @@ pub async fn run_main(cli: Cli, arg0_paths: Arg0DispatchPaths) -> anyhow::Result
         .cloud_requirements(cloud_requirements)
         .build()
         .await?;
+    let project_roots = project_roots_from_add_dir(config.cwd.as_path(), add_dir_for_project_roots);
 
     #[allow(clippy::print_stderr)]
     match check_execpolicy_for_warnings(&config.config_layer_stack).await {
@@ -541,6 +545,7 @@ pub async fn run_main(cli: Cli, arg0_paths: Arg0DispatchPaths) -> anyhow::Result
         oss,
         output_schema_path,
         prompt,
+        project_roots,
         skip_git_repo_check,
         stderr_with_ansi,
     })
@@ -563,6 +568,7 @@ async fn run_exec_session(args: ExecRunArgs) -> anyhow::Result<()> {
         oss,
         output_schema_path,
         prompt,
+        project_roots,
         skip_git_repo_check,
         stderr_with_ansi,
     } = args;
@@ -685,7 +691,11 @@ async fn run_exec_session(args: ExecRunArgs) -> anyhow::Result<()> {
                 &client,
                 ClientRequest::ThreadResume {
                     request_id: request_ids.next(),
-                    params: thread_resume_params_from_config(&config, thread_id),
+                    params: thread_resume_params_from_config(
+                        &config,
+                        thread_id,
+                        project_roots.clone(),
+                    ),
                 },
                 "thread/resume",
             )
@@ -700,7 +710,7 @@ async fn run_exec_session(args: ExecRunArgs) -> anyhow::Result<()> {
                 &client,
                 ClientRequest::ThreadStart {
                     request_id: request_ids.next(),
-                    params: thread_start_params_from_config(&config),
+                    params: thread_start_params_from_config(&config, project_roots.clone()),
                 },
                 "thread/start",
             )
@@ -716,7 +726,7 @@ async fn run_exec_session(args: ExecRunArgs) -> anyhow::Result<()> {
             &client,
             ClientRequest::ThreadStart {
                 request_id: request_ids.next(),
-                params: thread_start_params_from_config(&config),
+                params: thread_start_params_from_config(&config, project_roots.clone()),
             },
             "thread/start",
         )
@@ -929,7 +939,10 @@ async fn run_exec_session(args: ExecRunArgs) -> anyhow::Result<()> {
     Ok(())
 }
 
-fn thread_start_params_from_config(config: &Config) -> ThreadStartParams {
+fn thread_start_params_from_config(
+    config: &Config,
+    project_roots: Option<Vec<AbsolutePathBuf>>,
+) -> ThreadStartParams {
     let permissions = permissions_selection_from_config(config);
     let sandbox = permissions.is_none().then(|| {
         sandbox_mode_from_permission_profile(
@@ -941,6 +954,7 @@ fn thread_start_params_from_config(config: &Config) -> ThreadStartParams {
         model: config.model.clone(),
         model_provider: Some(config.model_provider_id.clone()),
         cwd: Some(config.cwd.to_string_lossy().to_string()),
+        project_roots,
         approval_policy: Some(config.permissions.approval_policy.value().into()),
         approvals_reviewer: approvals_reviewer_override_from_config(config),
         sandbox: sandbox.flatten(),
@@ -951,7 +965,11 @@ fn thread_start_params_from_config(config: &Config) -> ThreadStartParams {
     }
 }
 
-fn thread_resume_params_from_config(config: &Config, thread_id: String) -> ThreadResumeParams {
+fn thread_resume_params_from_config(
+    config: &Config,
+    thread_id: String,
+    project_roots: Option<Vec<AbsolutePathBuf>>,
+) -> ThreadResumeParams {
     let permissions = permissions_selection_from_config(config);
     let sandbox = permissions.is_none().then(|| {
         sandbox_mode_from_permission_profile(
@@ -964,6 +982,7 @@ fn thread_resume_params_from_config(config: &Config, thread_id: String) -> Threa
         model: config.model.clone(),
         model_provider: Some(config.model_provider_id.clone()),
         cwd: Some(config.cwd.to_string_lossy().to_string()),
+        project_roots,
         approval_policy: Some(config.permissions.approval_policy.value().into()),
         approvals_reviewer: approvals_reviewer_override_from_config(config),
         sandbox: sandbox.flatten(),
@@ -996,6 +1015,22 @@ fn permissions_selection_from_active_profile(
         id: active.id,
         modifications: (!modifications.is_empty()).then_some(modifications),
     }
+}
+
+fn project_roots_from_add_dir(cwd: &Path, add_dir: Vec<PathBuf>) -> Option<Vec<AbsolutePathBuf>> {
+    if add_dir.is_empty() {
+        return None;
+    }
+    let cwd = AbsolutePathBuf::from_absolute_path(cwd).ok()?;
+    let mut roots = vec![cwd.clone()];
+    roots.extend(
+        add_dir
+            .into_iter()
+            .map(|path| AbsolutePathBuf::resolve_path_against_base(path, cwd.as_path())),
+    );
+    roots.sort();
+    roots.dedup();
+    (roots.len() > 1).then_some(roots)
 }
 
 fn sandbox_mode_from_permission_profile(
