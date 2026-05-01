@@ -3057,6 +3057,10 @@ pub struct ExecCommandBeginEvent {
     pub process_id: Option<String>,
     /// Turn ID that this command belongs to.
     pub turn_id: String,
+    /// Unix timestamp (in milliseconds) when command execution started.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(type = "number | null", optional)]
+    pub started_at_ms: Option<i64>,
     /// The command to be executed.
     pub command: Vec<String>,
     /// The command's working directory if not the default cwd for the agent.

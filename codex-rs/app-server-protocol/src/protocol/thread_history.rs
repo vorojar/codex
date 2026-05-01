@@ -2443,6 +2443,7 @@ mod tests {
                 call_id: "exec-call".into(),
                 process_id: Some("pid-1".into()),
                 turn_id: turn_id.to_string(),
+                started_at_ms: None,
                 command: vec!["sleep".into(), "100".into()],
                 cwd: test_path_buf("/tmp").abs(),
                 parsed_cmd: vec![ParsedCommand::Unknown {

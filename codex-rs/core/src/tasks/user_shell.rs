@@ -1,6 +1,7 @@
 use std::sync::Arc;
 use std::time::Duration;
 
+use chrono::Utc;
 use codex_async_utils::CancelErr;
 use codex_async_utils::OrCancelExt;
 use codex_network_proxy::PROXY_ACTIVE_ENV_KEY;
@@ -164,6 +165,7 @@ pub(crate) async fn execute_user_shell_command(
                 call_id: call_id.clone(),
                 process_id: None,
                 turn_id: turn_context.sub_id.clone(),
+                started_at_ms: Some(Utc::now().timestamp_millis()),
                 command: display_command.clone(),
                 cwd: cwd.clone(),
                 parsed_cmd: parsed_cmd.clone(),
