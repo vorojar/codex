@@ -25,6 +25,22 @@ pub struct RemoteExecServerConnectArgs {
     pub resume_session_id: Option<String>,
 }
 
+/// Stdio connection arguments for a command-backed exec-server.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StdioExecServerConnectArgs {
+    pub shell_command: String,
+    pub client_name: String,
+    pub initialize_timeout: Duration,
+    pub resume_session_id: Option<String>,
+}
+
+/// Transport used to connect to a remote exec-server environment.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ExecServerTransport {
+    WebSocketUrl(String),
+    StdioShellCommand(String),
+}
+
 /// Sends HTTP requests through a runtime-selected transport.
 ///
 /// This is the HTTP capability counterpart to [`crate::ExecBackend`]. Callers

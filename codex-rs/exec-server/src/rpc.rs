@@ -23,6 +23,7 @@ use tokio::task::JoinHandle;
 
 use crate::connection::JsonRpcConnection;
 use crate::connection::JsonRpcConnectionEvent;
+use crate::connection::JsonRpcConnectionLifetimeGuard;
 
 #[derive(Debug)]
 pub(crate) enum RpcCallError {
@@ -229,12 +230,14 @@ pub(crate) struct RpcClient {
     disconnected_rx: watch::Receiver<bool>,
     next_request_id: AtomicI64,
     transport_tasks: Vec<JoinHandle<()>>,
+    _transport_lifetime_guard: Option<JsonRpcConnectionLifetimeGuard>,
     reader_task: JoinHandle<()>,
 }
 
 impl RpcClient {
     pub(crate) fn new(connection: JsonRpcConnection) -> (Self, mpsc::Receiver<RpcClientEvent>) {
-        let (write_tx, mut incoming_rx, disconnected_rx, transport_tasks) = connection.into_parts();
+        let (write_tx, mut incoming_rx, disconnected_rx, transport_tasks, lifetime_guard) =
+            connection.into_parts();
         let pending = Arc::new(Mutex::new(HashMap::<RequestId, PendingRequest>::new()));
         let (event_tx, event_rx) = mpsc::channel(128);
 
@@ -275,6 +278,7 @@ impl RpcClient {
                 disconnected_rx,
                 next_request_id: AtomicI64::new(1),
                 transport_tasks,
+                _transport_lifetime_guard: lifetime_guard,
                 reader_task,
             },
             event_rx,

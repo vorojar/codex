@@ -1,5 +1,6 @@
 mod client;
 mod client_api;
+mod client_transport;
 mod connection;
 mod environment;
 mod environment_provider;
@@ -23,8 +24,10 @@ pub use client::ExecServerError;
 pub use client::http_client::HttpResponseBodyStream;
 pub use client::http_client::ReqwestHttpClient;
 pub use client_api::ExecServerClientConnectOptions;
+pub use client_api::ExecServerTransport;
 pub use client_api::HttpClient;
 pub use client_api::RemoteExecServerConnectArgs;
+pub use client_api::StdioExecServerConnectArgs;
 pub use codex_file_system::CopyOptions;
 pub use codex_file_system::CreateDirectoryOptions;
 pub use codex_file_system::ExecutorFileSystem;
