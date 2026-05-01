@@ -31,6 +31,10 @@ impl ProcessHandler {
         self.process.set_notification_sender(notifications);
     }
 
+    pub(crate) async fn active_process_count(&self) -> usize {
+        self.process.active_process_count().await
+    }
+
     pub(crate) async fn exec(&self, params: ExecParams) -> Result<ExecResponse, JSONRPCErrorError> {
         self.process.exec(params).await
     }

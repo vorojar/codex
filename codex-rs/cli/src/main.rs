@@ -450,9 +450,13 @@ struct ExecServerCommand {
     #[arg(
         long = "listen",
         value_name = "URL",
-        default_value = "ws://127.0.0.1:0"
+        default_value = codex_exec_server::DEFAULT_LISTEN_URL
     )]
     listen: String,
+
+    /// Path to exec-server configuration. Defaults to `$CODEX_HOME/exec-server.toml`.
+    #[arg(long = "config", value_name = "PATH")]
+    config: Option<PathBuf>,
 }
 
 #[derive(Debug, clap::Subcommand)]
@@ -1257,6 +1261,13 @@ async fn run_exec_server_command(
     cmd: ExecServerCommand,
     arg0_paths: &Arg0DispatchPaths,
 ) -> anyhow::Result<()> {
+    let config_path = match cmd.config {
+        Some(path) => path,
+        None => find_codex_home()?.join(codex_exec_server::EXEC_SERVER_CONFIG_FILE),
+    };
+    let options = codex_exec_server::ExecServerConfig::load_from_path(&config_path)
+        .await?
+        .into_run_options(&config_path)?;
     let codex_self_exe = arg0_paths
         .codex_self_exe
         .clone()
@@ -1265,7 +1276,7 @@ async fn run_exec_server_command(
         codex_self_exe,
         arg0_paths.codex_linux_sandbox_exe.clone(),
     )?;
-    codex_exec_server::run_main(&cmd.listen, runtime_paths)
+    codex_exec_server::run_main_with_options(&cmd.listen, runtime_paths, options)
         .await
         .map_err(anyhow::Error::from_boxed)
 }
@@ -1812,10 +1823,35 @@ mod tests {
         app_server
     }
 
+    fn exec_server_from_args(args: &[&str]) -> ExecServerCommand {
+        let cli = MultitoolCli::try_parse_from(args).expect("parse");
+        let Subcommand::ExecServer(exec_server) = cli.subcommand.expect("exec-server present")
+        else {
+            unreachable!()
+        };
+        exec_server
+    }
+
     fn default_app_server_socket_path() -> AbsolutePathBuf {
         let codex_home = find_codex_home().expect("codex home");
         codex_app_server::app_server_control_socket_path(&codex_home)
             .expect("default app-server socket path")
+    }
+
+    #[test]
+    fn exec_server_defaults_config_path_to_none() {
+        let exec_server = exec_server_from_args(["codex", "exec-server"].as_ref());
+
+        assert_eq!(exec_server.listen, "ws://127.0.0.1:0");
+        assert_eq!(exec_server.config, None);
+    }
+
+    #[test]
+    fn exec_server_parses_config_path() {
+        let exec_server =
+            exec_server_from_args(["codex", "exec-server", "--config", "/tmp/exec.toml"].as_ref());
+
+        assert_eq!(exec_server.config, Some(PathBuf::from("/tmp/exec.toml")));
     }
 
     #[test]

@@ -136,22 +136,34 @@ fn maybe_run_exec_server_from_test_binary(guard: Option<&TestBinaryDispatchGuard
         return;
     }
 
-    let Some(flag) = args.next() else {
+    let mut listen_url = None;
+    let mut config_path = None;
+    while let Some(flag) = args.next() {
+        match flag.as_str() {
+            "--listen" => {
+                let Some(value) = args.next() else {
+                    eprintln!("expected listen URL");
+                    std::process::exit(1);
+                };
+                listen_url = Some(value);
+            }
+            "--config" => {
+                let Some(value) = args.next() else {
+                    eprintln!("expected config path");
+                    std::process::exit(1);
+                };
+                config_path = Some(PathBuf::from(value));
+            }
+            _ => {
+                eprintln!("unexpected exec-server argument `{flag}`");
+                std::process::exit(1);
+            }
+        }
+    }
+    let Some(listen_url) = listen_url else {
         eprintln!("expected --listen");
         std::process::exit(1);
     };
-    if flag != "--listen" {
-        eprintln!("expected --listen, got `{flag}`");
-        std::process::exit(1);
-    }
-    let Some(listen_url) = args.next() else {
-        eprintln!("expected listen URL");
-        std::process::exit(1);
-    };
-    if args.next().is_some() {
-        eprintln!("unexpected extra arguments");
-        std::process::exit(1);
-    }
 
     let current_exe = match env::current_exe() {
         Ok(current_exe) => current_exe,
@@ -180,8 +192,17 @@ fn maybe_run_exec_server_from_test_binary(guard: Option<&TestBinaryDispatchGuard
             std::process::exit(1);
         }
     };
-    let exit_code = match runtime.block_on(codex_exec_server::run_main(&listen_url, runtime_paths))
-    {
+    let config_path = config_path.unwrap_or_else(|| {
+        let codex_home = env::var_os("CODEX_HOME")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| PathBuf::from("."));
+        codex_home.join(codex_exec_server::EXEC_SERVER_CONFIG_FILE)
+    });
+    let exit_code = match runtime.block_on(run_test_exec_server(
+        &listen_url,
+        runtime_paths,
+        &config_path,
+    )) {
         Ok(()) => 0,
         Err(error) => {
             eprintln!("exec-server failed: {error}");
@@ -189,6 +210,17 @@ fn maybe_run_exec_server_from_test_binary(guard: Option<&TestBinaryDispatchGuard
         }
     };
     std::process::exit(exit_code);
+}
+
+async fn run_test_exec_server(
+    listen_url: &str,
+    runtime_paths: ExecServerRuntimePaths,
+    config_path: &Path,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    let options = codex_exec_server::ExecServerConfig::load_from_path(config_path)
+        .await?
+        .into_run_options(config_path)?;
+    codex_exec_server::run_main_with_options(listen_url, runtime_paths, options).await
 }
 
 fn linux_sandbox_exe(

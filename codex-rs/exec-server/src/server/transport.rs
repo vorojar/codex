@@ -1,9 +1,13 @@
 use std::io::Write as _;
 use std::net::SocketAddr;
 use tokio::net::TcpListener;
+use tokio::task::JoinSet;
+use tokio::time::sleep;
 use tokio_tungstenite::accept_async;
+use tracing::info;
 use tracing::warn;
 
+use crate::ExecServerRunOptions;
 use crate::ExecServerRuntimePaths;
 use crate::connection::JsonRpcConnection;
 use crate::server::processor::ConnectionProcessor;
@@ -50,42 +54,101 @@ pub(crate) fn parse_listen_url(
 pub(crate) async fn run_transport(
     listen_url: &str,
     runtime_paths: ExecServerRuntimePaths,
+    options: ExecServerRunOptions,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let bind_address = parse_listen_url(listen_url)?;
-    run_websocket_listener(bind_address, runtime_paths).await
+    run_websocket_listener(bind_address, runtime_paths, options).await
 }
 
 async fn run_websocket_listener(
     bind_address: SocketAddr,
     runtime_paths: ExecServerRuntimePaths,
+    options: ExecServerRunOptions,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let listener = TcpListener::bind(bind_address).await?;
     let local_addr = listener.local_addr()?;
     let processor = ConnectionProcessor::new(runtime_paths);
+    let mut connection_tasks = JoinSet::new();
     tracing::info!("codex-exec-server listening on ws://{local_addr}");
     println!("ws://{local_addr}");
     std::io::stdout().flush()?;
 
     loop {
-        let (stream, peer_addr) = listener.accept().await?;
-        let processor = processor.clone();
-        tokio::spawn(async move {
-            match accept_async(stream).await {
-                Ok(websocket) => {
-                    processor
-                        .run_connection(JsonRpcConnection::from_websocket(
-                            websocket,
-                            format!("exec-server websocket {peer_addr}"),
-                        ))
-                        .await;
-                }
-                Err(err) => {
-                    warn!(
-                        "failed to accept exec-server websocket connection from {peer_addr}: {err}"
-                    );
-                }
+        tokio::select! {
+            accept_result = listener.accept() => {
+                let (stream, peer_addr) = accept_result?;
+                let processor = processor.clone();
+                connection_tasks.spawn(async move {
+                    match accept_async(stream).await {
+                        Ok(websocket) => {
+                            processor
+                                .run_connection(JsonRpcConnection::from_websocket(
+                                    websocket,
+                                    format!("exec-server websocket {peer_addr}"),
+                                ))
+                                .await;
+                        }
+                        Err(err) => {
+                            warn!(
+                                "failed to accept exec-server websocket connection from {peer_addr}: {err}"
+                            );
+                        }
+                    }
+                });
             }
-        });
+            signal_result = shutdown_signal() => {
+                if let Err(err) = signal_result {
+                    warn!("failed while waiting for exec-server shutdown signal: {err}");
+                }
+                break;
+            }
+        }
+    }
+
+    drop(listener);
+    processor.begin_drain();
+    info!(
+        timeout_ms = options.graceful_shutdown_timeout.as_millis(),
+        "exec-server graceful shutdown started"
+    );
+
+    tokio::select! {
+        _ = processor.wait_until_idle() => {
+            info!("exec-server graceful shutdown drained active work");
+        }
+        _ = sleep(options.graceful_shutdown_timeout) => {
+            warn!("exec-server graceful shutdown timed out; forcing remaining sessions to stop");
+            processor.shutdown_all_sessions().await;
+        }
+        signal_result = shutdown_signal() => {
+            if let Err(err) = signal_result {
+                warn!("failed while waiting for second exec-server shutdown signal: {err}");
+            }
+            warn!("exec-server received second shutdown signal; forcing remaining sessions to stop");
+            processor.shutdown_all_sessions().await;
+        }
+    }
+
+    connection_tasks.abort_all();
+    while connection_tasks.join_next().await.is_some() {}
+    processor.shutdown_all_sessions().await;
+    Ok(())
+}
+
+async fn shutdown_signal() -> std::io::Result<()> {
+    #[cfg(unix)]
+    {
+        let mut terminate =
+            tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?;
+        tokio::select! {
+            result = tokio::signal::ctrl_c() => result,
+            _ = terminate.recv() => Ok(()),
+        }
+    }
+
+    #[cfg(not(unix))]
+    {
+        tokio::signal::ctrl_c().await
     }
 }
 

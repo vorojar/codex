@@ -23,6 +23,14 @@ The CLI entrypoint supports:
 
 - `ws://IP:PORT` (default)
 
+The CLI also accepts `--config PATH`. When omitted, the server reads
+`$CODEX_HOME/exec-server.toml`. Missing config files are ignored. The supported
+setting is:
+
+```toml
+graceful_shutdown_timeout_ms = 30000
+```
+
 Wire framing:
 
 - websocket: one JSON-RPC message per websocket text frame
@@ -39,8 +47,16 @@ Each connection follows this sequence:
 If the server receives any notification other than `initialized`, it replies
 with an error using request id `-1`.
 
-If the websocket connection closes, the server terminates any remaining managed
-processes for that client connection.
+If the websocket connection closes, the server detaches from its session. A
+later connection may resume the session by passing the returned `sessionId` to
+`initialize`.
+
+On the first SIGINT or SIGTERM, the server stops accepting new websocket
+connections and begins a graceful drain. Existing connections stay open, but
+new `process/start` and `http/request` calls are rejected. The server exits
+after active processes and HTTP body streams finish, or after
+`graceful_shutdown_timeout_ms` elapses. A second SIGINT or SIGTERM skips the
+remaining drain and forces all sessions to stop.
 
 ## API
 

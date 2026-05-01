@@ -142,6 +142,17 @@ impl LocalProcess {
         *notification_sender = notifications;
     }
 
+    pub(crate) async fn active_process_count(&self) -> usize {
+        let processes = self.inner.processes.lock().await;
+        processes
+            .values()
+            .filter(|process| match process {
+                ProcessEntry::Starting => true,
+                ProcessEntry::Running(process) => !process.closed,
+            })
+            .count()
+    }
+
     async fn start_process(
         &self,
         params: ExecParams,

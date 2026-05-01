@@ -60,7 +60,29 @@ pub(crate) async fn exec_server() -> anyhow::Result<ExecServerHarness> {
     exec_server_with_env(std::iter::empty::<(&str, &str)>()).await
 }
 
+pub(crate) async fn exec_server_with_config(
+    config_contents: &str,
+) -> anyhow::Result<ExecServerHarness> {
+    spawn_exec_server(
+        std::iter::empty::<(&str, &str)>(),
+        Some(config_contents.as_bytes()),
+    )
+    .await
+}
+
 pub(crate) async fn exec_server_with_env<I, K, V>(env: I) -> anyhow::Result<ExecServerHarness>
+where
+    I: IntoIterator<Item = (K, V)>,
+    K: AsRef<std::ffi::OsStr>,
+    V: AsRef<std::ffi::OsStr>,
+{
+    spawn_exec_server(env, None).await
+}
+
+async fn spawn_exec_server<I, K, V>(
+    env: I,
+    config_contents: Option<&[u8]>,
+) -> anyhow::Result<ExecServerHarness>
 where
     I: IntoIterator<Item = (K, V)>,
     K: AsRef<std::ffi::OsStr>,
@@ -68,6 +90,15 @@ where
 {
     let helper_paths = test_codex_helper_paths()?;
     let codex_home = TempDir::new()?;
+    if let Some(config_contents) = config_contents {
+        tokio::fs::write(
+            codex_home
+                .path()
+                .join(codex_exec_server::EXEC_SERVER_CONFIG_FILE),
+            config_contents,
+        )
+        .await?;
+    }
     let mut child = Command::new(&helper_paths.codex_exe);
     child.args(["exec-server", "--listen", "ws://127.0.0.1:0"]);
     child.stdin(Stdio::null());
@@ -174,6 +205,55 @@ impl ExecServerHarness {
         timeout(CONNECT_TIMEOUT, self.child.wait())
             .await
             .map_err(|_| anyhow!("timed out waiting for exec-server shutdown"))??;
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    pub(crate) fn send_sigint(&mut self) -> anyhow::Result<()> {
+        self.send_signal("INT")
+    }
+
+    #[cfg(unix)]
+    pub(crate) fn send_sigterm(&mut self) -> anyhow::Result<()> {
+        self.send_signal("TERM")
+    }
+
+    #[cfg(unix)]
+    fn send_signal(&mut self, signal: &str) -> anyhow::Result<()> {
+        let pid = self
+            .child
+            .id()
+            .ok_or_else(|| anyhow!("exec-server process has no pid"))?;
+        let status = std::process::Command::new("kill")
+            .arg(format!("-{signal}"))
+            .arg(pid.to_string())
+            .status()?;
+        if !status.success() {
+            return Err(anyhow!(
+                "failed to send SIG{signal} to exec-server pid {pid}"
+            ));
+        }
+        Ok(())
+    }
+
+    pub(crate) async fn wait_for_exit(
+        &mut self,
+        timeout_duration: Duration,
+    ) -> anyhow::Result<std::process::ExitStatus> {
+        timeout(timeout_duration, self.child.wait())
+            .await
+            .map_err(|_| anyhow!("timed out waiting for exec-server shutdown"))?
+            .map_err(Into::into)
+    }
+
+    pub(crate) async fn assert_still_running_for(
+        &mut self,
+        duration: Duration,
+    ) -> anyhow::Result<()> {
+        sleep(duration).await;
+        if let Some(status) = self.child.try_wait()? {
+            return Err(anyhow!("exec-server exited early with status {status}"));
+        }
         Ok(())
     }
 

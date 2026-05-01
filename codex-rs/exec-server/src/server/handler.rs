@@ -43,12 +43,15 @@ use crate::rpc::RpcNotificationSender;
 use crate::rpc::internal_error;
 use crate::rpc::invalid_params;
 use crate::rpc::invalid_request;
+use crate::server::drain::ActiveHttpRequest;
+use crate::server::drain::DrainState;
 use crate::server::file_system_handler::FileSystemHandler;
 use crate::server::session_registry::SessionHandle;
 use crate::server::session_registry::SessionRegistry;
 
 pub(crate) struct ExecServerHandler {
     session_registry: Arc<SessionRegistry>,
+    drain_state: Arc<DrainState>,
     notifications: RpcNotificationSender,
     session: StdMutex<Option<SessionHandle>>,
     active_body_stream_ids: Mutex<HashSet<String>>,
@@ -62,11 +65,13 @@ pub(crate) struct ExecServerHandler {
 impl ExecServerHandler {
     pub(crate) fn new(
         session_registry: Arc<SessionRegistry>,
+        drain_state: Arc<DrainState>,
         notifications: RpcNotificationSender,
         runtime_paths: ExecServerRuntimePaths,
     ) -> Self {
         Self {
             session_registry,
+            drain_state,
             notifications,
             session: StdMutex::new(None),
             active_body_stream_ids: Mutex::new(HashSet::new()),
@@ -138,6 +143,7 @@ impl ExecServerHandler {
 
     pub(crate) async fn exec(&self, params: ExecParams) -> Result<ExecResponse, JSONRPCErrorError> {
         let session = self.require_initialized_for("exec")?;
+        self.drain_state.try_start_process()?;
         session.process().exec(params).await
     }
 
@@ -173,6 +179,7 @@ impl ExecServerHandler {
         params: HttpRequestParams,
     ) -> Result<(), JSONRPCErrorError> {
         self.require_initialized_for("http")?;
+        let http_guard = self.drain_state.try_start_http_request()?;
         let stream_response = params.stream_response;
         let http_request_id = params.request_id.clone();
         if stream_response {
@@ -203,7 +210,8 @@ impl ExecServerHandler {
             return Err(error);
         }
         if let Some(pending_stream) = pending_stream {
-            self.start_http_body_stream(pending_stream).await;
+            self.start_http_body_stream(pending_stream, http_guard)
+                .await;
         }
         Ok(())
     }
@@ -307,6 +315,7 @@ impl ExecServerHandler {
     async fn start_http_body_stream(
         self: &Arc<Self>,
         pending_stream: PendingReqwestHttpBodyStream,
+        http_guard: ActiveHttpRequest,
     ) {
         let request_id = pending_stream.request_id.clone();
         if self.background_task_shutdown.is_cancelled() {
@@ -318,6 +327,7 @@ impl ExecServerHandler {
         let notifications = self.notifications.clone();
         let shutdown = self.background_task_shutdown.clone();
         self.background_tasks.spawn(async move {
+            let _http_guard = http_guard;
             tokio::select! {
                 _ = shutdown.cancelled() => {}
                 _ = ReqwestHttpRequestRunner::stream_body(pending_stream, notifications) => {}

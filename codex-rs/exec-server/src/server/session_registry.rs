@@ -134,6 +134,28 @@ impl SessionRegistry {
             entry.process.shutdown().await;
         }
     }
+
+    pub(crate) async fn active_process_count(&self) -> usize {
+        let entries = {
+            let sessions = self.sessions.lock().await;
+            sessions.values().cloned().collect::<Vec<_>>()
+        };
+        let mut count = 0;
+        for entry in entries {
+            count += entry.process.active_process_count().await;
+        }
+        count
+    }
+
+    pub(crate) async fn shutdown_all(&self) {
+        let entries = {
+            let mut sessions = self.sessions.lock().await;
+            sessions.drain().map(|(_, entry)| entry).collect::<Vec<_>>()
+        };
+        for entry in entries {
+            entry.process.shutdown().await;
+        }
+    }
 }
 
 impl Default for SessionRegistry {

@@ -1,6 +1,8 @@
 use std::sync::Arc;
+use std::time::Duration;
 
 use tokio::sync::mpsc;
+use tokio::time::sleep;
 use tracing::debug;
 use tracing::warn;
 
@@ -14,12 +16,14 @@ use crate::rpc::encode_server_message;
 use crate::rpc::invalid_request;
 use crate::rpc::method_not_found;
 use crate::server::ExecServerHandler;
+use crate::server::drain::DrainState;
 use crate::server::registry::build_router;
 use crate::server::session_registry::SessionRegistry;
 
 #[derive(Clone)]
 pub(crate) struct ConnectionProcessor {
     session_registry: Arc<SessionRegistry>,
+    drain_state: Arc<DrainState>,
     runtime_paths: ExecServerRuntimePaths,
 }
 
@@ -27,14 +31,35 @@ impl ConnectionProcessor {
     pub(crate) fn new(runtime_paths: ExecServerRuntimePaths) -> Self {
         Self {
             session_registry: SessionRegistry::new(),
+            drain_state: DrainState::new(),
             runtime_paths,
         }
+    }
+
+    pub(crate) fn begin_drain(&self) {
+        self.drain_state.begin();
+    }
+
+    pub(crate) async fn wait_until_idle(&self) {
+        while !self.is_idle().await {
+            sleep(Duration::from_millis(25)).await;
+        }
+    }
+
+    pub(crate) async fn shutdown_all_sessions(&self) {
+        self.session_registry.shutdown_all().await;
+    }
+
+    async fn is_idle(&self) -> bool {
+        self.drain_state.active_http_request_count() == 0
+            && self.session_registry.active_process_count().await == 0
     }
 
     pub(crate) async fn run_connection(&self, connection: JsonRpcConnection) {
         run_connection(
             connection,
             Arc::clone(&self.session_registry),
+            Arc::clone(&self.drain_state),
             self.runtime_paths.clone(),
         )
         .await;
@@ -44,6 +69,7 @@ impl ConnectionProcessor {
 async fn run_connection(
     connection: JsonRpcConnection,
     session_registry: Arc<SessionRegistry>,
+    drain_state: Arc<DrainState>,
     runtime_paths: ExecServerRuntimePaths,
 ) {
     let router = Arc::new(build_router());
@@ -54,6 +80,7 @@ async fn run_connection(
     let notifications = RpcNotificationSender::new(outgoing_tx.clone());
     let handler = Arc::new(ExecServerHandler::new(
         session_registry,
+        drain_state,
         notifications,
         runtime_paths,
     ));
@@ -217,6 +244,7 @@ mod tests {
     use crate::protocol::ReadParams;
     use crate::protocol::TerminateParams;
     use crate::protocol::TerminateResponse;
+    use crate::server::drain::DrainState;
     use crate::server::session_registry::SessionRegistry;
 
     #[tokio::test]
@@ -317,7 +345,12 @@ mod tests {
         let (server_writer, client_reader) = duplex(1 << 20);
         let connection =
             JsonRpcConnection::from_stdio(server_reader, server_writer, label.to_string());
-        let task = tokio::spawn(run_connection(connection, registry, test_runtime_paths()));
+        let task = tokio::spawn(run_connection(
+            connection,
+            registry,
+            DrainState::new(),
+            test_runtime_paths(),
+        ));
         (client_writer, BufReader::new(client_reader).lines(), task)
     }
 
