@@ -360,13 +360,16 @@ fn spawn_output_reader(
 /// Read stdin/terminate frames and forward to the child process.
 fn spawn_input_loop(
     mut reader: File,
-    stdin_handle: Option<HANDLE>,
+    // PTY stdin has to outlive individual input writes, but the main thread also needs the
+    // ability to close it during teardown once the child exits. Keeping the HANDLE behind a
+    // shared mutex lets either side "take" ownership exactly once and makes that close order
+    // explicit instead of leaving the input thread as the only owner.
+    stdin_handle: Arc<StdMutex<Option<HANDLE>>>,
     hpc_handle: Arc<StdMutex<Option<HANDLE>>>,
     process_handle: Arc<StdMutex<Option<HANDLE>>>,
     log_dir: Option<PathBuf>,
 ) -> std::thread::JoinHandle<()> {
     std::thread::spawn(move || {
-        let mut stdin_handle = stdin_handle;
         loop {
             let msg = match read_frame(&mut reader) {
                 Ok(Some(v)) => v,
@@ -378,7 +381,13 @@ fn spawn_input_loop(
                     let Ok(bytes) = decode_bytes(&payload.data_b64) else {
                         continue;
                     };
-                    if let Some(handle) = stdin_handle {
+                    // Grab the current HANDLE value for this write attempt. We intentionally do
+                    // not leave lifetime management to this thread alone: the main teardown path
+                    // may decide to close stdin after the child process exits so ConPTY can fully
+                    // unwind even if the parent side never sends another IPC message.
+                    if let Ok(mut guard) = stdin_handle.lock()
+                        && let Some(handle) = guard.as_ref().copied()
+                    {
                         let mut offset = 0usize;
                         // `WriteFile` can report success after consuming only part of the buffer
                         // when the target is a pipe. Treat this like a normal partial write and
@@ -412,7 +421,7 @@ fn spawn_input_loop(
                                 unsafe {
                                     CloseHandle(handle);
                                 }
-                                stdin_handle = None;
+                                *guard = None;
                                 break;
                             }
                             if written == 0 {
@@ -423,7 +432,7 @@ fn spawn_input_loop(
                                 unsafe {
                                     CloseHandle(handle);
                                 }
-                                stdin_handle = None;
+                                *guard = None;
                                 break;
                             }
                             offset += written as usize;
@@ -431,7 +440,9 @@ fn spawn_input_loop(
                     }
                 }
                 Message::CloseStdin { .. } => {
-                    if let Some(handle) = stdin_handle.take() {
+                    if let Ok(mut guard) = stdin_handle.lock()
+                        && let Some(handle) = guard.take()
+                    {
                         unsafe {
                             CloseHandle(handle);
                         }
@@ -470,7 +481,9 @@ fn spawn_input_loop(
                 Message::Error { .. } => {}
             }
         }
-        if let Some(handle) = stdin_handle {
+        if let Ok(mut guard) = stdin_handle.lock()
+            && let Some(handle) = guard.take()
+        {
             unsafe {
                 CloseHandle(handle);
             }
@@ -526,7 +539,12 @@ pub fn main() -> Result<()> {
     let pi = ipc_spawn.pi;
     let stdout_handle = ipc_spawn.stdout_handle;
     let stderr_handle = ipc_spawn.stderr_handle;
-    let stdin_handle = ipc_spawn.stdin_handle;
+    // For PTY sessions this HANDLE writes into the ConPTY input pipe. The input thread needs it
+    // while stdin is being forwarded, but the main teardown path also needs the ability to close
+    // it immediately once the child shell exits. If stdin stays open after the shell is gone,
+    // `conhost.exe` can keep the pseudoconsole and output pipe alive, which prevents the output
+    // reader from reaching EOF and delays the runner's final `Message::Exit`.
+    let stdin_handle = Arc::new(StdMutex::new(ipc_spawn.stdin_handle));
     let hpc_handle = Arc::new(StdMutex::new(ipc_spawn.hpc_handle));
 
     let h_job = unsafe { create_job_kill_on_close().ok() };
@@ -574,7 +592,7 @@ pub fn main() -> Result<()> {
 
     let _input_thread = spawn_input_loop(
         pipe_read,
-        stdin_handle,
+        Arc::clone(&stdin_handle),
         Arc::clone(&hpc_handle),
         Arc::clone(&process_handle),
         log_dir_owned,
@@ -602,6 +620,19 @@ pub fn main() -> Result<()> {
         }
         if let Some(job) = h_job {
             CloseHandle(job);
+        }
+    }
+
+    if req.tty
+        && let Ok(mut guard) = stdin_handle.lock()
+        && let Some(handle) = guard.take()
+    {
+        // Close PTY stdin as soon as the child shell is definitively gone. ConPTY teardown is
+        // much more reliable if the input side is closed before we close the pseudoconsole and
+        // wait for the output reader to drain; otherwise the console host can keep the PTY alive
+        // longer than the child process itself.
+        unsafe {
+            CloseHandle(handle);
         }
     }
 
