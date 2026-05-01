@@ -367,12 +367,6 @@ impl ToolRegistry {
                 if outcome.should_block
                     && let Some(reason) = outcome.block_reason.as_deref()
                 {
-                    record_additional_contexts(
-                        &invocation.session,
-                        &invocation.turn,
-                        outcome.additional_contexts.clone(),
-                    )
-                    .await;
                     let message = if (pre_tool_use_payload.tool_name.name() == "Bash"
                         || pre_tool_use_payload.tool_name.name() == "apply_patch")
                         && let Some(command) = pre_tool_use_payload
@@ -478,17 +472,13 @@ impl ToolRegistry {
             return Err(err);
         }
 
-        let mut additional_contexts = pre_tool_use_outcome
-            .as_ref()
-            .map(|outcome| outcome.additional_contexts.clone())
-            .unwrap_or_default();
         if let Some(outcome) = &post_tool_use_outcome {
-            additional_contexts.extend(outcome.additional_contexts.clone());
-        }
-        record_additional_contexts(&invocation.session, &invocation.turn, additional_contexts)
+            record_additional_contexts(
+                &invocation.session,
+                &invocation.turn,
+                outcome.additional_contexts.clone(),
+            )
             .await;
-
-        if let Some(outcome) = &post_tool_use_outcome {
             let replacement_text = if outcome.should_stop {
                 Some(
                     outcome

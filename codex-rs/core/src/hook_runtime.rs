@@ -159,6 +159,7 @@ pub(crate) async fn run_pre_tool_use_hooks(
 
     let outcome = hooks.run_pre_tool_use(request).await;
     emit_hook_completed_events(sess, turn_context, outcome.hook_events.clone()).await;
+    record_additional_contexts(sess, turn_context, outcome.additional_contexts.clone()).await;
     outcome
 }
 
