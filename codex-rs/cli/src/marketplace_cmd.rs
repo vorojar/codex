@@ -70,10 +70,16 @@ impl MarketplaceCli {
         let overrides = config_overrides
             .parse_overrides()
             .map_err(anyhow::Error::msg)?;
+        let loader_overrides = codex_config::LoaderOverrides {
+            strict_config: config_overrides.strict_config,
+            ..Default::default()
+        };
 
         match subcommand {
             MarketplaceSubcommand::Add(args) => run_add(args).await?,
-            MarketplaceSubcommand::Upgrade(args) => run_upgrade(overrides, args).await?,
+            MarketplaceSubcommand::Upgrade(args) => {
+                run_upgrade(overrides, loader_overrides, args).await?
+            }
             MarketplaceSubcommand::Remove(args) => run_remove(args).await?,
         }
 
@@ -120,10 +126,11 @@ async fn run_add(args: AddMarketplaceArgs) -> Result<()> {
 
 async fn run_upgrade(
     overrides: Vec<(String, toml::Value)>,
+    loader_overrides: codex_config::LoaderOverrides,
     args: UpgradeMarketplaceArgs,
 ) -> Result<()> {
     let UpgradeMarketplaceArgs { marketplace_name } = args;
-    let config = Config::load_with_cli_overrides(overrides)
+    let config = Config::load_with_cli_overrides_and_loader_overrides(overrides, loader_overrides)
         .await
         .context("failed to load configuration")?;
     let codex_home = find_codex_home().context("failed to resolve CODEX_HOME")?;

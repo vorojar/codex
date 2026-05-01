@@ -413,13 +413,14 @@ pub async fn run_main_with_transport(
 pub async fn run_main_with_transport_options(
     arg0_paths: Arg0DispatchPaths,
     cli_config_overrides: CliConfigOverrides,
-    loader_overrides: LoaderOverrides,
+    mut loader_overrides: LoaderOverrides,
     default_analytics_enabled: bool,
     transport: AppServerTransport,
     session_source: SessionSource,
     auth: AppServerWebsocketAuthSettings,
     runtime_options: AppServerRuntimeOptions,
 ) -> IoResult<()> {
+    loader_overrides.strict_config |= cli_config_overrides.strict_config;
     let environment_manager = Arc::new(
         EnvironmentManager::new(EnvironmentManagerArgs::new(
             ExecServerRuntimePaths::from_optional_paths(

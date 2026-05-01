@@ -431,7 +431,13 @@ async fn load_config_or_exit(cli_config_overrides: CliConfigOverrides) -> Config
         }
     };
 
-    match Config::load_with_cli_overrides(cli_overrides).await {
+    let loader_overrides = codex_config::LoaderOverrides {
+        strict_config: cli_config_overrides.strict_config,
+        ..Default::default()
+    };
+    match Config::load_with_cli_overrides_and_loader_overrides(cli_overrides, loader_overrides)
+        .await
+    {
         Ok(config) => config,
         Err(e) => {
             eprintln!("Error loading configuration: {e}");

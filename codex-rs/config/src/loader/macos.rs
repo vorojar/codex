@@ -2,13 +2,19 @@ use super::merge_requirements_with_remote_sandbox_config;
 use crate::config_requirements::ConfigRequirementsToml;
 use crate::config_requirements::ConfigRequirementsWithSources;
 use crate::config_requirements::RequirementSource;
+use crate::config_toml::ConfigToml;
+use crate::diagnostics::config_error_from_ignored_toml_fields;
+use crate::diagnostics::io_error_from_config_error;
 use base64::Engine;
 use base64::prelude::BASE64_STANDARD;
+use codex_utils_absolute_path::AbsolutePathBufGuard;
 use core_foundation::base::TCFType;
 use core_foundation::string::CFString;
 use core_foundation::string::CFStringRef;
 use std::ffi::c_void;
 use std::io;
+use std::path::Path;
+use std::path::PathBuf;
 use tokio::task;
 use toml::Value as TomlValue;
 
@@ -31,17 +37,20 @@ pub(super) fn managed_preferences_requirements_source() -> RequirementSource {
 
 pub(crate) async fn load_managed_admin_config_layer(
     override_base64: Option<&str>,
+    strict_config: bool,
+    base_dir: &Path,
 ) -> io::Result<Option<ManagedAdminConfigLayer>> {
     if let Some(encoded) = override_base64 {
         let trimmed = encoded.trim();
         return if trimmed.is_empty() {
             Ok(None)
         } else {
-            parse_managed_config_base64(trimmed).map(Some)
+            parse_managed_config_base64(trimmed, strict_config, base_dir).map(Some)
         };
     }
 
-    match task::spawn_blocking(load_managed_admin_config).await {
+    let base_dir = base_dir.to_path_buf();
+    match task::spawn_blocking(move || load_managed_admin_config(strict_config, &base_dir)).await {
         Ok(result) => result,
         Err(join_err) => {
             if join_err.is_cancelled() {
@@ -54,11 +63,14 @@ pub(crate) async fn load_managed_admin_config_layer(
     }
 }
 
-fn load_managed_admin_config() -> io::Result<Option<ManagedAdminConfigLayer>> {
+fn load_managed_admin_config(
+    strict_config: bool,
+    base_dir: &Path,
+) -> io::Result<Option<ManagedAdminConfigLayer>> {
     load_managed_preference(MANAGED_PREFERENCES_CONFIG_KEY)?
         .as_deref()
         .map(str::trim)
-        .map(parse_managed_config_base64)
+        .map(|encoded| parse_managed_config_base64(encoded, strict_config, base_dir))
         .transpose()
 }
 
@@ -134,8 +146,13 @@ fn load_managed_preference(key_name: &str) -> io::Result<Option<String>> {
     Ok(Some(value))
 }
 
-fn parse_managed_config_base64(encoded: &str) -> io::Result<ManagedAdminConfigLayer> {
+fn parse_managed_config_base64(
+    encoded: &str,
+    strict_config: bool,
+    base_dir: &Path,
+) -> io::Result<ManagedAdminConfigLayer> {
     let raw_toml = decode_managed_preferences_base64(encoded)?;
+    validate_managed_config_toml_strictly_if_requested(strict_config, &raw_toml, base_dir)?;
     match toml::from_str::<TomlValue>(&raw_toml) {
         Ok(TomlValue::Table(parsed)) => Ok(ManagedAdminConfigLayer {
             config: TomlValue::Table(parsed),
@@ -153,6 +170,31 @@ fn parse_managed_config_base64(encoded: &str) -> io::Result<ManagedAdminConfigLa
             Err(io::Error::new(io::ErrorKind::InvalidData, err))
         }
     }
+}
+
+fn validate_managed_config_toml_strictly_if_requested(
+    strict_config: bool,
+    raw_toml: &str,
+    base_dir: &Path,
+) -> io::Result<()> {
+    if !strict_config {
+        return Ok(());
+    }
+
+    let _guard = AbsolutePathBufGuard::new(base_dir);
+    let path = PathBuf::from(format!(
+        "{MANAGED_PREFERENCES_APPLICATION_ID}:{MANAGED_PREFERENCES_CONFIG_KEY}"
+    ));
+    if let Some(config_error) = config_error_from_ignored_toml_fields::<ConfigToml>(&path, raw_toml)
+    {
+        return Err(io_error_from_config_error(
+            io::ErrorKind::InvalidData,
+            config_error,
+            /*source*/ None,
+        ));
+    }
+
+    Ok(())
 }
 
 fn parse_managed_requirements_base64(encoded: &str) -> io::Result<ConfigRequirementsToml> {
