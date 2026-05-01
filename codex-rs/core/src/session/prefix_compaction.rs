@@ -180,11 +180,7 @@ async fn apply_prefix_compact_candidate(
     sess.emit_turn_item_started(turn_context, &compaction_item)
         .await;
 
-    let retained_suffix: Vec<ResponseItem> = current_items[candidate.base_history.len()..]
-        .iter()
-        .filter(|item| !matches!(item, ResponseItem::GhostSnapshot { .. }))
-        .cloned()
-        .collect();
+    let retained_suffix: Vec<ResponseItem> = current_items[candidate.base_history.len()..].to_vec();
     let reference_context_item = sess
         .reference_context_item()
         .await
@@ -192,13 +188,6 @@ async fn apply_prefix_compact_candidate(
     let mut new_history = candidate.replacement_prefix;
     new_history.extend(candidate.captured_context);
     new_history.extend(retained_suffix);
-
-    new_history.extend(
-        current_items
-            .iter()
-            .filter(|item| matches!(item, ResponseItem::GhostSnapshot { .. }))
-            .cloned(),
-    );
 
     let compacted_item = CompactedItem {
         message: String::new(),

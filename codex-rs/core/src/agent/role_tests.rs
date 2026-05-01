@@ -2,9 +2,9 @@ use super::*;
 use crate::SkillsManager;
 use crate::config::CONFIG_TOML_FILE;
 use crate::config::ConfigBuilder;
-use crate::config_loader::ConfigLayerStackOrdering;
-use crate::plugins::PluginsManager;
 use crate::skills_load_input_from_config;
+use codex_config::ConfigLayerStackOrdering;
+use codex_core_plugins::PluginsManager;
 use codex_protocol::config_types::ReasoningSummary;
 use codex_protocol::config_types::Verbosity;
 use codex_protocol::openai_models::ReasoningEffort;
@@ -83,7 +83,7 @@ async fn apply_explorer_role_sets_model_and_adds_session_flags_layer() {
         .await
         .expect("explorer role should apply");
 
-    assert_eq!(config.model.as_deref(), Some("gpt-5.1-codex-mini"));
+    assert_eq!(config.model.as_deref(), Some("gpt-5.4-mini"));
     assert_eq!(config.model_reasoning_effort, Some(ReasoningEffort::Medium));
     assert_eq!(session_flags_layer_count(&config), before_layers + 1);
 }
@@ -574,7 +574,7 @@ writable_roots = ["./sandbox-root"]
         false
     );
 
-    match &*config.permissions.sandbox_policy {
+    match &config.legacy_sandbox_policy() {
         SandboxPolicy::WorkspaceWrite { network_access, .. } => {
             assert_eq!(*network_access, true);
         }
@@ -655,7 +655,8 @@ enabled = false
     let plugins_manager = Arc::new(PluginsManager::new(home.path().to_path_buf()));
     let skills_manager =
         SkillsManager::new(home.path().abs(), /*bundled_skills_enabled*/ true);
-    let plugin_outcome = plugins_manager.plugins_for_config(&config).await;
+    let plugins_input = config.plugins_config_input();
+    let plugin_outcome = plugins_manager.plugins_for_config(&plugins_input).await;
     let effective_skill_roots = plugin_outcome.effective_skill_roots();
     let skills_input = skills_load_input_from_config(&config, effective_skill_roots);
     let outcome = skills_manager

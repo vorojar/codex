@@ -1,12 +1,11 @@
 //! Session-wide mutable state.
 
-use codex_protocol::models::PermissionProfile;
+use codex_protocol::models::AdditionalPermissionProfile;
 use codex_protocol::models::ResponseItem;
 use codex_sandboxing::policy_transforms::merge_permission_profiles;
 use std::collections::HashMap;
 use std::collections::HashSet;
 
-use crate::agent_identity::RegisteredAgentTask;
 use crate::context_manager::ContextManager;
 use crate::session::PreviousTurnSettings;
 use crate::session::prefix_compaction::PrefixCompactTask;
@@ -33,10 +32,9 @@ pub(crate) struct SessionState {
     previous_turn_settings: Option<PreviousTurnSettings>,
     /// Startup prewarmed session prepared during session initialization.
     pub(crate) startup_prewarm: Option<SessionStartupPrewarmHandle>,
-    pub(crate) agent_task: Option<RegisteredAgentTask>,
     pub(crate) active_connector_selection: HashSet<String>,
     pub(crate) pending_session_start_source: Option<codex_hooks::SessionStartSource>,
-    granted_permissions: Option<PermissionProfile>,
+    granted_permissions: Option<AdditionalPermissionProfile>,
     pub(crate) prefix_compact_task: Option<PrefixCompactTask>,
     next_turn_is_first: bool,
 }
@@ -54,7 +52,6 @@ impl SessionState {
             mcp_dependency_prompted: HashSet::new(),
             previous_turn_settings: None,
             startup_prewarm: None,
-            agent_task: None,
             active_connector_selection: HashSet::new(),
             pending_session_start_source: None,
             granted_permissions: None,
@@ -194,18 +191,6 @@ impl SessionState {
         self.startup_prewarm.take()
     }
 
-    pub(crate) fn agent_task(&self) -> Option<RegisteredAgentTask> {
-        self.agent_task.clone()
-    }
-
-    pub(crate) fn set_agent_task(&mut self, agent_task: RegisteredAgentTask) {
-        self.agent_task = Some(agent_task);
-    }
-
-    pub(crate) fn clear_agent_task(&mut self) {
-        self.agent_task = None;
-    }
-
     // Adds connector IDs to the active set and returns the merged selection.
     pub(crate) fn merge_connector_selection<I>(&mut self, connector_ids: I) -> HashSet<String>
     where
@@ -238,12 +223,12 @@ impl SessionState {
         self.pending_session_start_source.take()
     }
 
-    pub(crate) fn record_granted_permissions(&mut self, permissions: PermissionProfile) {
+    pub(crate) fn record_granted_permissions(&mut self, permissions: AdditionalPermissionProfile) {
         self.granted_permissions =
             merge_permission_profiles(self.granted_permissions.as_ref(), Some(&permissions));
     }
 
-    pub(crate) fn granted_permissions(&self) -> Option<PermissionProfile> {
+    pub(crate) fn granted_permissions(&self) -> Option<AdditionalPermissionProfile> {
         self.granted_permissions.clone()
     }
 }
