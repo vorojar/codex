@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use tracing::warn;
+use tracing::debug;
 
 use crate::session::session::Session;
 
@@ -9,7 +9,7 @@ impl Session {
         let model_client = self.services.model_client.clone();
         tokio::spawn(async move {
             if let Err(err) = model_client.prewarm_provider_auth().await {
-                warn!("startup provider auth prewarm failed: {err:#}");
+                debug!("startup provider auth prewarm failed: {err:#}");
             }
         });
     }

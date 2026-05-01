@@ -123,7 +123,6 @@ impl ModelProvider for AmazonBedrockModelProvider {
     }
 
     async fn api_auth(&self) -> Result<SharedAuthProvider> {
-        self.prewarm_bedrock_credentials().await?;
         Ok(provider_auth_from_method(self.auth_method().await?))
     }
 
