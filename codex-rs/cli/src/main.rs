@@ -3,6 +3,7 @@ use clap::CommandFactory;
 use clap::Parser;
 use clap_complete::Shell;
 use clap_complete::generate;
+use codex_app_server_daemon::LifecycleCommand as AppServerLifecycleCommand;
 use codex_arg0::Arg0DispatchPaths;
 use codex_arg0::arg0_dispatch_or_else;
 use codex_chatgpt::apply_command::ApplyCommand;
@@ -458,6 +459,18 @@ struct ExecServerCommand {
 #[derive(Debug, clap::Subcommand)]
 #[allow(clippy::enum_variant_names)]
 enum AppServerSubcommand {
+    /// Start the local app server daemon if it is not already running.
+    Start,
+
+    /// Restart the local app server daemon.
+    Restart,
+
+    /// Stop the local app server daemon.
+    Stop,
+
+    /// Print local CLI and running app-server versions as JSON.
+    Version,
+
     /// Proxy stdio bytes to the running app-server control socket.
     Proxy(AppServerProxyCommand),
 
@@ -855,6 +868,18 @@ async fn cli_main(arg0_paths: Arg0DispatchPaths) -> anyhow::Result<()> {
                         auth,
                     )
                     .await?;
+                }
+                Some(AppServerSubcommand::Start) => {
+                    print_app_server_daemon_output(AppServerLifecycleCommand::Start).await?;
+                }
+                Some(AppServerSubcommand::Restart) => {
+                    print_app_server_daemon_output(AppServerLifecycleCommand::Restart).await?;
+                }
+                Some(AppServerSubcommand::Stop) => {
+                    print_app_server_daemon_output(AppServerLifecycleCommand::Stop).await?;
+                }
+                Some(AppServerSubcommand::Version) => {
+                    print_app_server_daemon_output(AppServerLifecycleCommand::Version).await?;
                 }
                 Some(AppServerSubcommand::Proxy(proxy_cli)) => {
                     let socket_path = match proxy_cli.socket_path {
@@ -1495,6 +1520,10 @@ fn reject_remote_mode_for_app_server_subcommand(
 ) -> anyhow::Result<()> {
     let subcommand_name = match subcommand {
         None => "app-server",
+        Some(AppServerSubcommand::Start) => "app-server start",
+        Some(AppServerSubcommand::Restart) => "app-server restart",
+        Some(AppServerSubcommand::Stop) => "app-server stop",
+        Some(AppServerSubcommand::Version) => "app-server version",
         Some(AppServerSubcommand::Proxy(_)) => "app-server proxy",
         Some(AppServerSubcommand::GenerateTs(_)) => "app-server generate-ts",
         Some(AppServerSubcommand::GenerateJsonSchema(_)) => "app-server generate-json-schema",
@@ -1503,6 +1532,12 @@ fn reject_remote_mode_for_app_server_subcommand(
         }
     };
     reject_remote_mode_for_subcommand(remote, remote_auth_token_env, subcommand_name)
+}
+
+async fn print_app_server_daemon_output(command: AppServerLifecycleCommand) -> anyhow::Result<()> {
+    let output = codex_app_server_daemon::run(command).await?;
+    println!("{}", serde_json::to_string(&output)?);
+    Ok(())
 }
 
 fn read_remote_auth_token_from_env_var_with<F>(
@@ -2434,6 +2469,26 @@ mod tests {
     }
 
     #[test]
+    fn app_server_daemon_subcommands_parse() {
+        assert!(matches!(
+            app_server_from_args(["codex", "app-server", "start"].as_ref()).subcommand,
+            Some(AppServerSubcommand::Start)
+        ));
+        assert!(matches!(
+            app_server_from_args(["codex", "app-server", "restart"].as_ref()).subcommand,
+            Some(AppServerSubcommand::Restart)
+        ));
+        assert!(matches!(
+            app_server_from_args(["codex", "app-server", "stop"].as_ref()).subcommand,
+            Some(AppServerSubcommand::Stop)
+        ));
+        assert!(matches!(
+            app_server_from_args(["codex", "app-server", "version"].as_ref()).subcommand,
+            Some(AppServerSubcommand::Version)
+        ));
+    }
+
+    #[test]
     fn app_server_proxy_sock_path_parses() {
         let app_server =
             app_server_from_args(["codex", "app-server", "proxy", "--sock", "codex.sock"].as_ref());
@@ -2459,6 +2514,17 @@ mod tests {
         )
         .expect_err("app-server proxy should reject --remote-auth-token-env");
         assert!(err.to_string().contains("app-server proxy"));
+    }
+
+    #[test]
+    fn reject_remote_auth_token_env_for_app_server_version() {
+        let err = reject_remote_mode_for_app_server_subcommand(
+            /*remote*/ None,
+            Some("CODEX_REMOTE_AUTH_TOKEN"),
+            Some(&AppServerSubcommand::Version),
+        )
+        .expect_err("app-server version should reject --remote-auth-token-env");
+        assert!(err.to_string().contains("app-server version"));
     }
 
     #[test]
