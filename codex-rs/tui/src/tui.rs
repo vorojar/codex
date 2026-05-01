@@ -542,6 +542,7 @@ impl Tui {
 
     pub fn clear_pending_history_lines(&mut self) {
         self.pending_history_lines.clear();
+        self.pending_resize_replay_lines = None;
     }
 
     /// Resize the inline viewport to `height` rows, scrolling content above it if
