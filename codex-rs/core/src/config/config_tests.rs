@@ -1002,6 +1002,104 @@ async fn network_proxy_feature_uses_profile_network_proxy_settings() -> std::io:
 }
 
 #[tokio::test]
+async fn profile_network_proxy_disable_ignores_base_feature_config() -> std::io::Result<()> {
+    let codex_home = TempDir::new()?;
+    let cwd = TempDir::new()?;
+    let config = Config::load_from_base_config_with_overrides(
+        ConfigToml {
+            features: Some(
+                toml::from_str(
+                    r#"
+[network_proxy]
+enabled = true
+proxy_url = "http://127.0.0.1:43128"
+"#,
+                )
+                .expect("valid base features"),
+            ),
+            profiles: HashMap::from([(
+                "no_proxy".to_string(),
+                ConfigProfile {
+                    features: Some(
+                        toml::from_str("network_proxy = false").expect("valid profile features"),
+                    ),
+                    ..Default::default()
+                },
+            )]),
+            profile: Some("no_proxy".to_string()),
+            ..Default::default()
+        },
+        ConfigOverrides {
+            cwd: Some(cwd.path().to_path_buf()),
+            ..Default::default()
+        },
+        codex_home.abs(),
+    )
+    .await?;
+
+    assert!(!config.features.enabled(Feature::NetworkProxy));
+    assert!(config.permissions.network.is_none());
+    Ok(())
+}
+
+#[tokio::test]
+async fn disabled_network_proxy_feature_preserves_profile_proxy_policy() -> std::io::Result<()> {
+    let codex_home = TempDir::new()?;
+    let cwd = TempDir::new()?;
+    let config = Config::load_from_base_config_with_overrides(
+        ConfigToml {
+            features: Some(
+                toml::from_str(
+                    r#"
+[network_proxy]
+enabled = false
+"#,
+                )
+                .expect("valid features"),
+            ),
+            default_permissions: Some("workspace".to_string()),
+            permissions: Some(PermissionsToml {
+                entries: BTreeMap::from([(
+                    "workspace".to_string(),
+                    PermissionProfileToml {
+                        filesystem: Some(FilesystemPermissionsToml {
+                            glob_scan_max_depth: None,
+                            entries: BTreeMap::from([(
+                                ":minimal".to_string(),
+                                FilesystemPermissionToml::Access(FileSystemAccessMode::Read),
+                            )]),
+                        }),
+                        network: Some(NetworkToml {
+                            enabled: Some(true),
+                            proxy_url: Some("http://127.0.0.1:43128".to_string()),
+                            enable_socks5: Some(false),
+                            ..Default::default()
+                        }),
+                    },
+                )]),
+            }),
+            ..Default::default()
+        },
+        ConfigOverrides {
+            cwd: Some(cwd.path().to_path_buf()),
+            ..Default::default()
+        },
+        codex_home.abs(),
+    )
+    .await?;
+
+    assert!(!config.features.enabled(Feature::NetworkProxy));
+    let network = config
+        .permissions
+        .network
+        .as_ref()
+        .expect("profile proxy policy should still start the managed proxy");
+    assert_eq!(network.proxy_host_and_port(), "127.0.0.1:43128");
+    assert!(!network.socks_enabled());
+    Ok(())
+}
+
+#[tokio::test]
 async fn permissions_profiles_network_disabled_by_default_does_not_start_proxy()
 -> std::io::Result<()> {
     let codex_home = TempDir::new()?;
