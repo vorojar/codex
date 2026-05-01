@@ -302,16 +302,6 @@ impl Environment {
         )
     }
 
-    pub(crate) fn remote_stdio_shell_command(
-        shell_command: String,
-        local_runtime_paths: Option<ExecServerRuntimePaths>,
-    ) -> Self {
-        Self::remote_with_transport(
-            ExecServerTransport::StdioShellCommand(shell_command),
-            local_runtime_paths,
-        )
-    }
-
     fn remote_with_transport(
         transport: ExecServerTransport,
         local_runtime_paths: Option<ExecServerRuntimePaths>,
