@@ -1239,6 +1239,10 @@ UI guidance for IDEs: surface an approval dialog as soon as the request arrives.
 
 When the client responds to `item/tool/requestUserInput`, the server emits `serverRequest/resolved` with `{ threadId, requestId }`. If the pending request is cleared by turn start, turn completion, or turn interruption before the client answers, the server emits the same notification for that cleanup.
 
+### Attestation generation
+
+Desktop hosts that provide upstream attestation should handle the server-initiated `attestation/generate` request. App-server issues it just in time before ChatGPT Codex requests that forward `x-oai-attestation`; the client responds with either `{ "type": "token", "token": "...", "latencyMs": 12.5 }` or `{ "type": "failure", "failureReason": "...", "failureDetail": "...", "latencyMs": 12.5 }`. App-server converts that typed result into the legacy upstream header JSON shape, and desktop-hosted sessions synthesize a failure payload when the client is unavailable, times out, or returns invalid data so the backend still receives `x-oai-attestation`.
+
 ### MCP server elicitations
 
 MCP servers can interrupt a turn and ask the client for structured input via `mcpServer/elicitation/request`.

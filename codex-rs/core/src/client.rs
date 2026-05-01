@@ -104,6 +104,8 @@ use tracing::instrument;
 use tracing::trace;
 use tracing::warn;
 
+use crate::attestation::AttestationProvider;
+use crate::attestation::X_OAI_ATTESTATION_HEADER;
 use crate::client_common::Prompt;
 use crate::client_common::ResponseEvent;
 use crate::client_common::ResponseStream;
@@ -117,6 +119,7 @@ use codex_login::auth_env_telemetry::AuthEnvTelemetry;
 use codex_login::auth_env_telemetry::collect_auth_env_telemetry;
 use codex_model_provider::SharedModelProvider;
 use codex_model_provider::create_model_provider;
+use codex_model_provider_info::CHATGPT_CODEX_BASE_URL;
 #[cfg(test)]
 use codex_model_provider_info::DEFAULT_WEBSOCKET_CONNECT_TIMEOUT_MS;
 use codex_model_provider_info::ModelProviderInfo;
@@ -162,6 +165,7 @@ struct ModelClientState {
     enable_request_compression: bool,
     include_timing_metrics: bool,
     beta_features_header: Option<String>,
+    attestation_provider: Option<AttestationProvider>,
     disable_websockets: AtomicBool,
     cached_websocket_session: StdMutex<WebsocketSession>,
 }
@@ -306,6 +310,33 @@ impl ModelClient {
         include_timing_metrics: bool,
         beta_features_header: Option<String>,
     ) -> Self {
+        Self::new_with_attestation_provider(
+            auth_manager,
+            conversation_id,
+            installation_id,
+            provider_info,
+            session_source,
+            model_verbosity,
+            enable_request_compression,
+            include_timing_metrics,
+            beta_features_header,
+            /*attestation_provider*/ None,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn new_with_attestation_provider(
+        auth_manager: Option<Arc<AuthManager>>,
+        conversation_id: ThreadId,
+        installation_id: String,
+        provider_info: ModelProviderInfo,
+        session_source: SessionSource,
+        model_verbosity: Option<VerbosityConfig>,
+        enable_request_compression: bool,
+        include_timing_metrics: bool,
+        beta_features_header: Option<String>,
+        attestation_provider: Option<AttestationProvider>,
+    ) -> Self {
         let model_provider = create_model_provider(provider_info, auth_manager);
         let codex_api_key_env_enabled = model_provider
             .auth_manager()
@@ -325,6 +356,7 @@ impl ModelClient {
                 enable_request_compression,
                 include_timing_metrics,
                 beta_features_header,
+                attestation_provider,
                 disable_websockets: AtomicBool::new(false),
                 cached_websocket_session: StdMutex::new(WebsocketSession::default()),
             }),
@@ -452,9 +484,6 @@ impl ModelClient {
             text,
             ..
         } = request;
-        let client =
-            ApiCompactClient::new(transport, client_setup.api_provider, client_setup.api_auth)
-                .with_telemetry(Some(request_telemetry));
         let payload = ApiCompactionInput {
             model: &model,
             input: &input,
@@ -478,6 +507,15 @@ impl ModelClient {
         extra_headers.extend(build_conversation_headers(Some(
             self.state.conversation_id.to_string(),
         )));
+        self.extend_attestation_header_for(
+            &mut extra_headers,
+            &client_setup.api_provider,
+            AttestationPurpose::Compaction,
+        )
+        .await;
+        let client =
+            ApiCompactClient::new(transport, client_setup.api_provider, client_setup.api_auth)
+                .with_telemetry(Some(request_telemetry));
         let trace_attempt = compaction_trace.start_attempt(&payload);
         let result = client
             .compact_input(&payload, extra_headers)
@@ -491,11 +529,17 @@ impl ModelClient {
         &self,
         sdp: String,
         session_config: ApiRealtimeSessionConfig,
-        extra_headers: ApiHeaderMap,
+        mut extra_headers: ApiHeaderMap,
     ) -> Result<RealtimeWebrtcCallStart> {
         // Create the media call over HTTP first, then retain matching auth so realtime can attach
         // the server-side control WebSocket to the call id from that HTTP response.
         let client_setup = self.current_client_setup().await?;
+        self.extend_attestation_header_for(
+            &mut extra_headers,
+            &client_setup.api_provider,
+            AttestationPurpose::RealtimeWebrtcCallSetup,
+        )
+        .await;
         let mut sideband_headers = extra_headers.clone();
         sideband_headers.extend(sideband_websocket_auth_headers(
             client_setup.api_auth.as_ref(),
@@ -624,6 +668,25 @@ impl ModelClient {
             );
         }
         client_metadata
+    }
+
+    async fn generate_attestation_header(&self) -> Option<HeaderValue> {
+        self.state
+            .attestation_provider
+            .as_ref()?
+            .generate_header()
+            .await
+    }
+
+    async fn generate_attestation_header_for(
+        &self,
+        provider: &codex_api::Provider,
+        purpose: AttestationPurpose,
+    ) -> Option<HeaderValue> {
+        if !should_send_attestation(provider, purpose) {
+            return None;
+        }
+        self.generate_attestation_header().await
     }
 
     /// Builds request telemetry for unary API calls (e.g., Compact endpoint).
@@ -897,8 +960,9 @@ impl ModelClientSession {
     ///
     /// Keeping option construction in one place ensures request-scoped headers are consistent
     /// regardless of transport choice.
-    fn build_responses_options(
+    async fn build_responses_options(
         &self,
+        provider: &codex_api::Provider,
         turn_metadata_header: Option<&str>,
         compression: Compression,
     ) -> ApiResponsesOptions {
@@ -914,6 +978,13 @@ impl ModelClientSession {
                     turn_metadata_header.as_ref(),
                 );
                 headers.extend(self.client.build_responses_identity_headers());
+                self.client
+                    .extend_attestation_header_for(
+                        &mut headers,
+                        provider,
+                        AttestationPurpose::Response,
+                    )
+                    .await;
                 headers
             },
             compression,
@@ -1190,7 +1261,13 @@ impl ModelClientSession {
                 self.client.state.auth_env_telemetry.clone(),
             );
             let compression = self.responses_request_compression(client_setup.auth.as_ref());
-            let options = self.build_responses_options(turn_metadata_header, compression);
+            let options = self
+                .build_responses_options(
+                    &client_setup.api_provider,
+                    turn_metadata_header,
+                    compression,
+                )
+                .await;
 
             let request = self.client.build_responses_request(
                 &client_setup.api_provider,
@@ -1297,7 +1374,13 @@ impl ModelClientSession {
             );
             let compression = self.responses_request_compression(client_setup.auth.as_ref());
 
-            let options = self.build_responses_options(turn_metadata_header, compression);
+            let options = self
+                .build_responses_options(
+                    &client_setup.api_provider,
+                    turn_metadata_header,
+                    compression,
+                )
+                .await;
             let request = self.client.build_responses_request(
                 &client_setup.api_provider,
                 prompt,
@@ -1599,6 +1682,43 @@ fn build_responses_headers(
         headers.insert(X_CODEX_TURN_METADATA_HEADER, header_value.clone());
     }
     headers
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum AttestationPurpose {
+    Response,
+    Compaction,
+    RealtimeWebrtcCallSetup,
+}
+
+fn should_send_attestation(provider: &codex_api::Provider, purpose: AttestationPurpose) -> bool {
+    let provider_is_chatgpt_codex = provider
+        .base_url
+        .trim_end_matches('/')
+        .eq_ignore_ascii_case(CHATGPT_CODEX_BASE_URL);
+    provider_is_chatgpt_codex
+        && matches!(
+            purpose,
+            AttestationPurpose::Response
+                | AttestationPurpose::Compaction
+                | AttestationPurpose::RealtimeWebrtcCallSetup
+        )
+}
+
+impl ModelClient {
+    async fn extend_attestation_header_for(
+        &self,
+        headers: &mut ApiHeaderMap,
+        provider: &codex_api::Provider,
+        purpose: AttestationPurpose,
+    ) {
+        if let Some(header_value) = self
+            .generate_attestation_header_for(provider, purpose)
+            .await
+        {
+            headers.insert(X_OAI_ATTESTATION_HEADER, header_value);
+        }
+    }
 }
 
 fn subagent_header_value(session_source: &SessionSource) -> Option<String> {

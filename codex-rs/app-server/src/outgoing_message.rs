@@ -256,6 +256,16 @@ impl OutgoingMessageSender {
         .await
     }
 
+    pub(crate) async fn send_request_to_connection(
+        &self,
+        connection_id: ConnectionId,
+        request: ServerRequestPayload,
+    ) -> (RequestId, oneshot::Receiver<ClientRequestResult>) {
+        let connection_ids = [connection_id];
+        self.send_request_to_connections(Some(&connection_ids), request, /*thread_id*/ None)
+            .await
+    }
+
     fn next_request_id(&self) -> RequestId {
         RequestId::Integer(self.next_server_request_id.fetch_add(1, Ordering::Relaxed))
     }
