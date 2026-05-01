@@ -11,6 +11,8 @@ use codex_config::permissions_toml::NetworkUnixSocketPermissionToml;
 use codex_config::permissions_toml::NetworkUnixSocketPermissionsToml;
 use codex_config::permissions_toml::PermissionProfileToml;
 use codex_config::permissions_toml::PermissionsToml;
+use codex_network_proxy::MitmHookConfig;
+use codex_network_proxy::MitmHookMatchConfig;
 use codex_protocol::permissions::FileSystemAccessMode;
 use codex_protocol::permissions::FileSystemPath;
 use codex_protocol::permissions::FileSystemSandboxEntry;
@@ -244,6 +246,28 @@ fn profile_network_proxy_config_keeps_proxy_disabled_for_bare_network_access() {
     }));
 
     assert!(!config.network.enabled);
+}
+
+#[test]
+fn profile_network_proxy_config_enables_proxy_for_mitm_hooks() {
+    let config = network_proxy_config_from_profile_network(Some(&NetworkToml {
+        enabled: Some(true),
+        mitm: Some(true),
+        mitm_hooks: Some(vec![MitmHookConfig {
+            host: "api.github.com".to_string(),
+            matcher: MitmHookMatchConfig {
+                methods: vec!["POST".to_string()],
+                path_prefixes: vec!["/repos/openai/".to_string()],
+                ..MitmHookMatchConfig::default()
+            },
+            ..MitmHookConfig::default()
+        }]),
+        ..Default::default()
+    }));
+
+    assert!(config.network.enabled);
+    assert!(config.network.mitm);
+    assert_eq!(config.network.mitm_hooks.len(), 1);
 }
 
 #[test]
