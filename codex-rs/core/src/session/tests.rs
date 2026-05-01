@@ -1744,9 +1744,6 @@ async fn fork_startup_context_then_first_turn_diff_snapshot() -> anyhow::Result<
         .fork_thread(
             usize::MAX,
             fork_config.clone(),
-            std::sync::Arc::new(codex_thread_store::LocalThreadStore::new(
-                codex_rollout::RolloutConfig::from_view(&fork_config),
-            )),
             rollout_path,
             /*persist_extended_history*/ false,
             /*parent_trace*/ None,
@@ -2785,6 +2782,7 @@ async fn wait_for_thread_rollback_failed(rx: &async_channel::Receiver<Event>) ->
 }
 
 async fn attach_thread_persistence(session: &mut Session) -> PathBuf {
+    let config = session.get_config().await;
     let live_thread = LiveThread::create(
         Arc::clone(&session.services.thread_store),
         CreateThreadParams {
@@ -2793,6 +2791,15 @@ async fn attach_thread_persistence(session: &mut Session) -> PathBuf {
             source: SessionSource::Exec,
             base_instructions: BaseInstructions::default(),
             dynamic_tools: Vec::new(),
+            metadata: ThreadPersistenceMetadata {
+                cwd: Some(config.cwd.to_path_buf()),
+                model_provider: config.model_provider_id.clone(),
+                memory_mode: if config.memories.generate_memories {
+                    ThreadMemoryMode::Enabled
+                } else {
+                    ThreadMemoryMode::Disabled
+                },
+            },
             event_persistence_mode: ThreadEventPersistenceMode::Limited,
         },
     )
@@ -3457,7 +3464,7 @@ async fn session_new_fails_when_zsh_fork_enabled_without_zsh_path() {
         Arc::new(codex_exec_server::EnvironmentManager::default_for_tests()),
         /*analytics_events_client*/ None,
         Arc::new(codex_thread_store::LocalThreadStore::new(
-            codex_rollout::RolloutConfig::from_view(config.as_ref()),
+            codex_thread_store::LocalThreadStoreConfig::from_config(config.as_ref()),
         )),
         codex_rollout_trace::ThreadTraceContext::disabled(),
     )
@@ -3604,7 +3611,7 @@ pub(crate) async fn make_session_and_context() -> (Session, TurnContext) {
         state_db: None,
         live_thread: None,
         thread_store: Arc::new(codex_thread_store::LocalThreadStore::new(
-            codex_rollout::RolloutConfig::from_view(config.as_ref()),
+            codex_thread_store::LocalThreadStoreConfig::from_config(config.as_ref()),
         )),
         model_client: ModelClient::new(
             Some(auth_manager.clone()),
@@ -3623,7 +3630,7 @@ pub(crate) async fn make_session_and_context() -> (Session, TurnContext) {
 
     let plugin_outcome = services
         .plugins_manager
-        .plugins_for_config(&per_turn_config)
+        .plugins_for_config(&per_turn_config.plugins_config_input())
         .await;
     let effective_skill_roots = plugin_outcome.effective_skill_roots();
     let skills_input =
@@ -3776,7 +3783,7 @@ async fn make_session_with_config_and_rx(
         Arc::new(codex_exec_server::EnvironmentManager::default_for_tests()),
         /*analytics_events_client*/ None,
         Arc::new(codex_thread_store::LocalThreadStore::new(
-            codex_rollout::RolloutConfig::from_view(config.as_ref()),
+            codex_thread_store::LocalThreadStoreConfig::from_config(config.as_ref()),
         )),
         codex_rollout_trace::ThreadTraceContext::disabled(),
     )
@@ -4639,6 +4646,7 @@ async fn shutdown_complete_does_not_append_to_thread_store_after_shutdown() {
     let (mut session, _turn_context) = make_session_and_context().await;
     let store = Arc::new(codex_thread_store::InMemoryThreadStore::default());
     let thread_store: Arc<dyn codex_thread_store::ThreadStore> = store.clone();
+    let config = session.get_config().await;
     let live_thread = LiveThread::create(
         Arc::clone(&thread_store),
         CreateThreadParams {
@@ -4647,6 +4655,15 @@ async fn shutdown_complete_does_not_append_to_thread_store_after_shutdown() {
             source: SessionSource::Exec,
             base_instructions: BaseInstructions::default(),
             dynamic_tools: Vec::new(),
+            metadata: ThreadPersistenceMetadata {
+                cwd: Some(config.cwd.to_path_buf()),
+                model_provider: config.model_provider_id.clone(),
+                memory_mode: if config.memories.generate_memories {
+                    ThreadMemoryMode::Enabled
+                } else {
+                    ThreadMemoryMode::Disabled
+                },
+            },
             event_persistence_mode: ThreadEventPersistenceMode::Limited,
         },
     )
@@ -5033,7 +5050,7 @@ where
         state_db: None,
         live_thread: None,
         thread_store: Arc::new(codex_thread_store::LocalThreadStore::new(
-            codex_rollout::RolloutConfig::from_view(config.as_ref()),
+            codex_thread_store::LocalThreadStoreConfig::from_config(config.as_ref()),
         )),
         model_client: ModelClient::new(
             Some(Arc::clone(&auth_manager)),
@@ -5052,7 +5069,7 @@ where
 
     let plugin_outcome = services
         .plugins_manager
-        .plugins_for_config(&per_turn_config)
+        .plugins_for_config(&per_turn_config.plugins_config_input())
         .await;
     let effective_skill_roots = plugin_outcome.effective_skill_roots();
     let skills_input =
