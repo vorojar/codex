@@ -10,8 +10,9 @@ for %%I in ("%workspace_root_marker_dir%..\..") do set "workspace_root=%%~fI"
 call :resolve_runfile test_bin "__TEST_BIN__"
 if errorlevel 1 exit /b 1
 
-set "INSTA_WORKSPACE_ROOT=%workspace_root%"
-cd /d "%workspace_root%" || exit /b 1
+__RUNFILE_ENV_EXPORTS__
+
+__WORKSPACE_ROOT_SETUP__
 
 set "TOTAL_SHARDS=%RULES_RUST_TEST_TOTAL_SHARDS%"
 if not defined TOTAL_SHARDS set "TOTAL_SHARDS=%TEST_TOTAL_SHARDS%"

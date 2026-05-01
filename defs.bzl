@@ -1,8 +1,8 @@
 load("@crates//:data.bzl", "DEP_DATA")
 load("@crates//:defs.bzl", "all_crate_deps")
 load("@rules_platform//platform_data:defs.bzl", "platform_data")
-load("@rules_rust//rust:defs.bzl", "rust_binary", "rust_library", "rust_proc_macro", "rust_test")
 load("@rules_rust//cargo/private:cargo_build_script_wrapper.bzl", "cargo_build_script")
+load("@rules_rust//rust:defs.bzl", "rust_binary", "rust_library", "rust_proc_macro", "rust_test")
 
 PLATFORMS = [
     "linux_arm64_musl",
@@ -64,12 +64,16 @@ def _workspace_root_test_impl(ctx):
     test_bin = ctx.executable.test_bin
     workspace_root_marker = ctx.file.workspace_root_marker
     launcher_template = ctx.file._windows_launcher_template if is_windows else ctx.file._bash_launcher_template
+    runfile_env_exports = _windows_runfile_env_exports(ctx) if is_windows else _bash_runfile_env_exports(ctx)
+    workspace_root_setup = _windows_workspace_root_setup(ctx) if is_windows else _bash_workspace_root_setup(ctx)
     ctx.actions.expand_template(
         template = launcher_template,
         output = launcher,
         is_executable = True,
         substitutions = {
+            "__RUNFILE_ENV_EXPORTS__": runfile_env_exports,
             "__TEST_BIN__": test_bin.short_path,
+            "__WORKSPACE_ROOT_SETUP__": workspace_root_setup,
             "__WORKSPACE_ROOT_MARKER__": workspace_root_marker.short_path,
         },
     )
@@ -78,6 +82,17 @@ def _workspace_root_test_impl(ctx):
     for data_dep in ctx.attr.data:
         runfiles = runfiles.merge(ctx.runfiles(files = data_dep[DefaultInfo].files.to_list()))
         runfiles = runfiles.merge(data_dep[DefaultInfo].default_runfiles)
+    for runfile_dep in ctx.attr.runfile_env:
+        executable = runfile_dep[DefaultInfo].files_to_run.executable
+        if executable == None:
+            fail("{} does not provide an executable for runfile_env".format(runfile_dep.label))
+        runfiles = runfiles.merge(ctx.runfiles(files = [executable]))
+
+    location_targets = ctx.attr.data + [ctx.attr.test_bin, ctx.attr.workspace_root_marker]
+    env = {
+        key: ctx.expand_location(value, targets = location_targets)
+        for key, value in ctx.attr.env.items()
+    }
 
     return [
         DefaultInfo(
@@ -86,18 +101,55 @@ def _workspace_root_test_impl(ctx):
             runfiles = runfiles,
         ),
         RunEnvironmentInfo(
-            environment = ctx.attr.env,
+            environment = env,
         ),
     ]
+
+def _bash_runfile_env_exports(ctx):
+    lines = []
+    for runfile_dep, env_var in ctx.attr.runfile_env.items():
+        executable = runfile_dep[DefaultInfo].files_to_run.executable
+        if executable == None:
+            fail("{} does not provide an executable for runfile_env".format(runfile_dep.label))
+        lines.append('RUNFILE_ENV_ARGS+=("{}=$(resolve_runfile "{}")")'.format(env_var, executable.short_path))
+    return "\n".join(lines)
+
+def _windows_runfile_env_exports(ctx):
+    lines = []
+    for runfile_dep, env_var in ctx.attr.runfile_env.items():
+        executable = runfile_dep[DefaultInfo].files_to_run.executable
+        if executable == None:
+            fail("{} does not provide an executable for runfile_env".format(runfile_dep.label))
+        lines.append('call :resolve_runfile {} "{}"'.format(env_var, executable.short_path))
+        lines.append("if errorlevel 1 exit /b 1")
+    return "\n".join(lines)
+
+def _bash_workspace_root_setup(ctx):
+    if not ctx.attr.chdir_workspace_root:
+        return ""
+    return 'export INSTA_WORKSPACE_ROOT="${workspace_root}"\ncd "${workspace_root}"'
+
+def _windows_workspace_root_setup(ctx):
+    if not ctx.attr.chdir_workspace_root:
+        return ""
+    return """set "INSTA_WORKSPACE_ROOT=%workspace_root%"
+cd /d "%workspace_root%" || exit /b 1"""
 
 workspace_root_test = rule(
     implementation = _workspace_root_test_impl,
     test = True,
+    toolchains = ["@bazel_tools//tools/test:default_test_toolchain_type"],
     attrs = {
+        "chdir_workspace_root": attr.bool(
+            default = True,
+        ),
         "data": attr.label_list(
             allow_files = True,
         ),
         "env": attr.string_dict(),
+        "runfile_env": attr.label_keyed_string_dict(
+            cfg = "target",
+        ),
         "test_bin": attr.label(
             cfg = "target",
             executable = True,
@@ -255,6 +307,7 @@ def codex_rust_crate(
         unit_test_name = name + "-unit-tests"
         unit_test_binary = name + "-unit-tests-bin"
         unit_test_shard_count = _test_shard_count(test_shard_counts, unit_test_name)
+
         # Shard at the workspace_root_test layer. rules_rust's sharding wrapper
         # expects to run from its own runfiles cwd, while workspace_root_test
         # deliberately changes cwd so Insta sees Cargo-like snapshot paths.
@@ -298,9 +351,11 @@ def codex_rust_crate(
 
     sanitized_binaries = []
     cargo_env = {}
+    cargo_env_runfiles = {}
     for binary, main in binaries.items():
         #binary = binary.replace("-", "_")
         sanitized_binaries.append(binary)
+        cargo_env_runfiles[":" + binary] = "CARGO_BIN_EXE_" + binary
         cargo_env["CARGO_BIN_EXE_" + binary] = "$(rlocationpath :%s)" % binary
 
         rust_binary(
@@ -317,6 +372,7 @@ def codex_rust_crate(
     for binary_label in extra_binaries:
         sanitized_binaries.append(binary_label)
         binary = Label(binary_label).name
+        cargo_env_runfiles[binary_label] = "CARGO_BIN_EXE_" + binary
         cargo_env["CARGO_BIN_EXE_" + binary] = "$(rlocationpath %s)" % binary_label
 
     integration_test_kwargs = {}
@@ -331,17 +387,17 @@ def codex_rust_crate(
         test_name = name + "-" + test_file_stem.replace("/", "-")
         if not test_name.endswith("-test"):
             test_name += "-test"
+        test_binary = test_name + "-bin"
 
         test_kwargs = {}
         test_kwargs.update(integration_test_kwargs)
         test_shard_count = _test_shard_count(test_shard_counts, test_name)
         if test_shard_count:
-            test_kwargs["experimental_enable_sharding"] = True
             test_kwargs["shard_count"] = test_shard_count
             test_kwargs["flaky"] = True
 
         rust_test(
-            name = test_name,
+            name = test_binary,
             crate_name = test_crate_name,
             crate_root = test,
             srcs = [test],
@@ -356,10 +412,16 @@ def codex_rust_crate(
                 "--remap-path-prefix=codex-rs=",
             ],
             rustc_env = rustc_env,
-            # Important: do not merge `test_env` here. Its unit-test-only
-            # `INSTA_WORKSPACE_ROOT="codex-rs"` is tuned for unit tests that
-            # execute from the repo root and can misplace integration snapshots.
             env = cargo_env,
+            tags = test_tags + ["manual"],
+        )
+
+        workspace_root_test(
+            name = test_name,
+            chdir_workspace_root = False,
+            runfile_env = cargo_env_runfiles,
+            test_bin = ":" + test_binary,
+            workspace_root_marker = "//codex-rs/utils/cargo-bin:repo_root.marker",
             tags = test_tags,
             **test_kwargs
         )
