@@ -40,8 +40,34 @@ use codex_config::types::AppToolApproval;
 use codex_features::Feature;
 use codex_hooks::PermissionRequestDecision;
 use codex_mcp::CODEX_APPS_MCP_SERVER_NAME;
+#[cfg(test)]
+use codex_mcp::CONNECTOR_AUTH_FAILURE_AUTH_REASON_KEY;
+#[cfg(test)]
+use codex_mcp::CONNECTOR_AUTH_FAILURE_CONNECTOR_ID_KEY;
+#[cfg(test)]
+use codex_mcp::CONNECTOR_AUTH_FAILURE_CONNECTOR_NAME_KEY;
+#[cfg(test)]
+use codex_mcp::CONNECTOR_AUTH_FAILURE_ERROR_ACTION_KEY;
+#[cfg(test)]
+use codex_mcp::CONNECTOR_AUTH_FAILURE_ERROR_CODE_KEY;
+#[cfg(test)]
+use codex_mcp::CONNECTOR_AUTH_FAILURE_ERROR_HTTP_STATUS_CODE_KEY;
+#[cfg(test)]
+use codex_mcp::CONNECTOR_AUTH_FAILURE_INSTALL_URL_KEY;
+#[cfg(test)]
+use codex_mcp::CONNECTOR_AUTH_FAILURE_IS_AUTH_FAILURE_KEY;
+#[cfg(test)]
+use codex_mcp::CONNECTOR_AUTH_FAILURE_LINK_ID_KEY;
+#[cfg(test)]
+use codex_mcp::CONNECTOR_AUTH_FAILURE_META_KEY;
+use codex_mcp::CodexAppsConnectorAuthFailure;
+use codex_mcp::MCP_TOOL_CODEX_APPS_META_KEY;
 use codex_mcp::McpPermissionPromptAutoApproveContext;
 use codex_mcp::SandboxState;
+use codex_mcp::auth_elicitation_completed_result;
+use codex_mcp::auth_elicitation_id;
+use codex_mcp::build_auth_elicitation;
+use codex_mcp::connector_auth_failure_from_tool_result;
 use codex_mcp::declared_openai_file_input_param_names;
 use codex_mcp::mcp_permission_prompt_is_auto_approved;
 use codex_otel::sanitize_metric_tag_value;
@@ -611,7 +637,7 @@ async fn maybe_request_codex_apps_auth_elicitation(
         return result;
     };
 
-    let request_id = rmcp::model::RequestId::String(codex_apps_auth_elicitation_id(call_id).into());
+    let request_id = rmcp::model::RequestId::String(auth_elicitation_id(call_id).into());
     let params =
         build_codex_apps_auth_elicitation_request(sess, turn_context, call_id, &auth_failure);
     let response = sess
@@ -625,86 +651,22 @@ async fn maybe_request_codex_apps_auth_elicitation(
     }
 
     refresh_codex_apps_after_connector_auth(sess, turn_context).await;
-    codex_apps_auth_elicitation_completed_result(&auth_failure, result.meta)
+    auth_elicitation_completed_result(&auth_failure, result.meta)
 }
 
 fn codex_apps_connector_auth_failure(
     result: &CallToolResult,
     metadata: Option<&McpToolApprovalMetadata>,
 ) -> Option<CodexAppsConnectorAuthFailure> {
-    if result.is_error != Some(true) {
-        return None;
-    }
-
-    let auth_failure = result
-        .meta
-        .as_ref()?
-        .as_object()?
-        .get(MCP_TOOL_CODEX_APPS_META_KEY)?
-        .as_object()?
-        .get(CONNECTOR_AUTH_FAILURE_META_KEY)?
-        .as_object()?;
-    if auth_failure
-        .get(CONNECTOR_AUTH_FAILURE_IS_AUTH_FAILURE_KEY)
-        .and_then(serde_json::Value::as_bool)
-        != Some(true)
-    {
-        return None;
-    }
-
-    let metadata = metadata?;
-    let connector_id = metadata
-        .connector_id
-        .as_deref()
-        .map(str::trim)
-        .filter(|connector_id| !connector_id.is_empty())?;
-    if let Some(auth_failure_connector_id) =
-        string_auth_failure_field(auth_failure, CONNECTOR_AUTH_FAILURE_CONNECTOR_ID_KEY)
-        && auth_failure_connector_id != connector_id
-    {
-        return None;
-    }
-    let connector_name = metadata
-        .connector_name
-        .as_deref()
-        .map(str::trim)
-        .filter(|name| !name.is_empty())
-        .unwrap_or(connector_id)
-        .to_string();
-    let connector_id = connector_id.to_string();
-    let install_url =
-        codex_connectors::metadata::connector_install_url(&connector_name, &connector_id);
-
-    Some(CodexAppsConnectorAuthFailure {
-        connector_id,
-        connector_name,
-        install_url,
-        auth_reason: string_auth_failure_field(
-            auth_failure,
-            CONNECTOR_AUTH_FAILURE_AUTH_REASON_KEY,
-        ),
-        link_id: string_auth_failure_field(auth_failure, CONNECTOR_AUTH_FAILURE_LINK_ID_KEY),
-        error_code: string_auth_failure_field(auth_failure, CONNECTOR_AUTH_FAILURE_ERROR_CODE_KEY),
-        error_http_status_code: auth_failure
-            .get(CONNECTOR_AUTH_FAILURE_ERROR_HTTP_STATUS_CODE_KEY)
-            .and_then(serde_json::Value::as_i64),
-        error_action: string_auth_failure_field(
-            auth_failure,
-            CONNECTOR_AUTH_FAILURE_ERROR_ACTION_KEY,
-        ),
-    })
-}
-
-fn string_auth_failure_field(
-    auth_failure: &serde_json::Map<String, serde_json::Value>,
-    key: &str,
-) -> Option<String> {
-    auth_failure
-        .get(key)
-        .and_then(serde_json::Value::as_str)
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(ToString::to_string)
+    let connector_id = metadata.and_then(|metadata| metadata.connector_id.as_deref());
+    let connector_name = metadata.and_then(|metadata| metadata.connector_name.as_deref());
+    let install_url = connector_id.map(|connector_id| {
+        codex_connectors::metadata::connector_install_url(
+            connector_name.unwrap_or(connector_id),
+            connector_id,
+        )
+    });
+    connector_auth_failure_from_tool_result(result, connector_id, connector_name, install_url)
 }
 
 fn build_codex_apps_auth_elicitation_request(
@@ -713,123 +675,18 @@ fn build_codex_apps_auth_elicitation_request(
     call_id: &str,
     auth_failure: &CodexAppsConnectorAuthFailure,
 ) -> McpServerElicitationRequestParams {
-    let message = codex_apps_auth_elicitation_message(auth_failure);
-    let elicitation_id = codex_apps_auth_elicitation_id(call_id);
-    let mut auth_failure_meta = serde_json::Map::new();
-    auth_failure_meta.insert(
-        CONNECTOR_AUTH_FAILURE_IS_AUTH_FAILURE_KEY.to_string(),
-        serde_json::Value::Bool(true),
-    );
-    auth_failure_meta.insert(
-        CONNECTOR_AUTH_FAILURE_CONNECTOR_ID_KEY.to_string(),
-        serde_json::Value::String(auth_failure.connector_id.clone()),
-    );
-    auth_failure_meta.insert(
-        CONNECTOR_AUTH_FAILURE_CONNECTOR_NAME_KEY.to_string(),
-        serde_json::Value::String(auth_failure.connector_name.clone()),
-    );
-    auth_failure_meta.insert(
-        CONNECTOR_AUTH_FAILURE_INSTALL_URL_KEY.to_string(),
-        serde_json::Value::String(auth_failure.install_url.clone()),
-    );
-    insert_optional_string_meta(
-        &mut auth_failure_meta,
-        CONNECTOR_AUTH_FAILURE_AUTH_REASON_KEY,
-        auth_failure.auth_reason.as_deref(),
-    );
-    insert_optional_string_meta(
-        &mut auth_failure_meta,
-        CONNECTOR_AUTH_FAILURE_LINK_ID_KEY,
-        auth_failure.link_id.as_deref(),
-    );
-    insert_optional_string_meta(
-        &mut auth_failure_meta,
-        CONNECTOR_AUTH_FAILURE_ERROR_CODE_KEY,
-        auth_failure.error_code.as_deref(),
-    );
-    if let Some(error_http_status_code) = auth_failure.error_http_status_code {
-        auth_failure_meta.insert(
-            CONNECTOR_AUTH_FAILURE_ERROR_HTTP_STATUS_CODE_KEY.to_string(),
-            serde_json::Value::Number(error_http_status_code.into()),
-        );
-    }
-    insert_optional_string_meta(
-        &mut auth_failure_meta,
-        CONNECTOR_AUTH_FAILURE_ERROR_ACTION_KEY,
-        auth_failure.error_action.as_deref(),
-    );
-    let meta = serde_json::json!({
-        MCP_TOOL_CODEX_APPS_META_KEY: {
-            CONNECTOR_AUTH_FAILURE_META_KEY: auth_failure_meta,
-        },
-    });
+    let auth_elicitation = build_auth_elicitation(call_id, auth_failure);
 
     McpServerElicitationRequestParams {
         thread_id: sess.conversation_id.to_string(),
         turn_id: Some(turn_context.sub_id.clone()),
         server_name: CODEX_APPS_MCP_SERVER_NAME.to_string(),
         request: McpServerElicitationRequest::Url {
-            meta: Some(meta),
-            message,
-            url: auth_failure.install_url.clone(),
-            elicitation_id,
+            meta: Some(auth_elicitation.meta),
+            message: auth_elicitation.message,
+            url: auth_elicitation.url,
+            elicitation_id: auth_elicitation.elicitation_id,
         },
-    }
-}
-
-fn codex_apps_auth_elicitation_id(call_id: &str) -> String {
-    format!("codex_apps_auth_{call_id}")
-}
-
-fn insert_optional_string_meta(
-    meta: &mut serde_json::Map<String, serde_json::Value>,
-    key: &str,
-    value: Option<&str>,
-) {
-    if let Some(value) = value {
-        meta.insert(
-            key.to_string(),
-            serde_json::Value::String(value.to_string()),
-        );
-    }
-}
-
-fn codex_apps_auth_elicitation_message(auth_failure: &CodexAppsConnectorAuthFailure) -> String {
-    match auth_failure.auth_reason.as_deref() {
-        Some("oauth_upgrade_required") => format!(
-            "Reconnect {} on ChatGPT to grant the permissions needed for this request.",
-            auth_failure.connector_name
-        ),
-        Some("reauthentication_required") => format!(
-            "Reconnect {} on ChatGPT to restore access for this request.",
-            auth_failure.connector_name
-        ),
-        Some("missing_link") => format!(
-            "Sign in to {} on ChatGPT to use it in Codex.",
-            auth_failure.connector_name
-        ),
-        _ => format!(
-            "Sign in to {} on ChatGPT to continue.",
-            auth_failure.connector_name
-        ),
-    }
-}
-
-fn codex_apps_auth_elicitation_completed_result(
-    auth_failure: &CodexAppsConnectorAuthFailure,
-    meta: Option<serde_json::Value>,
-) -> CallToolResult {
-    CallToolResult {
-        content: vec![serde_json::json!({
-            "type": "text",
-            "text": format!(
-                "Authentication for {} was requested and accepted. Retry this tool call now.",
-                auth_failure.connector_name
-            ),
-        })],
-        structured_content: None,
-        is_error: Some(true),
-        meta,
     }
 }
 
@@ -1060,7 +917,6 @@ pub(crate) struct McpToolApprovalMetadata {
     openai_file_input_params: Option<Vec<String>>,
 }
 
-const MCP_TOOL_CODEX_APPS_META_KEY: &str = "_codex_apps";
 const MCP_TOOL_OPENAI_OUTPUT_TEMPLATE_META_KEY: &str = "openai/outputTemplate";
 const MCP_TOOL_UI_RESOURCE_URI_META_KEY: &str = "ui/resourceUri";
 const MCP_TOOL_THREAD_ID_META_KEY: &str = "threadId";
@@ -1212,33 +1068,11 @@ const MCP_TOOL_APPROVAL_TOOL_PARAMS_KEY: &str = "tool_params";
 const MCP_TOOL_APPROVAL_TOOL_PARAMS_DISPLAY_KEY: &str = "tool_params_display";
 const MCP_TOOL_CALL_ARC_MONITOR_CALLSITE_DEFAULT: &str = "mcp_tool_call__default";
 const MCP_TOOL_CALL_ARC_MONITOR_CALLSITE_ALWAYS_ALLOW: &str = "mcp_tool_call__always_allow";
-const CONNECTOR_AUTH_FAILURE_META_KEY: &str = "connector_auth_failure";
-const CONNECTOR_AUTH_FAILURE_IS_AUTH_FAILURE_KEY: &str = "is_auth_failure";
-const CONNECTOR_AUTH_FAILURE_AUTH_REASON_KEY: &str = "auth_reason";
-const CONNECTOR_AUTH_FAILURE_CONNECTOR_ID_KEY: &str = "connector_id";
-const CONNECTOR_AUTH_FAILURE_CONNECTOR_NAME_KEY: &str = "connector_name";
-const CONNECTOR_AUTH_FAILURE_INSTALL_URL_KEY: &str = "install_url";
-const CONNECTOR_AUTH_FAILURE_LINK_ID_KEY: &str = "link_id";
-const CONNECTOR_AUTH_FAILURE_ERROR_CODE_KEY: &str = "error_code";
-const CONNECTOR_AUTH_FAILURE_ERROR_HTTP_STATUS_CODE_KEY: &str = "error_http_status_code";
-const CONNECTOR_AUTH_FAILURE_ERROR_ACTION_KEY: &str = "error_action";
 
 pub(crate) fn is_mcp_tool_approval_question_id(question_id: &str) -> bool {
     question_id
         .strip_prefix(MCP_TOOL_APPROVAL_QUESTION_ID_PREFIX)
         .is_some_and(|suffix| suffix.starts_with('_'))
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct CodexAppsConnectorAuthFailure {
-    connector_id: String,
-    connector_name: String,
-    install_url: String,
-    auth_reason: Option<String>,
-    link_id: Option<String>,
-    error_code: Option<String>,
-    error_http_status_code: Option<i64>,
-    error_action: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]

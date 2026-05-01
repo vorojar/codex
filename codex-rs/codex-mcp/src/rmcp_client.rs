@@ -25,6 +25,7 @@ use crate::codex_apps::normalize_codex_apps_callable_name;
 use crate::codex_apps::normalize_codex_apps_callable_namespace;
 use crate::codex_apps::normalize_codex_apps_tool_title;
 use crate::codex_apps::write_cached_codex_apps_tools_if_needed;
+use crate::elicitation::AuthElicitationSupport;
 use crate::elicitation::ElicitationRequestManager;
 use crate::mcp::CODEX_APPS_MCP_SERVER_NAME;
 use crate::mcp::ToolPluginProvenance;
@@ -60,6 +61,7 @@ use rmcp::model::Implementation;
 use rmcp::model::InitializeRequestParams;
 use rmcp::model::ProtocolVersion;
 use rmcp::model::Tool as RmcpTool;
+use rmcp::model::UrlElicitationCapability;
 use tokio_util::sync::CancellationToken;
 use tracing::warn;
 
@@ -318,16 +320,16 @@ impl From<anyhow::Error> for StartupOutcomeError {
     }
 }
 
-pub(crate) fn elicitation_capability_for_server(
-    _server_name: &str,
+pub(crate) fn elicitation_capability(
+    auth_elicitation_support: AuthElicitationSupport,
 ) -> Option<ElicitationCapability> {
-    // https://modelcontextprotocol.io/specification/2025-06-18/client/elicitation#capabilities
-    // indicates this should be an empty object.
     Some(ElicitationCapability {
         form: Some(FormElicitationCapability {
             schema_validation: None,
         }),
-        url: None,
+        url: auth_elicitation_support
+            .is_enabled()
+            .then_some(UrlElicitationCapability::default()),
     })
 }
 
@@ -463,7 +465,7 @@ async fn start_server_task(
         elicitation_requests,
         codex_apps_tools_cache_context,
     } = params;
-    let elicitation = elicitation_capability_for_server(&server_name);
+    let elicitation = elicitation_capability(elicitation_requests.auth_elicitation_support());
     let params = InitializeRequestParams {
         meta: None,
         capabilities: ClientCapabilities {

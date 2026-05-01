@@ -100,6 +100,7 @@ pub(crate) enum ApprovalRequest {
         server_name: String,
         request_id: RequestId,
         message: String,
+        url: Option<String>,
     },
 }
 
@@ -265,8 +266,10 @@ impl ApprovalOverlay {
                 patch_options(approval_keymap),
                 "Would you like to make the following edits?".to_string(),
             ),
-            ApprovalRequest::McpElicitation { server_name, .. } => (
-                elicitation_options(approval_keymap),
+            ApprovalRequest::McpElicitation {
+                server_name, url, ..
+            } => (
+                elicitation_options(url.as_deref(), approval_keymap),
                 format!("{server_name} needs your approval."),
             ),
         };
@@ -330,11 +333,17 @@ impl ApprovalOverlay {
                     ApprovalRequest::McpElicitation {
                         server_name,
                         request_id,
+                        url,
                         ..
                     },
                     ApprovalDecision::McpElicitation(decision),
                 ) => {
-                    self.handle_elicitation_decision(server_name, request_id, *decision);
+                    self.handle_elicitation_decision(
+                        server_name,
+                        request_id,
+                        url.as_deref(),
+                        *decision,
+                    );
                 }
                 _ => {}
             }
@@ -432,6 +441,7 @@ impl ApprovalOverlay {
         &self,
         server_name: &str,
         request_id: &RequestId,
+        url: Option<&str>,
         decision: McpServerElicitationAction,
     ) {
         let Some(thread_id) = self
@@ -441,6 +451,13 @@ impl ApprovalOverlay {
         else {
             return;
         };
+        if decision == McpServerElicitationAction::Accept
+            && let Some(url) = url
+        {
+            self.app_event_tx.send(AppEvent::OpenUrlInBrowser {
+                url: url.to_string(),
+            });
+        }
         self.app_event_tx.resolve_elicitation(
             thread_id,
             server_name.to_string(),
@@ -491,11 +508,13 @@ impl ApprovalOverlay {
                 ApprovalRequest::McpElicitation {
                     server_name,
                     request_id,
+                    url,
                     ..
                 } => {
                     self.handle_elicitation_decision(
                         server_name,
                         request_id,
+                        url.as_deref(),
                         McpServerElicitationAction::Cancel,
                     );
                 }
@@ -722,6 +741,7 @@ fn build_header(request: &ApprovalRequest) -> Box<dyn Renderable> {
             thread_label,
             server_name,
             message,
+            url,
             ..
         } => {
             let mut lines = Vec::new();
@@ -737,6 +757,12 @@ fn build_header(request: &ApprovalRequest) -> Box<dyn Renderable> {
                 Line::from(""),
                 Line::from(message.clone()),
             ]);
+            if let Some(url) = url {
+                lines.extend([
+                    Line::from(""),
+                    Line::from(vec!["URL: ".into(), url.clone().cyan().underlined()]),
+                ]);
+            }
             let header = Paragraph::new(lines).wrap(Wrap { trim: false });
             Box::new(header)
         }
@@ -1031,7 +1057,7 @@ fn permissions_options(keymap: &ApprovalKeymap) -> Vec<ApprovalOption> {
 /// dismissal remains a safe abort path and never silently maps to "continue
 /// without requested info." Any decline/cancel overlap is removed from the
 /// decline option in elicitation mode to preserve this invariant.
-fn elicitation_options(keymap: &ApprovalKeymap) -> Vec<ApprovalOption> {
+fn elicitation_options(url: Option<&str>, keymap: &ApprovalKeymap) -> Vec<ApprovalOption> {
     let mut cancel_shortcuts = vec![key_hint::plain(KeyCode::Esc)];
     for shortcut in &keymap.cancel {
         if !cancel_shortcuts.contains(shortcut) {
@@ -1048,7 +1074,11 @@ fn elicitation_options(keymap: &ApprovalKeymap) -> Vec<ApprovalOption> {
 
     vec![
         ApprovalOption {
-            label: "Yes, provide the requested info".to_string(),
+            label: if url.is_some() {
+                "Yes, open the requested URL".to_string()
+            } else {
+                "Yes, provide the requested info".to_string()
+            },
             decision: ApprovalDecision::McpElicitation(McpServerElicitationAction::Accept),
             shortcuts: keymap.approve.clone(),
         },
@@ -1185,6 +1215,18 @@ mod tests {
             server_name: "test-server".to_string(),
             request_id: RequestId::String("request-1".to_string()),
             message: "Need more information".to_string(),
+            url: None,
+        }
+    }
+
+    fn make_url_elicitation_request() -> ApprovalRequest {
+        ApprovalRequest::McpElicitation {
+            thread_id: ThreadId::new(),
+            thread_label: None,
+            server_name: "github_mcp".to_string(),
+            request_id: RequestId::String("request-2".to_string()),
+            message: "Sign in to GitHub to continue.".to_string(),
+            url: Some("https://github.example/login/device".to_string()),
         }
     }
 
@@ -1228,6 +1270,51 @@ mod tests {
             }
         }
         assert_eq!(decision, Some(CommandExecutionApprovalDecision::Cancel));
+    }
+
+    #[test]
+    fn url_elicitation_accept_opens_url_before_resolving() {
+        let (tx_raw, mut rx) = unbounded_channel::<AppEvent>();
+        let tx = AppEventSender::new(tx_raw);
+        let mut view = make_overlay(
+            make_url_elicitation_request(),
+            tx,
+            Features::with_defaults(),
+        );
+
+        view.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+
+        assert!(matches!(
+            rx.try_recv(),
+            Ok(AppEvent::OpenUrlInBrowser { url })
+                if url == "https://github.example/login/device"
+        ));
+        assert!(matches!(
+            rx.try_recv(),
+            Ok(AppEvent::SubmitThreadOp {
+                op: Op::ResolveElicitation {
+                    decision: McpServerElicitationAction::Accept,
+                    ..
+                },
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn url_elicitation_prompt_snapshot() {
+        let (tx, _rx) = unbounded_channel::<AppEvent>();
+        let tx = AppEventSender::new(tx);
+        let view = make_overlay(
+            make_url_elicitation_request(),
+            tx,
+            Features::with_defaults(),
+        );
+
+        assert_snapshot!(
+            "url_elicitation_prompt",
+            render_overlay_lines(&view, /*width*/ 96)
+        );
     }
 
     #[test]

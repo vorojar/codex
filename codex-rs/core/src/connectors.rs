@@ -38,6 +38,7 @@ use codex_login::AuthManager;
 use codex_login::CodexAuth;
 use codex_login::default_client::create_client;
 use codex_login::default_client::originator;
+use codex_mcp::AuthElicitationSupport;
 use codex_mcp::CODEX_APPS_MCP_SERVER_NAME;
 use codex_mcp::McpConnectionManager;
 use codex_mcp::McpRuntimeEnvironment;
@@ -279,6 +280,11 @@ pub async fn list_accessible_connectors_from_mcp_tools_with_environment_manager(
         config.codex_home.to_path_buf(),
         codex_apps_tools_cache_key(auth.as_ref()),
         ToolPluginProvenance::default(),
+        if config.features.enabled(Feature::AuthElicitation) {
+            AuthElicitationSupport::Enabled
+        } else {
+            AuthElicitationSupport::Disabled
+        },
         auth.as_ref(),
     )
     .await;

@@ -2706,7 +2706,7 @@ async fn inactive_thread_permissions_approval_preserves_file_system_permissions(
 }
 
 #[tokio::test]
-async fn inactive_thread_custom_server_url_elicitation_is_ignored() {
+async fn inactive_thread_custom_server_url_elicitation_uses_generic_approval() {
     let app = make_test_app().await;
     let thread_id = ThreadId::new();
     let request = ServerRequest::McpServerElicitationRequest {
@@ -2730,6 +2730,7 @@ async fn inactive_thread_custom_server_url_elicitation_is_ignored() {
         server_name,
         request_id,
         message,
+        url,
     })) = app
         .interactive_request_for_thread_request(thread_id, &request)
         .await
@@ -2742,6 +2743,7 @@ async fn inactive_thread_custom_server_url_elicitation_is_ignored() {
     assert_eq!(server_name, "github_mcp");
     assert_eq!(request_id, codex_app_server_protocol::RequestId::Integer(9));
     assert_eq!(message, "Sign in to GitHub to continue.");
+    assert_eq!(url.as_deref(), Some("https://github.example/login/device"));
 }
 
 #[tokio::test]

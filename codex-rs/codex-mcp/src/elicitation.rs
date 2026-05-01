@@ -9,7 +9,6 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::Mutex as StdMutex;
 
-use crate::mcp::CODEX_APPS_MCP_SERVER_NAME;
 use crate::mcp::McpPermissionPromptAutoApproveContext;
 use crate::mcp::mcp_permission_prompt_is_auto_approved;
 use anyhow::Context;
@@ -35,20 +34,40 @@ use tokio::sync::oneshot;
 #[derive(Clone)]
 pub(crate) struct ElicitationRequestManager {
     requests: Arc<Mutex<ResponderMap>>,
+    auth_elicitation_support: AuthElicitationSupport,
     pub(crate) approval_policy: Arc<StdMutex<AskForApproval>>,
     pub(crate) permission_profile: Arc<StdMutex<PermissionProfile>>,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum AuthElicitationSupport {
+    #[default]
+    Disabled,
+    Enabled,
+}
+
+impl AuthElicitationSupport {
+    pub(crate) fn is_enabled(self) -> bool {
+        matches!(self, Self::Enabled)
+    }
 }
 
 impl ElicitationRequestManager {
     pub(crate) fn new(
         approval_policy: AskForApproval,
         permission_profile: PermissionProfile,
+        auth_elicitation_support: AuthElicitationSupport,
     ) -> Self {
         Self {
             requests: Arc::new(Mutex::new(HashMap::new())),
+            auth_elicitation_support,
             approval_policy: Arc::new(StdMutex::new(approval_policy)),
             permission_profile: Arc::new(StdMutex::new(permission_profile)),
         }
+    }
+
+    pub(crate) fn auth_elicitation_support(&self) -> AuthElicitationSupport {
+        self.auth_elicitation_support
     }
 
     pub(crate) async fn resolve(
@@ -74,6 +93,7 @@ impl ElicitationRequestManager {
         let elicitation_requests = self.requests.clone();
         let approval_policy = self.approval_policy.clone();
         let permission_profile = self.permission_profile.clone();
+        let auth_elicitation_support = self.auth_elicitation_support;
         Box::new(move |id, elicitation| {
             let elicitation_requests = elicitation_requests.clone();
             let tx_event = tx_event.clone();
@@ -110,6 +130,19 @@ impl ElicitationRequestManager {
                     });
                 }
 
+                if !auth_elicitation_support.is_enabled()
+                    && matches!(
+                        elicitation,
+                        CreateElicitationRequestParams::UrlElicitationParams { .. }
+                    )
+                {
+                    return Ok(ElicitationResponse {
+                        action: ElicitationAction::Decline,
+                        content: None,
+                        meta: None,
+                    });
+                }
+
                 let request = match elicitation {
                     CreateElicitationRequestParams::FormElicitationParams {
                         meta,
@@ -129,25 +162,15 @@ impl ElicitationRequestManager {
                         message,
                         url,
                         elicitation_id,
-                    } => {
-                        if server_name != CODEX_APPS_MCP_SERVER_NAME {
-                            return Ok(ElicitationResponse {
-                                action: ElicitationAction::Decline,
-                                content: None,
-                                meta: None,
-                            });
-                        }
-
-                        ElicitationRequest::Url {
-                            meta: meta
-                                .map(serde_json::to_value)
-                                .transpose()
-                                .context("failed to serialize MCP elicitation metadata")?,
-                            message,
-                            url,
-                            elicitation_id,
-                        }
-                    }
+                    } => ElicitationRequest::Url {
+                        meta: meta
+                            .map(serde_json::to_value)
+                            .transpose()
+                            .context("failed to serialize MCP elicitation metadata")?,
+                        message,
+                        url,
+                        elicitation_id,
+                    },
                 };
                 let (tx, rx) = oneshot::channel();
                 {

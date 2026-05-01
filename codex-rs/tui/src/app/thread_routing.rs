@@ -294,6 +294,15 @@ impl App {
                                     ..
                                 } => message.clone(),
                             },
+                            url: match &params.request {
+                                codex_app_server_protocol::McpServerElicitationRequest::Form {
+                                    ..
+                                } => None,
+                                codex_app_server_protocol::McpServerElicitationRequest::Url {
+                                    url,
+                                    ..
+                                } => Some(url.clone()),
+                            },
                         },
                     ))
                 }

@@ -23,6 +23,7 @@ fn test_mcp_config(codex_home: PathBuf) -> McpConfig {
         mcp_oauth_callback_port: None,
         mcp_oauth_callback_url: None,
         skill_mcp_dependency_install_enabled: true,
+        auth_elicitation_support: AuthElicitationSupport::Disabled,
         approval_policy: Constrained::allow_any(AskForApproval::OnFailure),
         codex_linux_sandbox_exe: None,
         use_legacy_landlock: false,

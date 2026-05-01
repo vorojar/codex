@@ -63,6 +63,7 @@ use codex_login::AuthManager;
 use codex_login::CodexAuth;
 use codex_login::auth_env_telemetry::collect_auth_env_telemetry;
 use codex_login::default_client::originator;
+use codex_mcp::AuthElicitationSupport;
 use codex_mcp::McpConnectionManager;
 use codex_mcp::McpRuntimeEnvironment;
 use codex_mcp::ToolInfo;
@@ -359,6 +360,14 @@ use codex_utils_absolute_path::AbsolutePathBuf;
 use codex_utils_readiness::ReadinessFlag;
 #[cfg(test)]
 use codex_utils_stream_parser::ProposedPlanSegment;
+
+fn auth_elicitation_support(features: &ManagedFeatures) -> AuthElicitationSupport {
+    if features.enabled(Feature::AuthElicitation) {
+        AuthElicitationSupport::Enabled
+    } else {
+        AuthElicitationSupport::Disabled
+    }
+}
 
 /// The high-level interface to the Codex system.
 /// It operates as a queue pair where you send submissions and receive events.

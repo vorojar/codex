@@ -795,6 +795,7 @@ impl Session {
                 mcp_connection_manager: Arc::new(RwLock::new(McpConnectionManager::new_uninitialized(
                     &config.permissions.approval_policy,
                     &config.permissions.permission_profile,
+                    auth_elicitation_support(&config.features),
                 ))),
                 mcp_startup_cancellation_token: Mutex::new(CancellationToken::new()),
                 unified_exec_manager: UnifiedExecProcessManager::new(
@@ -938,6 +939,7 @@ impl Session {
                 config.codex_home.to_path_buf(),
                 codex_apps_tools_cache_key(auth),
                 tool_plugin_provenance,
+                auth_elicitation_support(&config.features),
                 auth,
             )
             .instrument(info_span!(

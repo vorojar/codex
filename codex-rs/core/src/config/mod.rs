@@ -67,6 +67,7 @@ use codex_features::FeaturesToml;
 use codex_features::MultiAgentV2ConfigToml;
 use codex_git_utils::resolve_root_git_project_for_trust;
 use codex_login::AuthManagerConfig;
+use codex_mcp::AuthElicitationSupport;
 use codex_mcp::McpConfig;
 use codex_memories_read::memory_root;
 use codex_model_provider_info::LEGACY_OLLAMA_CHAT_PROVIDER_ID;
@@ -1046,6 +1047,11 @@ impl Config {
             skill_mcp_dependency_install_enabled: self
                 .features
                 .enabled(Feature::SkillMcpDependencyInstall),
+            auth_elicitation_support: if self.features.enabled(Feature::AuthElicitation) {
+                AuthElicitationSupport::Enabled
+            } else {
+                AuthElicitationSupport::Disabled
+            },
             approval_policy: self.permissions.approval_policy.clone(),
             codex_linux_sandbox_exe: self.codex_linux_sandbox_exe.clone(),
             use_legacy_landlock: self.features.use_legacy_landlock(),
