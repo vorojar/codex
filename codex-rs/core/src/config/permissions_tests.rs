@@ -20,6 +20,7 @@ use codex_protocol::permissions::FileSystemSandboxEntry;
 use codex_protocol::permissions::FileSystemSandboxPolicy;
 use codex_protocol::permissions::FileSystemSpecialPath;
 use codex_utils_absolute_path::AbsolutePathBuf;
+use indexmap::IndexMap;
 use pretty_assertions::assert_eq;
 use std::collections::BTreeMap;
 use tempfile::TempDir;
@@ -255,7 +256,7 @@ fn profile_network_proxy_config_enables_proxy_for_mitm_hooks() {
         enabled: Some(true),
         mitm: Some(NetworkMitmToml {
             enabled: Some(true),
-            hooks: Some(BTreeMap::from([(
+            hooks: Some(IndexMap::from([(
                 "github_write".to_string(),
                 NetworkMitmHookToml {
                     host: "api.github.com".to_string(),
@@ -267,7 +268,7 @@ fn profile_network_proxy_config_enables_proxy_for_mitm_hooks() {
                     action: vec!["strip_auth".to_string()],
                 },
             )])),
-            actions: Some(BTreeMap::from([(
+            actions: Some(IndexMap::from([(
                 "strip_auth".to_string(),
                 NetworkMitmActionToml {
                     strip_request_headers: vec!["authorization".to_string()],
@@ -294,7 +295,7 @@ fn profile_network_proxy_config_enables_proxy_for_mitm_hook_tables_without_enabl
         enabled: Some(true),
         mitm: Some(NetworkMitmToml {
             enabled: None,
-            hooks: Some(BTreeMap::from([(
+            hooks: Some(IndexMap::from([(
                 "github_write".to_string(),
                 NetworkMitmHookToml {
                     host: "api.github.com".to_string(),
@@ -320,7 +321,7 @@ fn profile_network_proxy_config_keeps_proxy_disabled_for_empty_mitm_table() {
         enabled: Some(true),
         mitm: Some(NetworkMitmToml {
             enabled: None,
-            hooks: Some(BTreeMap::new()),
+            hooks: Some(IndexMap::new()),
             actions: None,
         }),
         ..Default::default()

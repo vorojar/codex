@@ -11,6 +11,7 @@ use codex_network_proxy::NetworkProxyConfig;
 use codex_network_proxy::NetworkUnixSocketPermission as ProxyNetworkUnixSocketPermission;
 use codex_network_proxy::normalize_host;
 use codex_protocol::permissions::FileSystemAccessMode;
+use indexmap::IndexMap;
 use schemars::JsonSchema;
 use serde::Deserialize;
 use serde::Serialize;
@@ -170,16 +171,18 @@ pub struct NetworkToml {
 #[schemars(deny_unknown_fields)]
 pub struct NetworkMitmToml {
     pub enabled: Option<bool>,
-    pub hooks: Option<BTreeMap<String, NetworkMitmHookToml>>,
-    pub actions: Option<BTreeMap<String, NetworkMitmActionToml>>,
+    #[schemars(with = "Option<BTreeMap<String, NetworkMitmHookToml>>")]
+    pub hooks: Option<IndexMap<String, NetworkMitmHookToml>>,
+    #[schemars(with = "Option<BTreeMap<String, NetworkMitmActionToml>>")]
+    pub actions: Option<IndexMap<String, NetworkMitmActionToml>>,
 }
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct NetworkMitmTomlUnchecked {
     pub enabled: Option<bool>,
-    pub hooks: Option<BTreeMap<String, NetworkMitmHookToml>>,
-    pub actions: Option<BTreeMap<String, NetworkMitmActionToml>>,
+    pub hooks: Option<IndexMap<String, NetworkMitmHookToml>>,
+    pub actions: Option<IndexMap<String, NetworkMitmActionToml>>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, Default, PartialEq, Eq, JsonSchema)]
@@ -362,7 +365,7 @@ impl NetworkToml {
 impl NetworkMitmHookToml {
     fn to_runtime(
         &self,
-        actions_by_name: Option<&BTreeMap<String, NetworkMitmActionToml>>,
+        actions_by_name: Option<&IndexMap<String, NetworkMitmActionToml>>,
     ) -> MitmHookConfig {
         MitmHookConfig {
             host: self.host.clone(),
@@ -379,7 +382,7 @@ impl NetworkMitmHookToml {
 
     fn selected_actions(
         &self,
-        actions_by_name: Option<&BTreeMap<String, NetworkMitmActionToml>>,
+        actions_by_name: Option<&IndexMap<String, NetworkMitmActionToml>>,
     ) -> MitmHookActionsConfig {
         let Some(actions_by_name) = actions_by_name else {
             return MitmHookActionsConfig::default();
