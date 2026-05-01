@@ -53,6 +53,7 @@ use crate::mcp_cmd::McpCli;
 
 use codex_core::build_models_manager;
 use codex_core::config::Config;
+use codex_core::config::ConfigBuilder;
 use codex_core::config::ConfigOverrides;
 use codex_core::config::edit::ConfigEditsBuilder;
 use codex_core::config::find_codex_home;
@@ -845,10 +846,11 @@ async fn cli_main(arg0_paths: Arg0DispatchPaths) -> anyhow::Result<()> {
                 None => {
                     let transport = listen;
                     let auth = auth.try_into_settings()?;
+                    let loader_overrides = loader_overrides_from_cli(&root_config_overrides);
                     codex_app_server::run_main_with_transport(
                         arg0_paths.clone(),
                         root_config_overrides,
-                        codex_config::LoaderOverrides::default(),
+                        loader_overrides,
                         analytics_default_enabled,
                         transport,
                         codex_protocol::protocol::SessionSource::VSCode,
@@ -1209,11 +1211,12 @@ async fn cli_main(arg0_paths: Arg0DispatchPaths) -> anyhow::Result<()> {
                     ..Default::default()
                 };
 
-                let config = Config::load_with_cli_overrides_and_harness_overrides(
-                    cli_kv_overrides,
-                    overrides,
-                )
-                .await?;
+                let config = ConfigBuilder::default()
+                    .cli_overrides(cli_kv_overrides)
+                    .harness_overrides(overrides)
+                    .loader_overrides(loader_overrides_from_cli(&root_config_overrides))
+                    .build()
+                    .await?;
                 let mut rows = Vec::with_capacity(FEATURES.len());
                 let mut name_width = 0;
                 let mut stage_width = 0;
@@ -1372,8 +1375,12 @@ async fn run_debug_prompt_input_command(
         additional_writable_roots: shared.add_dir,
         ..Default::default()
     };
-    let config =
-        Config::load_with_cli_overrides_and_harness_overrides(cli_kv_overrides, overrides).await?;
+    let config = ConfigBuilder::default()
+        .cli_overrides(cli_kv_overrides)
+        .harness_overrides(overrides)
+        .loader_overrides(loader_overrides_from_cli(&root_config_overrides))
+        .build()
+        .await?;
 
     let mut input = shared
         .images
@@ -1404,7 +1411,11 @@ async fn run_debug_models_command(
         let cli_overrides = root_config_overrides
             .parse_overrides()
             .map_err(anyhow::Error::msg)?;
-        let config = Config::load_with_cli_overrides(cli_overrides).await?;
+        let config = Config::load_with_cli_overrides_and_loader_overrides(
+            cli_overrides,
+            loader_overrides_from_cli(&root_config_overrides),
+        )
+        .await?;
         let auth_manager =
             AuthManager::shared_from_config(&config, /*enable_codex_api_key_env*/ true).await;
         let models_manager = build_models_manager(&config, auth_manager);
@@ -1429,8 +1440,12 @@ async fn run_debug_clear_memories_command(
         config_profile: interactive.config_profile.clone(),
         ..Default::default()
     };
-    let config =
-        Config::load_with_cli_overrides_and_harness_overrides(cli_kv_overrides, overrides).await?;
+    let config = ConfigBuilder::default()
+        .cli_overrides(cli_kv_overrides)
+        .harness_overrides(overrides)
+        .loader_overrides(loader_overrides_from_cli(root_config_overrides))
+        .build()
+        .await?;
 
     let state_path = state_db_path(config.sqlite_home.as_path());
     let mut cleared_state_db = false;
@@ -1465,9 +1480,19 @@ fn prepend_config_flags(
     subcommand_config_overrides: &mut CliConfigOverrides,
     cli_config_overrides: CliConfigOverrides,
 ) {
+    subcommand_config_overrides.strict_config |= cli_config_overrides.strict_config;
     subcommand_config_overrides
         .raw_overrides
         .splice(0..0, cli_config_overrides.raw_overrides);
+}
+
+fn loader_overrides_from_cli(
+    config_overrides: &CliConfigOverrides,
+) -> codex_config::LoaderOverrides {
+    codex_config::LoaderOverrides {
+        strict_config: config_overrides.strict_config,
+        ..Default::default()
+    }
 }
 
 fn reject_remote_mode_for_subcommand(
@@ -1569,10 +1594,11 @@ async fn run_interactive_tui(
         .map(read_remote_auth_token_from_env_var)
         .transpose()
         .map_err(std::io::Error::other)?;
+    let loader_overrides = loader_overrides_from_cli(&interactive.config_overrides);
     codex_tui::run_main(
         interactive,
         arg0_paths,
-        codex_config::LoaderOverrides::default(),
+        loader_overrides,
         normalized_remote,
         remote_auth_token,
     )
@@ -1672,6 +1698,7 @@ fn merge_interactive_cli_flags(interactive: &mut TuiCli, subcommand_cli: TuiCli)
         .config_overrides
         .raw_overrides
         .extend(config_overrides.raw_overrides);
+    interactive.config_overrides.strict_config |= config_overrides.strict_config;
 }
 
 fn print_completion(cmd: CompletionCommand) {
@@ -2150,6 +2177,7 @@ mod tests {
                 "my-profile",
                 "-C",
                 "/tmp",
+                "--strict-check",
                 "-i",
                 "/tmp/a.png,/tmp/b.png",
             ]
@@ -2172,6 +2200,7 @@ mod tests {
             Some(std::path::Path::new("/tmp"))
         );
         assert!(interactive.web_search);
+        assert!(interactive.config_overrides.strict_config);
         let has_a = interactive
             .images
             .iter()
@@ -2604,5 +2633,39 @@ mod tests {
             .to_overrides()
             .expect_err("feature should be rejected");
         assert_eq!(err.to_string(), "Unknown feature flag: does_not_exist");
+    }
+
+    #[test]
+    fn strict_check_with_unknown_enable_errors() {
+        let err = strict_check_feature_toggle_error(["--enable", "does_not_exist"].as_ref());
+        assert_eq!(err.to_string(), "Unknown feature flag: does_not_exist");
+    }
+
+    #[test]
+    fn strict_check_with_unknown_disable_errors() {
+        let err = strict_check_feature_toggle_error(["--disable", "does_not_exist"].as_ref());
+        assert_eq!(err.to_string(), "Unknown feature flag: does_not_exist");
+    }
+
+    #[test]
+    fn strict_check_with_compound_enable_errors() {
+        let err = strict_check_feature_toggle_error(
+            ["--enable", "multi_agent_v2.subagent_usage_hint_text"].as_ref(),
+        );
+        assert_eq!(
+            err.to_string(),
+            "Unknown feature flag: multi_agent_v2.subagent_usage_hint_text"
+        );
+    }
+
+    fn strict_check_feature_toggle_error(args: &[&str]) -> anyhow::Error {
+        let cli_args = std::iter::once("codex")
+            .chain(std::iter::once("--strict-check"))
+            .chain(args.iter().copied());
+        let cli = MultitoolCli::try_parse_from(cli_args).expect("parse should succeed");
+        assert!(cli.config_overrides.strict_config);
+        cli.feature_toggles
+            .to_overrides()
+            .expect_err("feature should be rejected")
     }
 }

@@ -77,11 +77,16 @@ pub async fn run_main(
             format!("error parsing -c overrides: {e}"),
         )
     })?;
-    let config = Config::load_with_cli_overrides(cli_kv_overrides)
-        .await
-        .map_err(|e| {
-            std::io::Error::new(ErrorKind::InvalidData, format!("error loading config: {e}"))
-        })?;
+    let loader_overrides = codex_config::LoaderOverrides {
+        strict_config: cli_config_overrides.strict_config,
+        ..Default::default()
+    };
+    let config =
+        Config::load_with_cli_overrides_and_loader_overrides(cli_kv_overrides, loader_overrides)
+            .await
+            .map_err(|e| {
+                std::io::Error::new(ErrorKind::InvalidData, format!("error loading config: {e}"))
+            })?;
     set_default_client_residency_requirement(config.enforce_residency.value());
 
     let otel = codex_core::otel_init::build_provider(

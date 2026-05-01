@@ -49,14 +49,19 @@ fn main() -> anyhow::Result<()> {
     arg0_dispatch_or_else(|arg0_paths: Arg0DispatchPaths| async move {
         let top_cli = TopCli::parse();
         let mut inner = top_cli.inner;
+        inner.config_overrides.strict_config |= top_cli.config_overrides.strict_config;
         inner
             .config_overrides
             .raw_overrides
             .splice(0..0, top_cli.config_overrides.raw_overrides);
+        let loader_overrides = LoaderOverrides {
+            strict_config: inner.config_overrides.strict_config,
+            ..Default::default()
+        };
         let exit_info = run_main(
             inner,
             arg0_paths,
-            LoaderOverrides::default(),
+            loader_overrides,
             /*remote*/ None,
             /*remote_auth_token*/ None,
         )

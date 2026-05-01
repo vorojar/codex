@@ -15,7 +15,6 @@ use codex_config::ConfigRequirements;
 use codex_config::ConfigRequirementsToml;
 use codex_config::ConstrainedWithSource;
 use codex_config::FeatureRequirementsToml;
-use codex_config::LoaderOverrides;
 use codex_config::McpServerIdentity;
 use codex_config::McpServerRequirement;
 use codex_config::PluginRequirementsToml;
@@ -135,6 +134,7 @@ mod schema;
 pub use codex_config::Constrained;
 pub use codex_config::ConstraintError;
 pub use codex_config::ConstraintResult;
+pub use codex_config::LoaderOverrides;
 pub use codex_network_proxy::NetworkProxyAuditMetadata;
 use codex_sandboxing::compatibility_sandbox_policy_for_permission_profile;
 pub use codex_sandboxing::system_bwrap_warning;
@@ -1123,6 +1123,17 @@ impl Config {
     ) -> std::io::Result<Self> {
         ConfigBuilder::default()
             .cli_overrides(cli_overrides)
+            .build()
+            .await
+    }
+
+    pub async fn load_with_cli_overrides_and_loader_overrides(
+        cli_overrides: Vec<(String, TomlValue)>,
+        loader_overrides: LoaderOverrides,
+    ) -> std::io::Result<Self> {
+        ConfigBuilder::default()
+            .cli_overrides(cli_overrides)
+            .loader_overrides(loader_overrides)
             .build()
             .await
     }

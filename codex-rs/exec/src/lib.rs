@@ -315,6 +315,7 @@ pub async fn run_main(cli: Cli, arg0_paths: Arg0DispatchPaths) -> anyhow::Result
 
     #[allow(clippy::print_stderr)]
     let loader_overrides = LoaderOverrides {
+        strict_config: config_overrides.strict_config,
         ignore_user_config,
         ignore_user_and_project_exec_policy_rules: ignore_rules,
         ..Default::default()

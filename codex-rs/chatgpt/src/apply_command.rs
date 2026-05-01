@@ -23,11 +23,16 @@ pub async fn run_apply_command(
     apply_cli: ApplyCommand,
     cwd: Option<PathBuf>,
 ) -> anyhow::Result<()> {
-    let config = Config::load_with_cli_overrides(
+    let loader_overrides = codex_core::config::LoaderOverrides {
+        strict_config: apply_cli.config_overrides.strict_config,
+        ..Default::default()
+    };
+    let config = Config::load_with_cli_overrides_and_loader_overrides(
         apply_cli
             .config_overrides
             .parse_overrides()
             .map_err(anyhow::Error::msg)?,
+        loader_overrides,
     )
     .await?;
 
