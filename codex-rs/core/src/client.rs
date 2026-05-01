@@ -673,6 +673,15 @@ impl ModelClient {
         true
     }
 
+    /// Resolves provider credentials during session startup when the provider requests it.
+    pub(crate) async fn prewarm_provider_auth(&self) -> Result<()> {
+        if !self.state.provider.prewarms_auth_on_startup() {
+            return Ok(());
+        }
+
+        self.state.provider.prewarm_auth().await
+    }
+
     /// Returns auth + provider configuration resolved from the current session auth state.
     ///
     /// This centralizes setup used by both prewarm and normal request paths so they stay in

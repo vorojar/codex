@@ -22,6 +22,7 @@ use super::mantle::region_from_config;
 const AWS_BEARER_TOKEN_BEDROCK_ENV_VAR: &str = "AWS_BEARER_TOKEN_BEDROCK";
 const LEGACY_SESSION_ID_HEADER: &str = "session_id";
 
+#[derive(Clone, Debug)]
 pub(super) enum BedrockAuthMethod {
     EnvBearerToken { token: String, region: String },
     AwsSdkAuth { context: AwsAuthContext },
@@ -42,17 +43,25 @@ pub(super) async fn resolve_auth_method(
     Ok(BedrockAuthMethod::AwsSdkAuth { context })
 }
 
-pub(super) async fn resolve_provider_auth(
-    aws: &ModelProviderAwsAuthInfo,
-) -> Result<SharedAuthProvider> {
-    match resolve_auth_method(aws).await? {
-        BedrockAuthMethod::EnvBearerToken { token, .. } => Ok(Arc::new(BearerAuthProvider {
+pub(super) async fn prewarm_credentials(auth_method: &BedrockAuthMethod) -> Result<()> {
+    match auth_method {
+        BedrockAuthMethod::EnvBearerToken { .. } => Ok(()),
+        BedrockAuthMethod::AwsSdkAuth { context } => context
+            .preload_credentials()
+            .await
+            .map_err(aws_auth_error_to_codex_error),
+    }
+}
+
+pub(super) fn provider_auth_from_method(auth_method: BedrockAuthMethod) -> SharedAuthProvider {
+    match auth_method {
+        BedrockAuthMethod::EnvBearerToken { token, .. } => Arc::new(BearerAuthProvider {
             token: Some(token),
             account_id: None,
             is_fedramp_account: false,
-        })),
+        }),
         BedrockAuthMethod::AwsSdkAuth { context } => {
-            Ok(Arc::new(BedrockMantleSigV4AuthProvider::new(context)))
+            Arc::new(BedrockMantleSigV4AuthProvider::new(context))
         }
     }
 }

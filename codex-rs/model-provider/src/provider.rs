@@ -96,6 +96,16 @@ pub trait ModelProvider: fmt::Debug + Send + Sync {
     /// Returns the current provider-scoped auth value, if one is configured.
     async fn auth(&self) -> Option<CodexAuth>;
 
+    /// Returns whether this provider should resolve request credentials during session startup.
+    fn prewarms_auth_on_startup(&self) -> bool {
+        false
+    }
+
+    /// Resolves provider credentials before the first model request when startup prewarm is enabled.
+    async fn prewarm_auth(&self) -> codex_protocol::error::Result<()> {
+        Ok(())
+    }
+
     /// Returns the current app-visible account state for this provider.
     fn account_state(&self) -> ProviderAccountResult;
 

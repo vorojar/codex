@@ -16,20 +16,26 @@ use codex_models_manager::manager::StaticModelsManager;
 use codex_protocol::account::ProviderAccount;
 use codex_protocol::error::Result;
 use codex_protocol::openai_models::ModelsResponse;
+use tokio::sync::OnceCell;
 
 use crate::provider::ModelProvider;
 use crate::provider::ProviderAccountResult;
 use crate::provider::ProviderAccountState;
 use crate::provider::ProviderCapabilities;
-use auth::resolve_provider_auth;
+use auth::BedrockAuthMethod;
+use auth::prewarm_credentials;
+use auth::provider_auth_from_method;
+use auth::resolve_auth_method;
 pub(crate) use catalog::static_model_catalog;
-use mantle::runtime_base_url;
+use mantle::runtime_base_url_from_auth_method;
 
 /// Runtime provider for Amazon Bedrock's OpenAI-compatible Mantle endpoint.
 #[derive(Clone, Debug)]
 pub(crate) struct AmazonBedrockModelProvider {
     pub(crate) info: ModelProviderInfo,
     pub(crate) aws: ModelProviderAwsAuthInfo,
+    auth_method: Arc<OnceCell<BedrockAuthMethod>>,
+    credentials_prewarmed: Arc<OnceCell<()>>,
 }
 
 impl AmazonBedrockModelProvider {
@@ -44,7 +50,24 @@ impl AmazonBedrockModelProvider {
         Self {
             info: provider_info,
             aws,
+            auth_method: Arc::new(OnceCell::new()),
+            credentials_prewarmed: Arc::new(OnceCell::new()),
         }
+    }
+
+    async fn auth_method(&self) -> Result<BedrockAuthMethod> {
+        self.auth_method
+            .get_or_try_init(|| resolve_auth_method(&self.aws))
+            .await
+            .cloned()
+    }
+
+    async fn prewarm_bedrock_credentials(&self) -> Result<()> {
+        let auth_method = self.auth_method().await?;
+        self.credentials_prewarmed
+            .get_or_try_init(|| async move { prewarm_credentials(&auth_method).await })
+            .await?;
+        Ok(())
     }
 }
 
@@ -70,6 +93,14 @@ impl ModelProvider for AmazonBedrockModelProvider {
         None
     }
 
+    fn prewarms_auth_on_startup(&self) -> bool {
+        true
+    }
+
+    async fn prewarm_auth(&self) -> Result<()> {
+        self.prewarm_bedrock_credentials().await
+    }
+
     fn account_state(&self) -> ProviderAccountResult {
         Ok(ProviderAccountState {
             account: Some(ProviderAccount::AmazonBedrock),
@@ -79,16 +110,21 @@ impl ModelProvider for AmazonBedrockModelProvider {
 
     async fn api_provider(&self) -> Result<Provider> {
         let mut api_provider_info = self.info.clone();
-        api_provider_info.base_url = Some(runtime_base_url(&self.aws).await?);
+        api_provider_info.base_url = Some(runtime_base_url_from_auth_method(
+            &self.auth_method().await?,
+        )?);
         api_provider_info.to_api_provider(/*auth_mode*/ None)
     }
 
     async fn runtime_base_url(&self) -> Result<Option<String>> {
-        Ok(Some(runtime_base_url(&self.aws).await?))
+        Ok(Some(runtime_base_url_from_auth_method(
+            &self.auth_method().await?,
+        )?))
     }
 
     async fn api_auth(&self) -> Result<SharedAuthProvider> {
-        resolve_provider_auth(&self.aws).await
+        self.prewarm_bedrock_credentials().await?;
+        Ok(provider_auth_from_method(self.auth_method().await?))
     }
 
     fn models_manager(

@@ -4,7 +4,6 @@ use codex_protocol::error::CodexErr;
 use codex_protocol::error::Result;
 
 use super::auth::BedrockAuthMethod;
-use super::auth::resolve_auth_method;
 
 const BEDROCK_MANTLE_SERVICE_NAME: &str = "bedrock-mantle";
 const BEDROCK_MANTLE_SUPPORTED_REGIONS: [&str; 12] = [
@@ -48,16 +47,15 @@ pub(super) fn base_url(region: &str) -> Result<String> {
     }
 }
 
-pub(super) async fn runtime_base_url(aws: &ModelProviderAwsAuthInfo) -> Result<String> {
-    let region = resolve_region(aws).await?;
-    base_url(&region)
+pub(super) fn region_from_auth_method(auth_method: &BedrockAuthMethod) -> String {
+    match auth_method {
+        BedrockAuthMethod::EnvBearerToken { region, .. } => region.clone(),
+        BedrockAuthMethod::AwsSdkAuth { context } => context.region().to_string(),
+    }
 }
 
-async fn resolve_region(aws: &ModelProviderAwsAuthInfo) -> Result<String> {
-    match resolve_auth_method(aws).await? {
-        BedrockAuthMethod::EnvBearerToken { region, .. } => Ok(region),
-        BedrockAuthMethod::AwsSdkAuth { context } => Ok(context.region().to_string()),
-    }
+pub(super) fn runtime_base_url_from_auth_method(auth_method: &BedrockAuthMethod) -> Result<String> {
+    base_url(&region_from_auth_method(auth_method))
 }
 
 #[cfg(test)]

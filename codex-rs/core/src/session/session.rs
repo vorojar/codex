@@ -980,6 +980,7 @@ impl Session {
                     anyhow::bail!("required MCP servers failed to initialize: {details}");
                 }
             }
+            sess.schedule_startup_auth_prewarm().await;
             sess.schedule_startup_prewarm(session_configuration.base_instructions.clone())
                 .await;
             let session_start_source = match &initial_history {

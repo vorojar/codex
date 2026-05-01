@@ -97,6 +97,11 @@ impl AwsAuthContext {
         &self.service
     }
 
+    pub async fn preload_credentials(&self) -> Result<(), AwsAuthError> {
+        let _ = self.credentials_provider.provide_credentials().await?;
+        Ok(())
+    }
+
     pub async fn sign(&self, request: AwsRequestToSign) -> Result<AwsSignedRequest, AwsAuthError> {
         self.sign_at(request, SystemTime::now()).await
     }
@@ -200,6 +205,14 @@ mod tests {
                 .is_some_and(|value| value.starts_with("AWS4-HMAC-SHA256 "))
         );
         assert!(signing::header_value(&signed.headers, "x-amz-date").is_some());
+    }
+
+    #[tokio::test]
+    async fn preload_credentials_resolves_provider() {
+        test_context(/*session_token*/ None)
+            .preload_credentials()
+            .await
+            .expect("static credentials should resolve");
     }
 
     #[test]

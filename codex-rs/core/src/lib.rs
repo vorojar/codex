@@ -82,6 +82,7 @@ pub(crate) mod mentions {
 mod sandbox_tags;
 pub mod sandboxing;
 mod session_prefix;
+mod session_startup_auth_prewarm;
 mod session_startup_prewarm;
 mod shell_detect;
 pub mod skills;
