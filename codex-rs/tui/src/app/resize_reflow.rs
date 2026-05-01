@@ -485,7 +485,8 @@ impl App {
         let is_first_line = first_agent_cell.is_first_line();
 
         let mut latest_source = None;
-        for cell in &self.transcript_cells[start..end] {
+        let mut latest_source_offset = None;
+        for (offset, cell) in self.transcript_cells[start..end].iter().enumerate() {
             let agent_cell = cell
                 .as_any()
                 .downcast_ref::<history_cell::AgentMessageCell>()?;
@@ -495,10 +496,13 @@ impl App {
                     cwd: cwd.to_path_buf(),
                     is_first_line,
                 });
+                latest_source_offset = Some(offset);
             }
         }
 
-        latest_source
+        (latest_source_offset == Some(end - start - 1))
+            .then_some(latest_source)
+            .flatten()
     }
 
     /// Return whether current transcript state should be treated as stream-time resize state.

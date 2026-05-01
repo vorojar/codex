@@ -4024,6 +4024,40 @@ async fn table_resize_lifecycle_stream_reflow_uses_markdown_source_not_transient
 }
 
 #[tokio::test]
+async fn table_resize_lifecycle_stream_reflow_ignores_stale_markdown_source() {
+    let (mut app, _rx, _op_rx) = make_test_app_with_channels().await;
+    enable_terminal_resize_reflow(&mut app);
+    app.config.terminal_resize_reflow.max_rows = TerminalResizeReflowMaxRows::Disabled;
+    let cwd = std::env::temp_dir();
+
+    app.transcript_cells
+        .push(Arc::new(AgentMessageCell::new_with_markdown_source(
+            vec![Line::from("│ Area │ Result │")],
+            /*is_first_line*/ true,
+            markdown_table_source().to_string(),
+            cwd.as_path(),
+        )) as Arc<dyn HistoryCell>);
+    app.transcript_cells.push(Arc::new(AgentMessageCell::new(
+        vec![Line::from("newer emitted stream row")],
+        /*is_first_line*/ false,
+    )) as Arc<dyn HistoryCell>);
+
+    let reflowed = app.render_transcript_lines_for_reflow(/*width*/ 44);
+    let lines = reflowed
+        .lines
+        .iter()
+        .map(rendered_line_text)
+        .collect::<Vec<_>>();
+
+    assert!(
+        lines
+            .iter()
+            .any(|line| line.contains("newer emitted stream row")),
+        "resize reflow must not replace newer emitted stream cells with an older source snapshot: {lines:?}",
+    );
+}
+
+#[tokio::test]
 async fn initial_replay_buffer_keeps_recent_rows_when_row_cap_present() {
     let (mut app, _rx, _op_rx) = make_test_app_with_channels().await;
     enable_terminal_resize_reflow(&mut app);
