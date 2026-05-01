@@ -4029,6 +4029,13 @@ impl ChatWidget {
     }
 
     fn on_hook_completed(&mut self, completed: codex_app_server_protocol::HookRunSummary) {
+        let blocked_user_prompt_submit = self.user_turn_pending_start
+            && completed.event_name == codex_app_server_protocol::HookEventName::UserPromptSubmit
+            && matches!(
+                completed.status,
+                codex_app_server_protocol::HookRunStatus::Blocked
+                    | codex_app_server_protocol::HookRunStatus::Stopped
+            );
         let completed_existing_run = self
             .active_hook_cell
             .as_mut()
@@ -4054,6 +4061,10 @@ impl ChatWidget {
         }
         self.flush_completed_hook_output();
         self.finish_active_hook_cell_if_idle();
+        if blocked_user_prompt_submit {
+            self.user_turn_pending_start = false;
+            self.maybe_send_next_queued_input();
+        }
         self.request_redraw();
     }
 

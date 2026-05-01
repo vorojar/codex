@@ -171,6 +171,84 @@ async fn live_app_server_turn_completed_clears_working_status_after_answer_item(
 }
 
 #[tokio::test]
+async fn blocked_user_prompt_submit_hook_continues_queued_inputs() {
+    let (mut chat, _rx, mut op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
+    chat.thread_id = Some(ThreadId::new());
+
+    chat.handle_server_notification(
+        ServerNotification::TurnStarted(TurnStartedNotification {
+            thread_id: "thread-1".to_string(),
+            turn: AppServerTurn {
+                id: "turn-1".to_string(),
+                items: Vec::new(),
+                status: AppServerTurnStatus::InProgress,
+                error: None,
+                started_at: Some(0),
+                completed_at: None,
+                duration_ms: None,
+            },
+        }),
+        /*replay_kind*/ None,
+    );
+
+    for text in ["blocked prompt", "allowed prompt"] {
+        chat.bottom_pane
+            .set_composer_text(text.to_string(), Vec::new(), Vec::new());
+        chat.handle_key_event(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE));
+    }
+
+    chat.handle_server_notification(
+        ServerNotification::TurnCompleted(TurnCompletedNotification {
+            thread_id: "thread-1".to_string(),
+            turn: AppServerTurn {
+                id: "turn-1".to_string(),
+                items: Vec::new(),
+                status: AppServerTurnStatus::Completed,
+                error: None,
+                started_at: Some(0),
+                completed_at: Some(1),
+                duration_ms: Some(1),
+            },
+        }),
+        /*replay_kind*/ None,
+    );
+
+    assert_matches!(
+        next_submit_op(&mut op_rx),
+        Op::UserTurn { items, .. }
+            if items
+                == vec![AppServerUserInput::Text {
+                    text: "blocked prompt".to_string(),
+                    text_elements: Vec::new(),
+                }]
+    );
+
+    handle_hook_completed(
+        &mut chat,
+        hook_run(
+            "user-prompt-submit:0:/tmp/hooks.json",
+            AppServerHookEventName::UserPromptSubmit,
+            AppServerHookRunStatus::Blocked,
+            "checking queued prompt policy",
+            vec![AppServerHookOutputEntry {
+                kind: AppServerHookOutputEntryKind::Feedback,
+                text: "blocked prompt".to_string(),
+            }],
+        ),
+    );
+
+    assert_matches!(
+        next_submit_op(&mut op_rx),
+        Op::UserTurn { items, .. }
+            if items
+                == vec![AppServerUserInput::Text {
+                    text: "allowed prompt".to_string(),
+                    text_elements: Vec::new(),
+                }]
+    );
+}
+
+#[tokio::test]
 async fn live_app_server_turn_started_sets_feedback_turn_id() {
     let (mut chat, mut rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
 
