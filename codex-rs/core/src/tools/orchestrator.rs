@@ -215,14 +215,20 @@ impl ToolOrchestrator {
         // 2) First attempt under the selected sandbox.
         let managed_network_active = turn_ctx.network.is_some();
         let initial_sandbox = match tool.sandbox_mode_for_first_attempt(req) {
-            SandboxOverride::BypassSandboxFirstAttempt => SandboxType::None,
-            SandboxOverride::NoOverride => self.sandbox.select_initial(
-                &file_system_sandbox_policy,
-                network_sandbox_policy,
-                tool.sandbox_preference(),
-                turn_ctx.windows_sandbox_level,
-                managed_network_active,
-            ),
+            SandboxOverride::BypassSandboxFirstAttempt
+                if !file_system_sandbox_policy.preserves_deny_read_across_escalation() =>
+            {
+                SandboxType::None
+            }
+            SandboxOverride::BypassSandboxFirstAttempt | SandboxOverride::NoOverride => {
+                self.sandbox.select_initial(
+                    &file_system_sandbox_policy,
+                    network_sandbox_policy,
+                    tool.sandbox_preference(),
+                    turn_ctx.windows_sandbox_level,
+                    managed_network_active,
+                )
+            }
         };
 
         // Platform-specific flag gating is handled by SandboxManager::select_initial.
@@ -277,6 +283,12 @@ impl ToolOrchestrator {
                     })));
                 }
                 if !tool.escalate_on_failure() {
+                    return Err(ToolError::Codex(CodexErr::Sandbox(SandboxErr::Denied {
+                        output,
+                        network_policy_decision,
+                    })));
+                }
+                if file_system_sandbox_policy.preserves_deny_read_across_escalation() {
                     return Err(ToolError::Codex(CodexErr::Sandbox(SandboxErr::Denied {
                         output,
                         network_policy_decision,

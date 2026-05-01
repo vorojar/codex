@@ -1606,6 +1606,8 @@ pub enum PermissionProfileFileSystemPermissions {
     #[ts(rename_all = "camelCase")]
     Restricted {
         entries: Vec<FileSystemSandboxEntry>,
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        preserve_deny_read_across_escalation: bool,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         #[ts(optional)]
         glob_scan_max_depth: Option<NonZeroUsize>,
@@ -1618,12 +1620,14 @@ impl From<CoreManagedFileSystemPermissions> for PermissionProfileFileSystemPermi
         match value {
             CoreManagedFileSystemPermissions::Restricted {
                 entries,
+                preserve_deny_read_across_escalation,
                 glob_scan_max_depth,
             } => Self::Restricted {
                 entries: entries
                     .into_iter()
                     .map(FileSystemSandboxEntry::from)
                     .collect(),
+                preserve_deny_read_across_escalation,
                 glob_scan_max_depth,
             },
             CoreManagedFileSystemPermissions::Unrestricted => Self::Unrestricted,
@@ -1636,12 +1640,14 @@ impl From<PermissionProfileFileSystemPermissions> for CoreManagedFileSystemPermi
         match value {
             PermissionProfileFileSystemPermissions::Restricted {
                 entries,
+                preserve_deny_read_across_escalation,
                 glob_scan_max_depth,
             } => Self::Restricted {
                 entries: entries
                     .into_iter()
                     .map(CoreFileSystemSandboxEntry::from)
                     .collect(),
+                preserve_deny_read_across_escalation,
                 glob_scan_max_depth,
             },
             PermissionProfileFileSystemPermissions::Unrestricted => Self::Unrestricted,
@@ -8501,7 +8507,7 @@ mod tests {
     }
 
     #[test]
-    fn permission_profile_file_system_permissions_preserves_glob_scan_depth() {
+    fn permission_profile_file_system_permissions_preserves_policy_metadata() {
         let core_permissions = CoreManagedFileSystemPermissions::Restricted {
             entries: vec![CoreFileSystemSandboxEntry {
                 path: CoreFileSystemPath::GlobPattern {
@@ -8509,6 +8515,7 @@ mod tests {
                 },
                 access: CoreFileSystemAccessMode::None,
             }],
+            preserve_deny_read_across_escalation: true,
             glob_scan_max_depth: NonZeroUsize::new(2),
         };
 
@@ -8523,6 +8530,7 @@ mod tests {
                     },
                     access: FileSystemAccessMode::None,
                 }],
+                preserve_deny_read_across_escalation: true,
                 glob_scan_max_depth: NonZeroUsize::new(2),
             }
         );

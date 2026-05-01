@@ -71,6 +71,7 @@ fn app_server_workspace_write_profile(network_enabled: bool) -> PermissionProfil
                     access: FileSystemAccessMode::Write,
                 },
             ],
+            preserve_deny_read_across_escalation: false,
             glob_scan_max_depth: None,
         },
     }

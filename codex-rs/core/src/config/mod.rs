@@ -1749,6 +1749,8 @@ fn apply_managed_filesystem_constraints(
     file_system_sandbox_policy: &mut FileSystemSandboxPolicy,
     filesystem_constraints: &codex_config::FilesystemConstraints,
 ) {
+    file_system_sandbox_policy.preserve_deny_read_across_escalation |=
+        !filesystem_constraints.deny_read.is_empty();
     for deny_read in &filesystem_constraints.deny_read {
         let deny_entry = if deny_read.contains_glob() {
             codex_protocol::permissions::FileSystemSandboxEntry {

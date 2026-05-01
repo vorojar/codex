@@ -369,8 +369,16 @@ impl CoreShellActionProvider {
         permission_profile: &PermissionProfile,
         additional_permissions: Option<&AdditionalPermissionProfile>,
     ) -> EscalationExecution {
+        let preserve_deny_read_across_escalation = permission_profile
+            .file_system_sandbox_policy()
+            .preserves_deny_read_across_escalation();
         match sandbox_permissions {
             SandboxPermissions::UseDefault => EscalationExecution::TurnDefault,
+            SandboxPermissions::RequireEscalated
+                if preserve_deny_read_across_escalation =>
+            {
+                EscalationExecution::TurnDefault
+            }
             SandboxPermissions::RequireEscalated => EscalationExecution::Unsandboxed,
             SandboxPermissions::WithAdditionalPermissions => additional_permissions
                 .map(|_| {
@@ -620,6 +628,13 @@ impl EscalationPolicy for CoreShellActionProvider {
             DecisionSource::UnmatchedCommandFallback
         };
         let escalation_execution = match decision_source {
+            DecisionSource::PrefixRule
+                if self
+                    .file_system_sandbox_policy
+                    .preserves_deny_read_across_escalation() =>
+            {
+                EscalationExecution::TurnDefault
+            }
             DecisionSource::PrefixRule => EscalationExecution::Unsandboxed,
             DecisionSource::UnmatchedCommandFallback => Self::shell_request_escalation_execution(
                 self.sandbox_permissions,

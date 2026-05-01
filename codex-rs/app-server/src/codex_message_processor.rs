@@ -2390,8 +2390,14 @@ impl CodexMessageProcessor {
                 .permissions
                 .can_set_legacy_sandbox_policy(&policy, &sandbox_cwd)
                 .map_err(|err| invalid_request(format!("invalid sandbox policy: {err}")))?;
-            let file_system_sandbox_policy =
+            let mut file_system_sandbox_policy =
                 codex_protocol::permissions::FileSystemSandboxPolicy::from_legacy_sandbox_policy_for_cwd(&policy, &sandbox_cwd);
+            let configured_file_system_sandbox_policy =
+                self.config.permissions.file_system_sandbox_policy();
+            Self::preserve_configured_deny_read_restrictions(
+                &mut file_system_sandbox_policy,
+                &configured_file_system_sandbox_policy,
+            );
             let network_sandbox_policy =
                 codex_protocol::permissions::NetworkSandboxPolicy::from(&policy);
             let permission_profile =
@@ -10384,6 +10390,7 @@ mod tests {
         let mut configured_file_system_sandbox_policy =
             FileSystemSandboxPolicy::restricted(vec![deny_entry.clone()]);
         configured_file_system_sandbox_policy.glob_scan_max_depth = Some(2);
+        configured_file_system_sandbox_policy.preserve_deny_read_across_escalation = true;
 
         CodexMessageProcessor::preserve_configured_deny_read_restrictions(
             &mut file_system_sandbox_policy,
@@ -10392,6 +10399,7 @@ mod tests {
 
         let mut expected = FileSystemSandboxPolicy::restricted(vec![readable_entry, deny_entry]);
         expected.glob_scan_max_depth = Some(2);
+        expected.preserve_deny_read_across_escalation = true;
         assert_eq!(file_system_sandbox_policy, expected);
     }
 

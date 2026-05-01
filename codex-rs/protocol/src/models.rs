@@ -258,6 +258,8 @@ pub enum ManagedFileSystemPermissions {
     #[ts(rename_all = "snake_case")]
     Restricted {
         entries: Vec<FileSystemSandboxEntry>,
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        preserve_deny_read_across_escalation: bool,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         #[ts(optional)]
         glob_scan_max_depth: Option<NonZeroUsize>,
@@ -271,6 +273,8 @@ impl ManagedFileSystemPermissions {
         match file_system_sandbox_policy.kind {
             FileSystemSandboxKind::Restricted => Self::Restricted {
                 entries: file_system_sandbox_policy.entries.clone(),
+                preserve_deny_read_across_escalation: file_system_sandbox_policy
+                    .preserve_deny_read_across_escalation,
                 glob_scan_max_depth: file_system_sandbox_policy
                     .glob_scan_max_depth
                     .and_then(NonZeroUsize::new),
@@ -286,9 +290,11 @@ impl ManagedFileSystemPermissions {
         match self {
             Self::Restricted {
                 entries,
+                preserve_deny_read_across_escalation,
                 glob_scan_max_depth,
             } => FileSystemSandboxPolicy {
                 kind: FileSystemSandboxKind::Restricted,
+                preserve_deny_read_across_escalation: *preserve_deny_read_across_escalation,
                 glob_scan_max_depth: glob_scan_max_depth.map(usize::from),
                 entries: entries.clone(),
             },
@@ -375,6 +381,7 @@ impl Default for PermissionProfile {
         Self::Managed {
             file_system: ManagedFileSystemPermissions::Restricted {
                 entries: Vec::new(),
+                preserve_deny_read_across_escalation: false,
                 glob_scan_max_depth: None,
             },
             network: NetworkSandboxPolicy::Restricted,
@@ -393,6 +400,7 @@ impl PermissionProfile {
                     },
                     access: FileSystemAccessMode::Read,
                 }],
+                preserve_deny_read_across_escalation: false,
                 glob_scan_max_depth: None,
             },
             network: NetworkSandboxPolicy::Restricted,
@@ -1776,15 +1784,16 @@ mod tests {
     }
 
     #[test]
-    fn permission_profile_round_trip_preserves_glob_scan_max_depth() {
+    fn permission_profile_round_trip_preserves_filesystem_policy_metadata() {
         let mut file_system_sandbox_policy =
             FileSystemSandboxPolicy::restricted(vec![FileSystemSandboxEntry {
                 path: FileSystemPath::GlobPattern {
                     pattern: "**/*.env".to_string(),
                 },
                 access: FileSystemAccessMode::None,
-            }]);
+        }]);
         file_system_sandbox_policy.glob_scan_max_depth = Some(2);
+        file_system_sandbox_policy.preserve_deny_read_across_escalation = true;
 
         let permission_profile = PermissionProfile::from_runtime_permissions(
             &file_system_sandbox_policy,
@@ -1829,6 +1838,7 @@ mod tests {
                         },
                         access: FileSystemAccessMode::Write,
                     }],
+                    preserve_deny_read_across_escalation: false,
                     glob_scan_max_depth: NonZeroUsize::new(2),
                 },
                 network: NetworkSandboxPolicy::Enabled,

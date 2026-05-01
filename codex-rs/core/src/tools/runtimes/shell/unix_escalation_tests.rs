@@ -275,7 +275,7 @@ fn shell_request_escalation_execution_is_explicit() {
         )),
         ..Default::default()
     };
-    let file_system_sandbox_policy = FileSystemSandboxPolicy::restricted(vec![
+    let mut file_system_sandbox_policy = FileSystemSandboxPolicy::restricted(vec![
         FileSystemSandboxEntry {
             path: FileSystemPath::Path {
                 path: AbsolutePathBuf::from_absolute_path("/tmp/original/output").unwrap(),
@@ -311,6 +311,20 @@ fn shell_request_escalation_execution_is_explicit() {
         ),
         EscalationExecution::Unsandboxed,
     );
+
+    file_system_sandbox_policy.preserve_deny_read_across_escalation = true;
+    let escalation_preserving_permission_profile = PermissionProfile::from_runtime_permissions(
+        &file_system_sandbox_policy,
+        network_sandbox_policy,
+    );
+    assert_eq!(
+        CoreShellActionProvider::shell_request_escalation_execution(
+            crate::sandboxing::SandboxPermissions::RequireEscalated,
+            &escalation_preserving_permission_profile,
+            /*additional_permissions*/ None,
+        ),
+        EscalationExecution::TurnDefault,
+    );
     assert_eq!(
         CoreShellActionProvider::shell_request_escalation_execution(
             crate::sandboxing::SandboxPermissions::WithAdditionalPermissions,
@@ -321,6 +335,69 @@ fn shell_request_escalation_execution_is_explicit() {
             ResolvedPermissionProfile { permission_profile },
         )),
     );
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn prefix_rule_preserves_managed_deny_read_escalation() -> anyhow::Result<()> {
+    let (session, mut turn_context) = make_session_and_context().await;
+    let mut parser = PolicyParser::new();
+    parser
+        .parse(
+            "test.rules",
+            r#"prefix_rule(pattern = ["printf"], decision = "allow")"#,
+        )
+        .expect("parse policy");
+    let policy = parser.build();
+
+    let mut file_system_sandbox_policy = read_only_file_system_sandbox_policy();
+    file_system_sandbox_policy
+        .entries
+        .push(FileSystemSandboxEntry {
+            path: FileSystemPath::Path {
+                path: AbsolutePathBuf::from_absolute_path("/tmp/private")
+                    .expect("/tmp/private is absolute"),
+            },
+            access: FileSystemAccessMode::None,
+    });
+    file_system_sandbox_policy.preserve_deny_read_across_escalation = true;
+    turn_context.approval_policy = Constrained::allow_any(AskForApproval::OnRequest);
+    turn_context.permission_profile = PermissionProfile::from_runtime_permissions(
+        &file_system_sandbox_policy,
+        NetworkSandboxPolicy::Restricted,
+    );
+    let workdir = AbsolutePathBuf::from_absolute_path("/tmp").context("build tmp absolute path")?;
+
+    let provider = CoreShellActionProvider {
+        policy: std::sync::Arc::new(RwLock::new(policy)),
+        session: std::sync::Arc::new(session),
+        turn: std::sync::Arc::new(turn_context),
+        call_id: "managed-deny-read-prefix-rule".to_string(),
+        tool_name: GuardianCommandSource::Shell,
+        approval_policy: AskForApproval::OnRequest,
+        permission_profile: turn_context.permission_profile.clone(),
+        file_system_sandbox_policy,
+        sandbox_policy_cwd: workdir.clone(),
+        sandbox_permissions: SandboxPermissions::UseDefault,
+        approval_sandbox_permissions: SandboxPermissions::UseDefault,
+        prompt_permissions: None,
+        stopwatch: codex_shell_escalation::Stopwatch::new(Duration::from_secs(1)),
+    };
+
+    let action = codex_shell_escalation::EscalationPolicy::determine_action(
+        &provider,
+        &AbsolutePathBuf::from_absolute_path("/usr/bin/printf")
+            .context("build printf absolute path")?,
+        &["printf".to_string(), "hello".to_string()],
+        &workdir,
+    )
+    .await?;
+
+    assert_eq!(
+        action,
+        codex_shell_escalation::EscalationDecision::Escalate(EscalationExecution::TurnDefault)
+    );
+
+    Ok(())
 }
 
 #[tokio::test(flavor = "current_thread")]

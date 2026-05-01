@@ -99,6 +99,7 @@ fn root_write_managed_profile_with_enabled_network_is_untagged() {
                 },
                 access: FileSystemAccessMode::Write,
             }],
+            preserve_deny_read_across_escalation: false,
             glob_scan_max_depth: None,
         },
         network: NetworkSandboxPolicy::Enabled,
