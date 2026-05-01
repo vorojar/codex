@@ -10,6 +10,7 @@ use std::sync::Arc;
 use std::sync::Mutex as StdMutex;
 
 use crate::mcp::CODEX_APPS_MCP_SERVER_NAME;
+use crate::mcp::McpPermissionPromptAutoApproveContext;
 use crate::mcp::mcp_permission_prompt_is_auto_approved;
 use anyhow::Context;
 use anyhow::Result;
@@ -88,8 +89,11 @@ impl ElicitationRequestManager {
                     .lock()
                     .map(|profile| profile.clone())
                     .unwrap_or_default();
-                if mcp_permission_prompt_is_auto_approved(approval_policy, &permission_profile)
-                    && can_auto_accept_elicitation(&elicitation)
+                if mcp_permission_prompt_is_auto_approved(
+                    approval_policy,
+                    &permission_profile,
+                    McpPermissionPromptAutoApproveContext::default(),
+                ) && can_auto_accept_elicitation(&elicitation)
                 {
                     return Ok(ElicitationResponse {
                         action: ElicitationAction::Accept,
