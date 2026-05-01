@@ -51,7 +51,15 @@ struct PermissionsPromptConfig<'a> {
     exec_policy: &'a Policy,
     exec_permission_approvals_enabled: bool,
     request_permissions_tool_enabled: bool,
-    managed_network_proxy_active: bool,
+    network_proxy_active: bool,
+}
+
+#[derive(Debug, Clone, Copy)]
+/// Feature-dependent knobs used while rendering permissions instructions.
+pub struct PermissionsInstructionOptions {
+    pub exec_permission_approvals_enabled: bool,
+    pub request_permissions_tool_enabled: bool,
+    pub network_proxy_active: bool,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -68,9 +76,7 @@ impl PermissionsInstructions {
         approvals_reviewer: ApprovalsReviewer,
         exec_policy: &Policy,
         cwd: &Path,
-        exec_permission_approvals_enabled: bool,
-        request_permissions_tool_enabled: bool,
-        managed_network_proxy_active: bool,
+        options: PermissionsInstructionOptions,
     ) -> Self {
         let (sandbox_mode, writable_roots) = sandbox_prompt_from_profile(permission_profile, cwd);
 
@@ -81,9 +87,9 @@ impl PermissionsInstructions {
                 approval_policy,
                 approvals_reviewer,
                 exec_policy,
-                exec_permission_approvals_enabled,
-                request_permissions_tool_enabled,
-                managed_network_proxy_active,
+                exec_permission_approvals_enabled: options.exec_permission_approvals_enabled,
+                request_permissions_tool_enabled: options.request_permissions_tool_enabled,
+                network_proxy_active: options.network_proxy_active,
             },
             writable_roots,
         )
@@ -96,9 +102,7 @@ impl PermissionsInstructions {
         approvals_reviewer: ApprovalsReviewer,
         exec_policy: &Policy,
         cwd: &Path,
-        exec_permission_approvals_enabled: bool,
-        request_permissions_tool_enabled: bool,
-        managed_network_proxy_active: bool,
+        options: PermissionsInstructionOptions,
     ) -> Self {
         Self::from_permission_profile(
             &PermissionProfile::from_legacy_sandbox_policy(sandbox_policy),
@@ -106,9 +110,7 @@ impl PermissionsInstructions {
             approvals_reviewer,
             exec_policy,
             cwd,
-            exec_permission_approvals_enabled,
-            request_permissions_tool_enabled,
-            managed_network_proxy_active,
+            options,
         )
     }
 
@@ -120,7 +122,7 @@ impl PermissionsInstructions {
     ) -> Self {
         let mut text = String::new();
         append_section(&mut text, &sandbox_text(sandbox_mode, network_access));
-        if config.managed_network_proxy_active {
+        if config.network_proxy_active {
             append_section(&mut text, NETWORK_PROXY.trim_end());
         }
         append_section(

@@ -2,6 +2,7 @@ use crate::context::CollaborationModeInstructions;
 use crate::context::ContextualUserFragment;
 use crate::context::EnvironmentContext;
 use crate::context::ModelSwitchInstructions;
+use crate::context::PermissionsInstructionOptions;
 use crate::context::PermissionsInstructions;
 use crate::context::PersonalitySpecInstructions;
 use crate::context::RealtimeEndInstructions;
@@ -62,9 +63,15 @@ fn build_permissions_update_item(
             next.config.approvals_reviewer,
             exec_policy,
             &next.cwd,
-            next.features.enabled(Feature::ExecPermissionApprovals),
-            next.features.enabled(Feature::RequestPermissionsTool),
-            next.network.is_some(),
+            PermissionsInstructionOptions {
+                exec_permission_approvals_enabled: next
+                    .features
+                    .enabled(Feature::ExecPermissionApprovals),
+                request_permissions_tool_enabled: next
+                    .features
+                    .enabled(Feature::RequestPermissionsTool),
+                network_proxy_active: next.network.is_some(),
+            },
         )
         .render(),
     )

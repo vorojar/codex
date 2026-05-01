@@ -27,6 +27,7 @@ use crate::context::AvailableSkillsInstructions;
 use crate::context::CollaborationModeInstructions;
 use crate::context::ContextualUserFragment;
 use crate::context::NetworkRuleSaved;
+use crate::context::PermissionsInstructionOptions;
 use crate::context::PermissionsInstructions;
 use crate::context::PersonalitySpecInstructions;
 use crate::default_skill_metadata_budget;
@@ -2573,13 +2574,15 @@ impl Session {
                     turn_context.config.approvals_reviewer,
                     self.services.exec_policy.current().as_ref(),
                     &turn_context.cwd,
-                    turn_context
-                        .features
-                        .enabled(Feature::ExecPermissionApprovals),
-                    turn_context
-                        .features
-                        .enabled(Feature::RequestPermissionsTool),
-                    turn_context.network.is_some(),
+                    PermissionsInstructionOptions {
+                        exec_permission_approvals_enabled: turn_context
+                            .features
+                            .enabled(Feature::ExecPermissionApprovals),
+                        request_permissions_tool_enabled: turn_context
+                            .features
+                            .enabled(Feature::RequestPermissionsTool),
+                        network_proxy_active: turn_context.network.is_some(),
+                    },
                 )
                 .render(),
             );

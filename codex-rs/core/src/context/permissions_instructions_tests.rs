@@ -38,7 +38,7 @@ fn builds_permissions_with_network_access_override() {
             exec_policy: &Policy::empty(),
             exec_permission_approvals_enabled: false,
             request_permissions_tool_enabled: false,
-            managed_network_proxy_active: false,
+            network_proxy_active: false,
         },
         /*writable_roots*/ None,
     );
@@ -69,9 +69,11 @@ fn builds_permissions_from_policy() {
         ApprovalsReviewer::User,
         &Policy::empty(),
         &PathBuf::from("/tmp"),
-        /*exec_permission_approvals_enabled*/ false,
-        /*request_permissions_tool_enabled*/ false,
-        /*managed_network_proxy_active*/ false,
+        PermissionsInstructionOptions {
+            exec_permission_approvals_enabled: false,
+            request_permissions_tool_enabled: false,
+            network_proxy_active: false,
+        },
     );
     let text = instructions.body();
     assert!(text.contains("Network access is enabled."));
@@ -99,9 +101,11 @@ fn builds_permissions_from_profile() {
         ApprovalsReviewer::User,
         &Policy::empty(),
         &cwd,
-        /*exec_permission_approvals_enabled*/ false,
-        /*request_permissions_tool_enabled*/ false,
-        /*managed_network_proxy_active*/ false,
+        PermissionsInstructionOptions {
+            exec_permission_approvals_enabled: false,
+            request_permissions_tool_enabled: false,
+            network_proxy_active: false,
+        },
     );
     let text = instructions.body();
     assert!(text.contains("`sandbox_mode` is `workspace-write`"));
@@ -110,7 +114,7 @@ fn builds_permissions_from_profile() {
 }
 
 #[test]
-fn includes_network_proxy_guidance_when_managed_proxy_is_active() {
+fn includes_network_proxy_guidance_when_proxy_is_active() {
     let instructions = PermissionsInstructions::from_permissions_with_network(
         SandboxMode::WorkspaceWrite,
         NetworkAccess::Restricted,
@@ -120,7 +124,7 @@ fn includes_network_proxy_guidance_when_managed_proxy_is_active() {
             exec_policy: &Policy::empty(),
             exec_permission_approvals_enabled: false,
             request_permissions_tool_enabled: false,
-            managed_network_proxy_active: true,
+            network_proxy_active: true,
         },
         /*writable_roots*/ None,
     );
@@ -132,7 +136,7 @@ fn includes_network_proxy_guidance_when_managed_proxy_is_active() {
 }
 
 #[test]
-fn omits_network_proxy_guidance_when_managed_proxy_is_inactive() {
+fn omits_network_proxy_guidance_when_proxy_is_inactive() {
     let instructions = PermissionsInstructions::from_permissions_with_network(
         SandboxMode::WorkspaceWrite,
         NetworkAccess::Restricted,
@@ -142,7 +146,7 @@ fn omits_network_proxy_guidance_when_managed_proxy_is_inactive() {
             exec_policy: &Policy::empty(),
             exec_permission_approvals_enabled: false,
             request_permissions_tool_enabled: false,
-            managed_network_proxy_active: false,
+            network_proxy_active: false,
         },
         /*writable_roots*/ None,
     );
@@ -165,7 +169,7 @@ fn includes_request_rule_instructions_for_on_request() {
             exec_policy: &exec_policy,
             exec_permission_approvals_enabled: false,
             request_permissions_tool_enabled: false,
-            managed_network_proxy_active: false,
+            network_proxy_active: false,
         },
         /*writable_roots*/ None,
     );
@@ -187,7 +191,7 @@ fn includes_request_permissions_tool_instructions_for_unless_trusted_when_enable
             exec_policy: &Policy::empty(),
             exec_permission_approvals_enabled: false,
             request_permissions_tool_enabled: true,
-            managed_network_proxy_active: false,
+            network_proxy_active: false,
         },
         /*writable_roots*/ None,
     );
@@ -208,7 +212,7 @@ fn includes_request_permissions_tool_instructions_for_on_failure_when_enabled() 
             exec_policy: &Policy::empty(),
             exec_permission_approvals_enabled: false,
             request_permissions_tool_enabled: true,
-            managed_network_proxy_active: false,
+            network_proxy_active: false,
         },
         /*writable_roots*/ None,
     );
@@ -229,7 +233,7 @@ fn includes_request_permission_rule_instructions_for_on_request_when_enabled() {
             exec_policy: &Policy::empty(),
             exec_permission_approvals_enabled: true,
             request_permissions_tool_enabled: false,
-            managed_network_proxy_active: false,
+            network_proxy_active: false,
         },
         /*writable_roots*/ None,
     );
@@ -250,7 +254,7 @@ fn includes_request_permissions_tool_instructions_for_on_request_when_tool_is_en
             exec_policy: &Policy::empty(),
             exec_permission_approvals_enabled: false,
             request_permissions_tool_enabled: true,
-            managed_network_proxy_active: false,
+            network_proxy_active: false,
         },
         /*writable_roots*/ None,
     );
@@ -271,7 +275,7 @@ fn on_request_includes_tool_guidance_alongside_inline_permission_guidance_when_b
             exec_policy: &Policy::empty(),
             exec_permission_approvals_enabled: true,
             request_permissions_tool_enabled: true,
-            managed_network_proxy_active: false,
+            network_proxy_active: false,
         },
         /*writable_roots*/ None,
     );

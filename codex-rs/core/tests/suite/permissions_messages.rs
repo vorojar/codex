@@ -3,6 +3,7 @@ use codex_config::ConfigLayerStack;
 use codex_core::ForkSnapshot;
 use codex_core::config::Constrained;
 use codex_core::context::ContextualUserFragment;
+use codex_core::context::PermissionsInstructionOptions;
 use codex_core::context::PermissionsInstructions;
 use codex_core::load_exec_policy;
 use codex_protocol::models::PermissionProfile;
@@ -581,9 +582,11 @@ async fn permissions_message_includes_writable_roots() -> Result<()> {
         test.config.approvals_reviewer,
         &exec_policy,
         test.config.cwd.as_path(),
-        /*exec_permission_approvals_enabled*/ false,
-        /*request_permissions_tool_enabled*/ false,
-        /*managed_network_proxy_active*/ false,
+        PermissionsInstructionOptions {
+            exec_permission_approvals_enabled: false,
+            request_permissions_tool_enabled: false,
+            network_proxy_active: test.session_configured.network_proxy.is_some(),
+        },
     )
     .render();
     let expected_normalized = normalize_line_endings(&expected);

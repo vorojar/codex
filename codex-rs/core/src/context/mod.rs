@@ -41,6 +41,7 @@ pub(crate) use hook_additional_context::HookAdditionalContext;
 pub(crate) use image_generation_instructions::ImageGenerationInstructions;
 pub(crate) use model_switch_instructions::ModelSwitchInstructions;
 pub(crate) use network_rule_saved::NetworkRuleSaved;
+pub use permissions_instructions::PermissionsInstructionOptions;
 pub use permissions_instructions::PermissionsInstructions;
 pub(crate) use personality_spec_instructions::PersonalitySpecInstructions;
 pub(crate) use plugin_instructions::PluginInstructions;
