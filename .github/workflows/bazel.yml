@@ -22,8 +22,6 @@ jobs:
     # true test failure in a rust_test() marked "flaky" that gets run 3x.
     # In that case, extra time generally does not give us more signal.
     #
-    # Ultimately we need true distributed builds (e.g.,
-    # https://www.buildbuddy.io/docs/rbe-setup/) to speed things up.
     timeout-minutes: 30
     strategy:
       fail-fast: false
@@ -53,7 +51,7 @@ jobs:
     runs-on: ${{ matrix.os }}
 
     # Configure a human readable name for each job
-    name: Local Bazel build on ${{ matrix.os }} for ${{ matrix.target }}
+    name: Bazel test on ${{ matrix.os }} for ${{ matrix.target }}
 
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
@@ -91,6 +89,7 @@ jobs:
           )
 
           bazel_wrapper_args=(
+            --print-failed-action-summary
             --print-failed-test-logs
           )
           bazel_test_args=(
@@ -100,8 +99,18 @@ jobs:
             --build_metadata=COMMIT_SHA=${GITHUB_SHA}
           )
           if [[ "${RUNNER_OS}" == "Windows" ]]; then
-            bazel_wrapper_args+=(--windows-msvc-host-platform)
-            bazel_test_args+=(--jobs=8)
+            bazel_wrapper_args+=(
+              --windows-cross-compile
+              --remote-download-toplevel
+            )
+            # The windows-gnullvm V8 archive currently builds successfully via
+            # Linux RBE but crashes during direct V8 execution smoke tests on
+            # the Windows runner. Keep the broader Windows integration suite
+            # running while we investigate that V8-specific runtime issue.
+            bazel_targets+=(
+              -//codex-rs/code-mode:code-mode-unit-tests
+              -//codex-rs/v8-poc:v8-poc-unit-tests
+            )
           fi
 
           ./.github/scripts/run-bazel-ci.sh \
