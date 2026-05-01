@@ -20,6 +20,9 @@ use crate::skills_watcher::SkillsWatcher;
 use crate::skills_watcher::SkillsWatcherEvent;
 use crate::tasks::InterruptedTurnHistoryMarker;
 use crate::tasks::interrupted_turn_history_marker;
+use codex_agent_graph_store::AgentGraphStore;
+use codex_agent_graph_store::LocalAgentGraphStore;
+use codex_agent_graph_store::ThreadSpawnEdgeStatus;
 use codex_analytics::AnalyticsEventsClient;
 use codex_app_server_protocol::ThreadHistoryBuilder;
 use codex_app_server_protocol::TurnStatus;
@@ -51,7 +54,7 @@ use codex_protocol::protocol::TurnAbortedEvent;
 use codex_protocol::protocol::TurnEnvironmentSelection;
 use codex_protocol::protocol::W3cTraceContext;
 use codex_rollout::RolloutConfig;
-use codex_state::DirectionalThreadSpawnEdgeStatus;
+use codex_rollout::state_db;
 #[cfg(debug_assertions)]
 use codex_thread_store::InMemoryThreadStore;
 use codex_thread_store::LocalThreadStore;
@@ -213,6 +216,7 @@ pub struct ThreadManager {
 pub struct StartThreadOptions {
     pub config: Config,
     pub thread_store: Arc<dyn ThreadStore>,
+    pub agent_graph_store: Option<Arc<dyn AgentGraphStore>>,
     pub initial_history: InitialHistory,
     pub session_source: Option<SessionSource>,
     pub dynamic_tools: Vec<codex_protocol::dynamic_tools::DynamicToolSpec>,
@@ -271,6 +275,12 @@ pub fn thread_store_from_config(config: &Config) -> Arc<dyn ThreadStore> {
         #[cfg(debug_assertions)]
         ThreadStoreConfig::InMemory { id } => InMemoryThreadStore::for_id(id),
     }
+}
+
+pub async fn agent_graph_store_from_config(config: &Config) -> Option<Arc<dyn AgentGraphStore>> {
+    state_db::get_state_db(config)
+        .await
+        .map(|state_db| Arc::new(LocalAgentGraphStore::new(state_db)) as Arc<dyn AgentGraphStore>)
 }
 
 impl ThreadManager {
@@ -484,13 +494,16 @@ impl ThreadManager {
         subtree_thread_ids.push(thread_id);
         seen_thread_ids.insert(thread_id);
 
-        if let Some(state_db_ctx) = thread.state_db() {
-            for status in [
-                DirectionalThreadSpawnEdgeStatus::Open,
-                DirectionalThreadSpawnEdgeStatus::Closed,
-            ] {
-                for descendant_id in state_db_ctx
-                    .list_thread_spawn_descendants_with_status(thread_id, status)
+        if let Some(agent_graph_store) = thread
+            .codex
+            .session
+            .services
+            .agent_control
+            .agent_graph_store_for_thread(thread.as_ref())
+        {
+            for status in [ThreadSpawnEdgeStatus::Open, ThreadSpawnEdgeStatus::Closed] {
+                for descendant_id in agent_graph_store
+                    .list_thread_spawn_descendants(thread_id, Some(status))
                     .await
                     .map_err(|err| {
                         CodexErr::Fatal(format!("failed to load thread-spawn descendants: {err}"))
@@ -546,9 +559,11 @@ impl ThreadManager {
             self.state.environment_manager.as_ref(),
             &config.cwd,
         );
+        let agent_graph_store = agent_graph_store_from_config(&config).await;
         Box::pin(self.start_thread_with_options(StartThreadOptions {
             config,
             thread_store,
+            agent_graph_store,
             initial_history: InitialHistory::New,
             session_source: None,
             dynamic_tools,
@@ -572,7 +587,7 @@ impl ThreadManager {
             options.thread_store,
             options.initial_history,
             Arc::clone(&self.state.auth_manager),
-            self.agent_control(),
+            self.agent_control_with_store(options.agent_graph_store),
             session_source,
             options.dynamic_tools,
             options.persist_extended_history,
@@ -619,12 +634,13 @@ impl ThreadManager {
             self.state.environment_manager.as_ref(),
             &config.cwd,
         );
+        let agent_graph_store = agent_graph_store_from_config(&config).await;
         Box::pin(self.state.spawn_thread(
             config,
             thread_store,
             initial_history,
             auth_manager,
-            self.agent_control(),
+            self.agent_control_with_store(agent_graph_store),
             Vec::new(),
             persist_extended_history,
             /*metrics_service_name*/ None,
@@ -645,12 +661,13 @@ impl ThreadManager {
             self.state.environment_manager.as_ref(),
             &config.cwd,
         );
+        let agent_graph_store = agent_graph_store_from_config(&config).await;
         Box::pin(self.state.spawn_thread(
             config,
             thread_store,
             InitialHistory::New,
             Arc::clone(&self.state.auth_manager),
-            self.agent_control(),
+            self.agent_control_with_store(agent_graph_store),
             Vec::new(),
             /*persist_extended_history*/ false,
             /*metrics_service_name*/ None,
@@ -674,12 +691,13 @@ impl ThreadManager {
             self.state.environment_manager.as_ref(),
             &config.cwd,
         );
+        let agent_graph_store = agent_graph_store_from_config(&config).await;
         Box::pin(self.state.spawn_thread(
             config,
             thread_store,
             initial_history,
             auth_manager,
-            self.agent_control(),
+            self.agent_control_with_store(agent_graph_store),
             Vec::new(),
             /*persist_extended_history*/ false,
             /*metrics_service_name*/ None,
@@ -816,12 +834,13 @@ impl ThreadManager {
             self.state.environment_manager.as_ref(),
             &config.cwd,
         );
+        let agent_graph_store = agent_graph_store_from_config(&config).await;
         Box::pin(self.state.spawn_thread(
             config,
             thread_store,
             history,
             Arc::clone(&self.state.auth_manager),
-            self.agent_control(),
+            self.agent_control_with_store(agent_graph_store),
             Vec::new(),
             persist_extended_history,
             /*metrics_service_name*/ None,
@@ -832,8 +851,16 @@ impl ThreadManager {
         .await
     }
 
+    #[cfg(test)]
     pub(crate) fn agent_control(&self) -> AgentControl {
-        AgentControl::new(Arc::downgrade(&self.state))
+        self.agent_control_with_store(None)
+    }
+
+    fn agent_control_with_store(
+        &self,
+        agent_graph_store: Option<Arc<dyn AgentGraphStore>>,
+    ) -> AgentControl {
+        AgentControl::new(Arc::downgrade(&self.state), agent_graph_store)
     }
 
     #[cfg(test)]

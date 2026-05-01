@@ -238,6 +238,7 @@ impl MemoryStartupContext {
             .thread_manager
             .start_thread_with_options(StartThreadOptions {
                 thread_store: thread_store_from_config(&config),
+                agent_graph_store: None,
                 config,
                 initial_history: InitialHistory::New,
                 session_source: Some(SessionSource::Internal(

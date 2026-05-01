@@ -315,6 +315,7 @@ async fn start_thread_accepts_explicit_environment_when_default_environment_is_d
     let thread = manager
         .start_thread_with_options(StartThreadOptions {
             thread_store: thread_store_from_config(&config),
+            agent_graph_store: None,
             config: config.clone(),
             initial_history: InitialHistory::New,
             session_source: None,
@@ -351,6 +352,7 @@ async fn start_thread_keeps_internal_threads_hidden_from_normal_lookups() {
     let thread = manager
         .start_thread_with_options(StartThreadOptions {
             thread_store,
+            agent_graph_store: None,
             config,
             initial_history: InitialHistory::New,
             session_source: Some(SessionSource::Internal(
@@ -406,6 +408,7 @@ async fn resume_and_fork_do_not_restore_thread_environments_from_rollout() {
     let source = manager
         .start_thread_with_options(StartThreadOptions {
             thread_store: Arc::clone(&thread_store),
+            agent_graph_store: None,
             config: config.clone(),
             initial_history: InitialHistory::New,
             session_source: None,

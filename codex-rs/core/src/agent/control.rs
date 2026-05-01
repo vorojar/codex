@@ -16,6 +16,9 @@ use crate::thread_manager::ResumeThreadFromRolloutOptions;
 use crate::thread_manager::ThreadManagerState;
 use crate::thread_manager::thread_store_from_config;
 use crate::thread_rollout_truncation::truncate_rollout_to_last_n_fork_turns;
+use codex_agent_graph_store::AgentGraphStore;
+use codex_agent_graph_store::LocalAgentGraphStore;
+use codex_agent_graph_store::ThreadSpawnEdgeStatus;
 use codex_features::Feature;
 use codex_protocol::AgentPath;
 use codex_protocol::ThreadId;
@@ -33,7 +36,6 @@ use codex_protocol::protocol::SubAgentSource;
 use codex_protocol::protocol::TurnEnvironmentSelection;
 use codex_protocol::user_input::UserInput;
 use codex_rollout::state_db;
-use codex_state::DirectionalThreadSpawnEdgeStatus;
 use serde::Serialize;
 use std::collections::HashMap;
 use std::collections::VecDeque;
@@ -139,13 +141,18 @@ pub(crate) struct AgentControl {
     /// `ThreadManagerState -> CodexThread -> Session -> SessionServices -> ThreadManagerState`.
     manager: Weak<ThreadManagerState>,
     state: Arc<AgentRegistry>,
+    agent_graph_store: Option<Arc<dyn AgentGraphStore>>,
 }
 
 impl AgentControl {
     /// Construct a new `AgentControl` that can spawn/message agents via the given manager state.
-    pub(crate) fn new(manager: Weak<ThreadManagerState>) -> Self {
+    pub(crate) fn new(
+        manager: Weak<ThreadManagerState>,
+        agent_graph_store: Option<Arc<dyn AgentGraphStore>>,
+    ) -> Self {
         Self {
             manager,
+            agent_graph_store,
             ..Default::default()
         }
     }
@@ -466,17 +473,15 @@ impl AgentControl {
         let Ok(resumed_thread) = state.get_thread(resumed_thread_id).await else {
             return Ok(resumed_thread_id);
         };
-        let Some(state_db_ctx) = resumed_thread.state_db() else {
+        let Some(agent_graph_store) = self.agent_graph_store_for_thread(resumed_thread.as_ref())
+        else {
             return Ok(resumed_thread_id);
         };
 
         let mut resume_queue = VecDeque::from([(thread_id, root_depth)]);
         while let Some((parent_thread_id, parent_depth)) = resume_queue.pop_front() {
-            let child_ids = match state_db_ctx
-                .list_thread_spawn_children_with_status(
-                    parent_thread_id,
-                    DirectionalThreadSpawnEdgeStatus::Open,
-                )
+            let child_ids = match agent_graph_store
+                .list_thread_spawn_children(parent_thread_id, Some(ThreadSpawnEdgeStatus::Open))
                 .await
             {
                 Ok(child_ids) => child_ids,
@@ -734,9 +739,9 @@ impl AgentControl {
     pub(crate) async fn close_agent(&self, agent_id: ThreadId) -> CodexResult<String> {
         let state = self.upgrade()?;
         if let Ok(thread) = state.get_thread(agent_id).await
-            && let Some(state_db_ctx) = thread.state_db()
-            && let Err(err) = state_db_ctx
-                .set_thread_spawn_edge_status(agent_id, DirectionalThreadSpawnEdgeStatus::Closed)
+            && let Some(agent_graph_store) = self.agent_graph_store_for_thread(thread.as_ref())
+            && let Err(err) = agent_graph_store
+                .set_thread_spawn_edge_status(agent_id, ThreadSpawnEdgeStatus::Closed)
                 .await
         {
             warn!("failed to persist thread-spawn edge status for {agent_id}: {err}");
@@ -1160,19 +1165,30 @@ impl AgentControl {
         let Some(parent_thread_id) = session_source.and_then(thread_spawn_parent_thread_id) else {
             return;
         };
-        let Some(state_db_ctx) = thread.state_db() else {
+        let Some(agent_graph_store) = self.agent_graph_store_for_thread(thread) else {
             return;
         };
-        if let Err(err) = state_db_ctx
+        if let Err(err) = agent_graph_store
             .upsert_thread_spawn_edge(
                 parent_thread_id,
                 child_thread_id,
-                DirectionalThreadSpawnEdgeStatus::Open,
+                ThreadSpawnEdgeStatus::Open,
             )
             .await
         {
             warn!("failed to persist thread-spawn edge: {err}");
         }
+    }
+
+    pub(crate) fn agent_graph_store_for_thread(
+        &self,
+        thread: &crate::CodexThread,
+    ) -> Option<Arc<dyn AgentGraphStore>> {
+        self.agent_graph_store.clone().or_else(|| {
+            thread.state_db().map(|state_db| {
+                Arc::new(LocalAgentGraphStore::new(state_db)) as Arc<dyn AgentGraphStore>
+            })
+        })
     }
 
     async fn live_thread_spawn_descendants(

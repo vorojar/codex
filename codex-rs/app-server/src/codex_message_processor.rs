@@ -2588,6 +2588,7 @@ impl CodexMessageProcessor {
             .thread_manager
             .start_thread_with_options(StartThreadOptions {
                 thread_store: thread_store_from_config(&config),
+                agent_graph_store: None,
                 config,
                 initial_history: InitialHistory::Forked(rollout_items),
                 session_source: None,
@@ -2786,6 +2787,7 @@ impl CodexMessageProcessor {
                 .thread_manager
                 .start_thread_with_options(StartThreadOptions {
                     thread_store: thread_store_from_config(&config),
+                    agent_graph_store: None,
                     config,
                     initial_history: match session_start_source
                         .unwrap_or(codex_app_server_protocol::ThreadStartSource::Startup)
