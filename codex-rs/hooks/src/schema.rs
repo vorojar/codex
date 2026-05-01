@@ -173,6 +173,8 @@ pub(crate) struct PostToolUseHookSpecificOutputWire {
     #[serde(default)]
     pub additional_context: Option<String>,
     #[serde(default)]
+    pub updated_tool_output: Option<Value>,
+    #[serde(default)]
     #[serde(rename = "updatedMCPToolOutput")]
     pub updated_mcp_tool_output: Option<Value>,
 }

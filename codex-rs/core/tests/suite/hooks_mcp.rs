@@ -117,6 +117,48 @@ print(json.dumps({{
     Ok(())
 }
 
+fn write_post_tool_use_output_hook(home: &Path) -> Result<()> {
+    let script_path = home.join("post_tool_use_output_hook.py");
+    let script = r#"import json
+
+print(json.dumps({
+    "hookSpecificOutput": {
+        "hookEventName": "PostToolUse",
+        "updatedToolOutput": {
+            "content": [],
+            "structuredContent": {
+                "echo": "generic replacement"
+            },
+            "isError": False
+        },
+        "updatedMCPToolOutput": {
+            "content": [],
+            "structuredContent": {
+                "echo": "mcp replacement"
+            },
+            "isError": False
+        }
+    }
+}))
+"#;
+    let hooks = serde_json::json!({
+        "hooks": {
+            "PostToolUse": [{
+                "matcher": RMCP_HOOK_MATCHER,
+                "hooks": [{
+                    "type": "command",
+                    "command": format!("python3 {}", script_path.display()),
+                    "statusMessage": "rewriting MCP post tool use output",
+                }]
+            }]
+        }
+    });
+
+    fs::write(&script_path, script).context("write post tool use output hook script")?;
+    fs::write(home.join("hooks.json"), hooks.to_string()).context("write hooks.json")?;
+    Ok(())
+}
+
 fn read_hook_inputs(home: &Path, log_name: &str) -> Result<Vec<Value>> {
     fs::read_to_string(home.join(log_name))
         .with_context(|| format!("read {log_name}"))?
@@ -345,6 +387,67 @@ async fn post_tool_use_records_mcp_tool_payload_and_context() -> Result<()> {
     );
 
     call_mock.single_request();
+
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn post_tool_use_updated_tool_output_wins_for_mcp_tool() -> Result<()> {
+    skip_if_no_network!(Ok(()));
+
+    let server = start_mock_server().await;
+    let call_id = "posttooluse-rmcp-echo-output-rewrite";
+    let arguments = json!({ "message": RMCP_ECHO_MESSAGE }).to_string();
+    let responses = mount_sse_sequence(
+        &server,
+        vec![
+            sse(vec![
+                ev_response_created("resp-1"),
+                ev_function_call_with_namespace(call_id, RMCP_NAMESPACE, "echo", &arguments),
+                ev_completed("resp-1"),
+            ]),
+            sse(vec![
+                ev_response_created("resp-2"),
+                ev_assistant_message("msg-1", "mcp post hook rewrite observed"),
+                ev_completed("resp-2"),
+            ]),
+        ],
+    )
+    .await;
+
+    let rmcp_test_server_bin = stdio_server_bin()?;
+    let test = test_codex()
+        .with_pre_build_hook(|home| {
+            if let Err(error) = write_post_tool_use_output_hook(home) {
+                panic!("failed to write MCP post tool use output hook fixture: {error}");
+            }
+        })
+        .with_config(move |config| {
+            enable_hooks_and_rmcp_server(config, rmcp_test_server_bin, AppToolApproval::Approve);
+        })
+        .build(&server)
+        .await?;
+
+    test.submit_turn("call the rmcp echo tool with the MCP post hook rewrite")
+        .await?;
+
+    let requests = responses.requests();
+    assert_eq!(requests.len(), 2);
+    let output_item = requests[1].function_call_output(call_id);
+    let output = output_item
+        .get("output")
+        .and_then(Value::as_str)
+        .expect("MCP tool output string");
+    assert_eq!(
+        serde_json::from_str::<Value>(output)?,
+        json!({
+            "content": [],
+            "structuredContent": {
+                "echo": "generic replacement"
+            },
+            "isError": false,
+        })
+    );
 
     Ok(())
 }

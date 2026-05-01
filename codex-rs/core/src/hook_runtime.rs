@@ -231,6 +231,7 @@ pub(crate) async fn run_post_tool_use_hooks(
     tool_input: Value,
     tool_response: Value,
 ) -> PostToolUseOutcome {
+    let is_mcp_tool = tool_name.starts_with("mcp__");
     let request = PostToolUseRequest {
         session_id: sess.conversation_id,
         turn_id: turn_context.sub_id.clone(),
@@ -243,6 +244,7 @@ pub(crate) async fn run_post_tool_use_hooks(
         tool_use_id,
         tool_input,
         tool_response,
+        is_mcp_tool,
     };
     let hooks = sess.hooks();
     let preview_runs = hooks.preview_post_tool_use(&request);

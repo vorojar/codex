@@ -31,6 +31,9 @@
         },
         "updatedMCPToolOutput": {
           "default": null
+        },
+        "updatedToolOutput": {
+          "default": null
         }
       },
       "required": [

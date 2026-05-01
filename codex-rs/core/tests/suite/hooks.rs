@@ -459,6 +459,20 @@ elif mode == "continue_false":
         "continue": False,
         "stopReason": reason
     }}))
+elif mode == "updated_tool_output":
+    print(json.dumps({{
+        "hookSpecificOutput": {{
+            "hookEventName": "PostToolUse",
+            "updatedToolOutput": reason
+        }}
+    }}))
+elif mode == "invalid_updated_tool_output":
+    print(json.dumps({{
+        "hookSpecificOutput": {{
+            "hookEventName": "PostToolUse",
+            "updatedToolOutput": {{"redacted": reason}}
+        }}
+    }}))
 elif mode == "exit_2":
     sys.stderr.write(reason + "\n")
     raise SystemExit(2)
@@ -2724,6 +2738,143 @@ async fn post_tool_use_block_decision_replaces_shell_command_output_with_reason(
     assert_eq!(
         hook_inputs[0]["tool_response"],
         Value::String("blocked-output".to_string())
+    );
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn post_tool_use_updated_tool_output_replaces_shell_command_output() -> Result<()> {
+    skip_if_no_network!(Ok(()));
+
+    let server = start_mock_server().await;
+    let call_id = "posttooluse-shell-command-updated-output";
+    let command = "printf original-output".to_string();
+    let args = serde_json::json!({ "command": command });
+    let responses = mount_sse_sequence(
+        &server,
+        vec![
+            sse(vec![
+                ev_response_created("resp-1"),
+                core_test_support::responses::ev_function_call(
+                    call_id,
+                    "shell_command",
+                    &serde_json::to_string(&args)?,
+                ),
+                ev_completed("resp-1"),
+            ]),
+            sse(vec![
+                ev_response_created("resp-2"),
+                ev_assistant_message("msg-1", "post hook output rewrite observed"),
+                ev_completed("resp-2"),
+            ]),
+        ],
+    )
+    .await;
+
+    let rewritten_output = "[redacted]";
+    let mut builder = test_codex()
+        .with_pre_build_hook(|home| {
+            if let Err(error) = write_post_tool_use_hook(
+                home,
+                Some("^Bash$"),
+                "updated_tool_output",
+                rewritten_output,
+            ) {
+                panic!("failed to write post tool use hook test fixture: {error}");
+            }
+        })
+        .with_config(|config| {
+            config
+                .features
+                .enable(Feature::CodexHooks)
+                .expect("test config should allow feature update");
+        });
+    let test = builder.build(&server).await?;
+
+    test.submit_turn("run the shell command with output rewrite")
+        .await?;
+
+    let requests = responses.requests();
+    assert_eq!(requests.len(), 2);
+    let output_item = requests[1].function_call_output(call_id);
+    let output = output_item
+        .get("output")
+        .and_then(Value::as_str)
+        .expect("shell command output string");
+    assert_eq!(output, rewritten_output);
+
+    let hook_inputs = read_post_tool_use_hook_inputs(test.codex_home_path())?;
+    assert_eq!(hook_inputs.len(), 1);
+    assert_eq!(
+        hook_inputs[0]["tool_response"],
+        Value::String("original-output".to_string())
+    );
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn post_tool_use_ignores_updated_tool_output_with_wrong_builtin_kind() -> Result<()> {
+    skip_if_no_network!(Ok(()));
+
+    let server = start_mock_server().await;
+    let call_id = "posttooluse-shell-command-invalid-updated-output";
+    let command = "printf original-output".to_string();
+    let args = serde_json::json!({ "command": command });
+    let responses = mount_sse_sequence(
+        &server,
+        vec![
+            sse(vec![
+                ev_response_created("resp-1"),
+                core_test_support::responses::ev_function_call(
+                    call_id,
+                    "shell_command",
+                    &serde_json::to_string(&args)?,
+                ),
+                ev_completed("resp-1"),
+            ]),
+            sse(vec![
+                ev_response_created("resp-2"),
+                ev_assistant_message("msg-1", "post hook invalid rewrite ignored"),
+                ev_completed("resp-2"),
+            ]),
+        ],
+    )
+    .await;
+
+    let mut builder = test_codex()
+        .with_pre_build_hook(|home| {
+            if let Err(error) = write_post_tool_use_hook(
+                home,
+                Some("^Bash$"),
+                "invalid_updated_tool_output",
+                "[redacted]",
+            ) {
+                panic!("failed to write post tool use hook test fixture: {error}");
+            }
+        })
+        .with_config(|config| {
+            config
+                .features
+                .enable(Feature::CodexHooks)
+                .expect("test config should allow feature update");
+        });
+    let test = builder.build(&server).await?;
+
+    test.submit_turn("run the shell command with invalid output rewrite")
+        .await?;
+
+    let requests = responses.requests();
+    assert_eq!(requests.len(), 2);
+    let output_item = requests[1].function_call_output(call_id);
+    let output = output_item
+        .get("output")
+        .and_then(Value::as_str)
+        .expect("shell command output string");
+    assert!(
+        output.contains("original-output"),
+        "invalid replacement should preserve the original output, got {output:?}",
     );
 
     Ok(())

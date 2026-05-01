@@ -478,6 +478,14 @@ impl ToolRegistry {
                         /*success*/ None,
                     ));
                 }
+            } else if let Some(updated_tool_output) = &outcome.updated_tool_output {
+                let mut guard = response_cell.lock().await;
+                if let Some(result) = guard.as_mut() {
+                    result.result = Box::new(FunctionToolOutput::from_text(
+                        post_tool_use_output_text(updated_tool_output),
+                        Some(true),
+                    ));
+                }
             }
         }
 
@@ -511,6 +519,13 @@ impl ToolRegistry {
                 Err(err)
             }
         }
+    }
+}
+
+fn post_tool_use_output_text(output: &Value) -> String {
+    match output {
+        Value::String(text) => text.clone(),
+        _ => output.to_string(),
     }
 }
 
