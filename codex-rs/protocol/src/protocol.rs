@@ -1482,6 +1482,7 @@ pub enum EventMsg {
     ItemCompleted(ItemCompletedEvent),
     HookStarted(HookStartedEvent),
     HookCompleted(HookCompletedEvent),
+    UserPromptSubmitStopped(UserPromptSubmitStoppedEvent),
 
     AgentMessageContentDelta(AgentMessageContentDeltaEvent),
     PlanDelta(PlanDeltaEvent),
@@ -1636,6 +1637,12 @@ pub struct HookStartedEvent {
 pub struct HookCompletedEvent {
     pub turn_id: Option<String>,
     pub run: HookRunSummary,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq, JsonSchema, TS)]
+#[serde(rename_all = "snake_case")]
+pub struct UserPromptSubmitStoppedEvent {
+    pub turn_id: String,
 }
 
 #[derive(Debug, Clone, Copy, Default, Deserialize, Serialize, PartialEq, Eq, JsonSchema, TS)]

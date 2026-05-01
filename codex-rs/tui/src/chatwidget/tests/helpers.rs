@@ -1539,11 +1539,29 @@ pub(super) fn handle_hook_started(chat: &mut ChatWidget, run: AppServerHookRunSu
 }
 
 pub(super) fn handle_hook_completed(chat: &mut ChatWidget, run: AppServerHookRunSummary) {
+    handle_hook_completed_for_turn(chat, /*turn_id*/ None, run);
+}
+
+pub(super) fn handle_hook_completed_for_turn(
+    chat: &mut ChatWidget,
+    turn_id: Option<&str>,
+    run: AppServerHookRunSummary,
+) {
     chat.handle_server_notification(
         ServerNotification::HookCompleted(AppServerHookCompletedNotification {
             thread_id: thread_id(chat),
-            turn_id: None,
+            turn_id: turn_id.map(str::to_string),
             run,
+        }),
+        /*replay_kind*/ None,
+    );
+}
+
+pub(super) fn handle_user_prompt_submit_stopped(chat: &mut ChatWidget, turn_id: &str) {
+    chat.handle_server_notification(
+        ServerNotification::UserPromptSubmitStopped(AppServerUserPromptSubmitStoppedNotification {
+            thread_id: thread_id(chat),
+            turn_id: turn_id.to_string(),
         }),
         /*replay_kind*/ None,
     );

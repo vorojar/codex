@@ -27,6 +27,7 @@ use codex_protocol::protocol::HookRunStatus;
 use codex_protocol::protocol::HookRunSummary;
 use codex_protocol::protocol::HookSource;
 use codex_protocol::protocol::HookStartedEvent;
+use codex_protocol::protocol::UserPromptSubmitStoppedEvent;
 use codex_protocol::user_input::UserInput;
 use serde_json::Value;
 
@@ -269,13 +270,23 @@ pub(crate) async fn run_user_prompt_submit_hooks(
     };
     let hooks = sess.hooks();
     let preview_runs = hooks.preview_user_prompt_submit(&request);
-    run_context_injecting_hook(
+    let outcome = run_context_injecting_hook(
         sess,
         turn_context,
         preview_runs,
         hooks.run_user_prompt_submit(request),
     )
-    .await
+    .await;
+    if outcome.should_stop {
+        sess.send_event(
+            turn_context,
+            EventMsg::UserPromptSubmitStopped(UserPromptSubmitStoppedEvent {
+                turn_id: turn_context.sub_id.clone(),
+            }),
+        )
+        .await;
+    }
+    outcome
 }
 
 pub(crate) async fn inspect_pending_input(

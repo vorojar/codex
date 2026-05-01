@@ -4046,6 +4046,26 @@
           "properties": {
             "method": {
               "enum": [
+                "userPromptSubmit/stopped"
+              ],
+              "title": "UserPromptSubmit/stoppedNotificationMethod",
+              "type": "string"
+            },
+            "params": {
+              "$ref": "#/definitions/v2/UserPromptSubmitStoppedNotification"
+            }
+          },
+          "required": [
+            "method",
+            "params"
+          ],
+          "title": "UserPromptSubmit/stoppedNotification",
+          "type": "object"
+        },
+        {
+          "properties": {
+            "method": {
+              "enum": [
                 "turn/diff/updated"
               ],
               "title": "Turn/diff/updatedNotificationMethod",
@@ -17840,6 +17860,23 @@
             "type": "object"
           }
         ]
+      },
+      "UserPromptSubmitStoppedNotification": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "properties": {
+          "threadId": {
+            "type": "string"
+          },
+          "turnId": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "threadId",
+          "turnId"
+        ],
+        "title": "UserPromptSubmitStoppedNotification",
+        "type": "object"
       },
       "Verbosity": {
         "description": "Controls output length/detail on GPT-5 models via the Responses API. Serialized with lowercase values to match the OpenAI API.",

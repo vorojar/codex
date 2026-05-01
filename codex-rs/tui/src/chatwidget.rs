@@ -4042,6 +4042,14 @@ impl ChatWidget {
         self.request_redraw();
     }
 
+    fn on_user_prompt_submit_stopped(&mut self) {
+        if self.user_turn_pending_start {
+            self.user_turn_pending_start = false;
+            self.maybe_send_next_queued_input();
+        }
+        self.request_redraw();
+    }
+
     fn flush_completed_hook_output(&mut self) {
         let Some(completed_cell) = self
             .active_hook_cell
@@ -6254,6 +6262,9 @@ impl ChatWidget {
             }
             ServerNotification::HookCompleted(notification) => {
                 self.on_hook_completed(notification.run);
+            }
+            ServerNotification::UserPromptSubmitStopped(_) => {
+                self.on_user_prompt_submit_stopped();
             }
             ServerNotification::Error(notification) => {
                 if notification.will_retry {

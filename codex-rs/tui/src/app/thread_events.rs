@@ -50,6 +50,7 @@ impl ThreadEventStore {
             ThreadBufferedEvent::Request(_)
                 | ThreadBufferedEvent::Notification(ServerNotification::HookStarted(_))
                 | ThreadBufferedEvent::Notification(ServerNotification::HookCompleted(_))
+                | ThreadBufferedEvent::Notification(ServerNotification::UserPromptSubmitStopped(_),)
                 | ThreadBufferedEvent::FeedbackSubmission(_)
         )
     }

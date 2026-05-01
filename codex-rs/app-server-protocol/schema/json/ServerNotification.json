@@ -4493,6 +4493,21 @@
         }
       ]
     },
+    "UserPromptSubmitStoppedNotification": {
+      "properties": {
+        "threadId": {
+          "type": "string"
+        },
+        "turnId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "threadId",
+        "turnId"
+      ],
+      "type": "object"
+    },
     "WarningNotification": {
       "properties": {
         "message": {
@@ -4967,6 +4982,26 @@
         "params"
       ],
       "title": "Hook/completedNotification",
+      "type": "object"
+    },
+    {
+      "properties": {
+        "method": {
+          "enum": [
+            "userPromptSubmit/stopped"
+          ],
+          "title": "UserPromptSubmit/stoppedNotificationMethod",
+          "type": "string"
+        },
+        "params": {
+          "$ref": "#/definitions/UserPromptSubmitStoppedNotification"
+        }
+      },
+      "required": [
+        "method",
+        "params"
+      ],
+      "title": "UserPromptSubmit/stoppedNotification",
       "type": "object"
     },
     {

@@ -81,6 +81,7 @@ use codex_app_server_protocol::TurnPlanStep;
 use codex_app_server_protocol::TurnPlanUpdatedNotification;
 use codex_app_server_protocol::TurnStartedNotification;
 use codex_app_server_protocol::TurnStatus;
+use codex_app_server_protocol::UserPromptSubmitStoppedNotification;
 use codex_app_server_protocol::WarningNotification;
 use codex_app_server_protocol::build_file_change_approval_request_item;
 use codex_app_server_protocol::build_file_change_end_item;
@@ -1060,6 +1061,15 @@ pub(crate) async fn apply_bespoke_event_handling(
             };
             outgoing
                 .send_server_notification(ServerNotification::HookCompleted(notification))
+                .await;
+        }
+        EventMsg::UserPromptSubmitStopped(event) => {
+            let notification = UserPromptSubmitStoppedNotification {
+                thread_id: conversation_id.to_string(),
+                turn_id: event.turn_id,
+            };
+            outgoing
+                .send_server_notification(ServerNotification::UserPromptSubmitStopped(notification))
                 .await;
         }
         EventMsg::ExitedReviewMode(review_event) => {

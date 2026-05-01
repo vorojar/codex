@@ -116,6 +116,7 @@ pub(super) use codex_app_server_protocol::TurnStartedNotification;
 pub(super) use codex_app_server_protocol::TurnStatus as AppServerTurnStatus;
 pub(super) use codex_app_server_protocol::UserInput;
 pub(super) use codex_app_server_protocol::UserInput as AppServerUserInput;
+pub(super) use codex_app_server_protocol::UserPromptSubmitStoppedNotification as AppServerUserPromptSubmitStoppedNotification;
 pub(super) use codex_app_server_protocol::WarningNotification;
 pub(super) use codex_config::AppRequirementToml;
 pub(super) use codex_config::AppsRequirementsToml;
