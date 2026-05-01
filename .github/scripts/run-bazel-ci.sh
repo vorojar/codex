@@ -6,6 +6,7 @@ print_failed_bazel_test_logs=0
 print_failed_bazel_action_summary=0
 remote_download_toplevel=0
 windows_msvc_host_platform=0
+windows_cross_compile=0
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -25,6 +26,10 @@ while [[ $# -gt 0 ]]; do
       windows_msvc_host_platform=1
       shift
       ;;
+    --windows-cross-compile)
+      windows_cross_compile=1
+      shift
+      ;;
     --)
       shift
       break
@@ -37,7 +42,7 @@ while [[ $# -gt 0 ]]; do
 done
 
 if [[ $# -eq 0 ]]; then
-  echo "Usage: $0 [--print-failed-test-logs] [--print-failed-action-summary] [--remote-download-toplevel] [--windows-msvc-host-platform] -- <bazel args> -- <targets>" >&2
+  echo "Usage: $0 [--print-failed-test-logs] [--print-failed-action-summary] [--remote-download-toplevel] [--windows-msvc-host-platform] [--windows-cross-compile] -- <bazel args> -- <targets>" >&2
   exit 1
 fi
 
@@ -61,7 +66,11 @@ case "${RUNNER_OS:-}" in
     ci_config=ci-macos
     ;;
   Windows)
-    ci_config=ci-windows
+    if [[ $windows_cross_compile -eq 1 ]]; then
+      ci_config=ci-windows-cross
+    else
+      ci_config=ci-windows
+    fi
     ;;
 esac
 
@@ -267,6 +276,13 @@ if [[ $remote_download_toplevel -eq 1 ]]; then
   # Override the CI config's remote_download_minimal setting when callers need
   # the built artifact to exist on disk after the command completes.
   post_config_bazel_args+=(--remote_download_toplevel)
+fi
+
+if [[ "${RUNNER_OS:-}" == "Windows" && $windows_cross_compile -eq 1 && -z "${BUILDBUDDY_API_KEY:-}" ]]; then
+  # The Windows cross-compile config depends on remote execution. Fork PRs do
+  # not receive the BuildBuddy secret, so fall back to the existing local build
+  # shape and keep its lower concurrency cap.
+  post_config_bazel_args+=(--jobs=8)
 fi
 
 if [[ -n "${BAZEL_REPO_CONTENTS_CACHE:-}" ]]; then
