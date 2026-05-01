@@ -781,7 +781,8 @@ async fn permissions_profiles_network_enabled_allows_runtime_network_without_pro
 }
 
 #[tokio::test]
-async fn permissions_profiles_proxy_policy_starts_managed_network_proxy() -> std::io::Result<()> {
+async fn permissions_profiles_proxy_policy_does_not_start_managed_network_proxy_without_feature()
+-> std::io::Result<()> {
     let codex_home = TempDir::new()?;
     let cwd = TempDir::new()?;
     std::fs::write(cwd.path().join(".git"), "gitdir: nowhere")?;
@@ -822,15 +823,9 @@ async fn permissions_profiles_proxy_policy_starts_managed_network_proxy() -> std
         config.permissions.network_sandbox_policy(),
         NetworkSandboxPolicy::Enabled
     );
-    let network = config
-        .permissions
-        .network
-        .as_ref()
-        .expect("profile proxy policy should start the managed network proxy");
-    assert_eq!(network.proxy_host_and_port(), "127.0.0.1:43128");
     assert!(
-        !network.socks_enabled(),
-        "profile proxy policy should preserve SOCKS config"
+        config.permissions.network.is_none(),
+        "profile proxy policy should not start the managed network proxy without the feature"
     );
     Ok(())
 }
@@ -1043,7 +1038,8 @@ proxy_url = "http://127.0.0.1:43128"
 }
 
 #[tokio::test]
-async fn disabled_network_proxy_feature_preserves_profile_proxy_policy() -> std::io::Result<()> {
+async fn disabled_network_proxy_feature_does_not_start_profile_proxy_policy() -> std::io::Result<()>
+{
     let codex_home = TempDir::new()?;
     let cwd = TempDir::new()?;
     let config = Config::load_from_base_config_with_overrides(
@@ -1089,13 +1085,10 @@ enabled = false
     .await?;
 
     assert!(!config.features.enabled(Feature::NetworkProxy));
-    let network = config
-        .permissions
-        .network
-        .as_ref()
-        .expect("profile proxy policy should still start the managed proxy");
-    assert_eq!(network.proxy_host_and_port(), "127.0.0.1:43128");
-    assert!(!network.socks_enabled());
+    assert!(
+        config.permissions.network.is_none(),
+        "disabled feature should keep profile proxy policy from starting the managed proxy"
+    );
     Ok(())
 }
 

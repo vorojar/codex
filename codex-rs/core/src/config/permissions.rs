@@ -117,35 +117,11 @@ pub(crate) fn network_proxy_config_from_profile_network(
         NetworkProxyConfig::default,
         NetworkToml::to_network_proxy_config,
     );
-    // Profile `network.enabled` controls sandbox network access. Do not start a
-    // managed proxy for that bit alone, but keep the proxy enabled when the
-    // profile also supplied policy that only the proxy can enforce.
-    config.network.enabled = network.is_some_and(profile_network_requires_proxy);
+    // Profile `network.enabled` controls sandbox network access. Profiles may
+    // provide proxy settings for the feature gate to consume, but they do not
+    // start the managed proxy on their own.
+    config.network.enabled = false;
     config
-}
-
-fn profile_network_requires_proxy(network: &NetworkToml) -> bool {
-    if network.enabled != Some(true) {
-        return false;
-    }
-
-    network.proxy_url.is_some()
-        || network.enable_socks5 == Some(true)
-        || network.socks_url.is_some()
-        || network.enable_socks5_udp == Some(true)
-        || network.allow_upstream_proxy == Some(true)
-        || network.dangerously_allow_non_loopback_proxy == Some(true)
-        || network.dangerously_allow_all_unix_sockets == Some(true)
-        || network.mode.is_some()
-        || network
-            .domains
-            .as_ref()
-            .is_some_and(|domains| !domains.is_empty())
-        || network
-            .unix_sockets
-            .as_ref()
-            .is_some_and(|unix_sockets| !unix_sockets.is_empty())
-        || network.allow_local_binding == Some(true)
 }
 
 pub(crate) fn apply_network_proxy_feature_config(
