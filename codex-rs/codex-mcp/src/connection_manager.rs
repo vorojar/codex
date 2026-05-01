@@ -17,7 +17,6 @@ use crate::codex_apps::CodexAppsToolsCacheContext;
 use crate::codex_apps::CodexAppsToolsCacheKey;
 use crate::codex_apps::write_cached_codex_apps_tools_if_needed;
 use crate::elicitation::ElicitationRequestManager;
-use crate::mcp::CODEX_APPS_MCP_SERVER_NAME;
 use crate::mcp::ToolPluginProvenance;
 use crate::rmcp_client::AsyncManagedClient;
 use crate::rmcp_client::DEFAULT_STARTUP_TIMEOUT;
@@ -38,6 +37,7 @@ use anyhow::anyhow;
 use async_channel::Sender;
 use codex_config::Constrained;
 use codex_config::McpServerConfig;
+use codex_config::McpServerProvenance;
 use codex_config::McpServerTransportConfig;
 use codex_config::types::OAuthCredentialsStoreMode;
 use codex_login::CodexAuth;
@@ -116,6 +116,12 @@ impl McpConnectionManager {
         self.server_origins.get(server_name).map(String::as_str)
     }
 
+    pub fn is_host_owned_codex_apps_server(&self, server_name: &str) -> bool {
+        self.clients
+            .get(server_name)
+            .is_some_and(|client| client.provenance == McpServerProvenance::HostOwnedCodexApps)
+    }
+
     pub fn set_approval_policy(&self, approval_policy: &Constrained<AskForApproval>) {
         if let Ok(mut policy) = self.elicitation_requests.approval_policy.lock() {
             *policy = approval_policy.value();
@@ -156,6 +162,9 @@ impl McpConnectionManager {
             .map(codex_model_provider::auth_provider_from_auth);
         let mcp_servers = mcp_servers.clone();
         for (server_name, cfg) in mcp_servers.into_iter().filter(|(_, cfg)| cfg.enabled) {
+            let provenance = cfg.provenance;
+            let is_host_owned_codex_apps_server =
+                provenance == McpServerProvenance::HostOwnedCodexApps;
             if let Some(origin) = transport_origin(&cfg.transport) {
                 server_origins.insert(server_name.clone(), origin);
             }
@@ -169,7 +178,7 @@ impl McpConnectionManager {
                 },
             )
             .await;
-            let codex_apps_tools_cache_context = if server_name == CODEX_APPS_MCP_SERVER_NAME {
+            let codex_apps_tools_cache_context = if is_host_owned_codex_apps_server {
                 Some(CodexAppsToolsCacheContext {
                     codex_home: codex_home.clone(),
                     user_key: codex_apps_tools_cache_key.clone(),
@@ -184,12 +193,12 @@ impl McpConnectionManager {
                 } => bearer_token_env_var.is_some(),
                 McpServerTransportConfig::Stdio { .. } => false,
             };
-            let runtime_auth_provider =
-                if server_name == CODEX_APPS_MCP_SERVER_NAME && !uses_env_bearer_token {
-                    codex_apps_auth_provider.clone()
-                } else {
-                    None
-                };
+            let runtime_auth_provider = if is_host_owned_codex_apps_server && !uses_env_bearer_token
+            {
+                codex_apps_auth_provider.clone()
+            } else {
+                None
+            };
             let async_managed_client = AsyncManagedClient::new(
                 server_name.clone(),
                 cfg,
@@ -201,6 +210,7 @@ impl McpConnectionManager {
                 Arc::clone(&tool_plugin_provenance),
                 runtime_environment.clone(),
                 runtime_auth_provider,
+                provenance,
             );
             clients.insert(server_name.clone(), async_managed_client.clone());
             let tx_event = tx_event.clone();
@@ -335,10 +345,12 @@ impl McpConnectionManager {
     /// latest filtered tool map is returned directly to the caller. On
     /// failure, the existing cache remains unchanged.
     pub async fn hard_refresh_codex_apps_tools_cache(&self) -> Result<HashMap<String, ToolInfo>> {
-        let managed_client = self
+        let (server_name, async_managed_client) = self
             .clients
-            .get(CODEX_APPS_MCP_SERVER_NAME)
-            .ok_or_else(|| anyhow!("unknown MCP server '{CODEX_APPS_MCP_SERVER_NAME}'"))?
+            .iter()
+            .find(|(_, client)| client.provenance == McpServerProvenance::HostOwnedCodexApps)
+            .ok_or_else(|| anyhow!("host-owned Codex Apps MCP server is not available"))?;
+        let managed_client = async_managed_client
             .client()
             .await
             .context("failed to get client")?;
@@ -346,15 +358,14 @@ impl McpConnectionManager {
         let list_start = Instant::now();
         let fetch_start = Instant::now();
         let tools = list_tools_for_client_uncached(
-            CODEX_APPS_MCP_SERVER_NAME,
+            server_name,
+            async_managed_client.provenance,
             &managed_client.client,
             managed_client.tool_timeout,
             managed_client.server_instructions.as_deref(),
         )
         .await
-        .with_context(|| {
-            format!("failed to refresh tools for MCP server '{CODEX_APPS_MCP_SERVER_NAME}'")
-        })?;
+        .with_context(|| format!("failed to refresh tools for MCP server '{server_name}'"))?;
         emit_duration(
             MCP_TOOLS_FETCH_UNCACHED_DURATION_METRIC,
             fetch_start.elapsed(),
@@ -362,7 +373,7 @@ impl McpConnectionManager {
         );
 
         write_cached_codex_apps_tools_if_needed(
-            CODEX_APPS_MCP_SERVER_NAME,
+            async_managed_client.provenance == McpServerProvenance::HostOwnedCodexApps,
             managed_client.codex_apps_tools_cache_context.as_ref(),
             &tools,
         );

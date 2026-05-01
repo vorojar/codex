@@ -27,6 +27,7 @@ async fn replace_mcp_servers_serializes_per_tool_approval_overrides() -> anyhow:
             required: false,
             supports_parallel_tool_calls: true,
             disabled_reason: None,
+            provenance: Default::default(),
             startup_timeout_sec: None,
             tool_timeout_sec: None,
             default_tools_approval_mode: Some(AppToolApproval::Auto),

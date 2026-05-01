@@ -7,6 +7,7 @@ use codex_config::CloudRequirementsLoader;
 use codex_config::ConfigLayerStack;
 use codex_config::ConfigRequirements;
 use codex_config::ConfigRequirementsToml;
+use codex_config::McpServerProvenance;
 use codex_config::types::AppConfig;
 use codex_config::types::AppToolConfig;
 use codex_config::types::AppToolsConfig;
@@ -117,6 +118,7 @@ fn codex_app_tool(
 
     ToolInfo {
         server_name: CODEX_APPS_MCP_SERVER_NAME.to_string(),
+        server_provenance: McpServerProvenance::HostOwnedCodexApps,
         callable_name: tool_name.to_string(),
         callable_namespace: tool_namespace,
         server_instructions: None,
@@ -196,6 +198,7 @@ fn accessible_connectors_from_mcp_tools_carries_plugin_display_names() {
             "mcp__sample__echo".to_string(),
             ToolInfo {
                 server_name: "sample".to_string(),
+                server_provenance: Default::default(),
                 callable_name: "echo".to_string(),
                 callable_namespace: "sample".to_string(),
                 server_instructions: None,
@@ -321,6 +324,7 @@ fn accessible_connectors_from_mcp_tools_preserves_description() {
         "mcp__codex_apps__calendar_create_event".to_string(),
         ToolInfo {
             server_name: CODEX_APPS_MCP_SERVER_NAME.to_string(),
+            server_provenance: McpServerProvenance::HostOwnedCodexApps,
             callable_name: "calendar_create_event".to_string(),
             callable_namespace: "mcp__codex_apps__calendar".to_string(),
             server_instructions: None,

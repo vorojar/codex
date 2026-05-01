@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
+use codex_config::McpServerProvenance;
 use codex_connectors::metadata::sanitize_name;
 use codex_features::Feature;
 use codex_features::Features;
@@ -56,6 +57,11 @@ fn make_mcp_tool(
 
     ToolInfo {
         server_name: server_name.to_string(),
+        server_provenance: if server_name == CODEX_APPS_MCP_SERVER_NAME {
+            McpServerProvenance::HostOwnedCodexApps
+        } else {
+            McpServerProvenance::UserConfigured
+        },
         callable_name: tool_name.to_string(),
         callable_namespace: tool_namespace,
         server_instructions: None,

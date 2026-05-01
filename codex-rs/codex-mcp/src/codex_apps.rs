@@ -9,7 +9,6 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::time::Instant;
 
-use crate::mcp::CODEX_APPS_MCP_SERVER_NAME;
 use crate::runtime::emit_duration;
 use crate::tools::MCP_TOOLS_CACHE_WRITE_DURATION_METRIC;
 use crate::tools::ToolInfo;
@@ -43,7 +42,7 @@ pub fn filter_non_codex_apps_mcp_tools_only(
 ) -> HashMap<String, ToolInfo> {
     mcp_tools
         .iter()
-        .filter(|(_, tool)| tool.server_name != CODEX_APPS_MCP_SERVER_NAME)
+        .filter(|(_, tool)| !tool.is_host_owned_codex_apps())
         .map(|(name, tool)| (name.clone(), tool.clone()))
         .collect()
 }
@@ -71,11 +70,11 @@ pub(crate) enum CachedCodexAppsToolsLoad {
 }
 
 pub(crate) fn normalize_codex_apps_tool_title(
-    server_name: &str,
+    is_host_owned_codex_apps_server: bool,
     connector_name: Option<&str>,
     value: &str,
 ) -> String {
-    if server_name != CODEX_APPS_MCP_SERVER_NAME {
+    if !is_host_owned_codex_apps_server {
         return value.to_string();
     }
 
@@ -97,12 +96,12 @@ pub(crate) fn normalize_codex_apps_tool_title(
 }
 
 pub(crate) fn normalize_codex_apps_callable_name(
-    server_name: &str,
+    is_host_owned_codex_apps_server: bool,
     tool_name: &str,
     connector_id: Option<&str>,
     connector_name: Option<&str>,
 ) -> String {
-    if server_name != CODEX_APPS_MCP_SERVER_NAME {
+    if !is_host_owned_codex_apps_server {
         return tool_name.to_string();
     }
 
@@ -133,11 +132,10 @@ pub(crate) fn normalize_codex_apps_callable_name(
 
 pub(crate) fn normalize_codex_apps_callable_namespace(
     server_name: &str,
+    is_host_owned_codex_apps_server: bool,
     connector_name: Option<&str>,
 ) -> String {
-    if server_name == CODEX_APPS_MCP_SERVER_NAME
-        && let Some(connector_name) = connector_name
-    {
+    if is_host_owned_codex_apps_server && let Some(connector_name) = connector_name {
         format!("mcp__{}__{}", server_name, sanitize_name(connector_name))
     } else {
         format!("mcp__{server_name}__")
@@ -145,11 +143,11 @@ pub(crate) fn normalize_codex_apps_callable_namespace(
 }
 
 pub(crate) fn write_cached_codex_apps_tools_if_needed(
-    server_name: &str,
+    is_host_owned_codex_apps_server: bool,
     cache_context: Option<&CodexAppsToolsCacheContext>,
     tools: &[ToolInfo],
 ) {
-    if server_name != CODEX_APPS_MCP_SERVER_NAME {
+    if !is_host_owned_codex_apps_server {
         return;
     }
 
@@ -165,10 +163,10 @@ pub(crate) fn write_cached_codex_apps_tools_if_needed(
 }
 
 pub(crate) fn load_startup_cached_codex_apps_tools_snapshot(
-    server_name: &str,
+    is_host_owned_codex_apps_server: bool,
     cache_context: Option<&CodexAppsToolsCacheContext>,
 ) -> Option<Vec<ToolInfo>> {
-    if server_name != CODEX_APPS_MCP_SERVER_NAME {
+    if !is_host_owned_codex_apps_server {
         return None;
     }
 

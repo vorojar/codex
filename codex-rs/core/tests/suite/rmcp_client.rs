@@ -315,6 +315,7 @@ fn insert_mcp_server(
             required: false,
             supports_parallel_tool_calls: options.supports_parallel_tool_calls,
             disabled_reason: None,
+            provenance: Default::default(),
             startup_timeout_sec: Some(Duration::from_secs(10)),
             tool_timeout_sec: options.tool_timeout_sec,
             default_tools_approval_mode: None,

@@ -390,6 +390,7 @@ mod tests {
     fn tool_info(server_name: &str, tool_name: &str, description_prefix: &str) -> ToolInfo {
         ToolInfo {
             server_name: server_name.to_string(),
+            server_provenance: Default::default(),
             callable_name: tool_name.to_string(),
             callable_namespace: format!("mcp__{server_name}__"),
             server_instructions: None,

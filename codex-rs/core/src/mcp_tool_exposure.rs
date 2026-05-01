@@ -2,7 +2,6 @@ use std::collections::HashMap;
 use std::collections::HashSet;
 
 use codex_features::Feature;
-use codex_mcp::CODEX_APPS_MCP_SERVER_NAME;
 use codex_mcp::ToolInfo as McpToolInfo;
 use codex_mcp::filter_non_codex_apps_mcp_tools_only;
 use codex_tools::ToolsConfig;
@@ -71,7 +70,7 @@ fn filter_codex_apps_mcp_tools(
     mcp_tools
         .iter()
         .filter(|(_, tool)| {
-            if tool.server_name != CODEX_APPS_MCP_SERVER_NAME {
+            if !tool.is_host_owned_codex_apps() {
                 return false;
             }
             let Some(connector_id) = tool.connector_id.as_deref() else {

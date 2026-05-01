@@ -39,7 +39,6 @@ use codex_analytics::build_track_events_context;
 use codex_config::types::AppToolApproval;
 use codex_features::Feature;
 use codex_hooks::PermissionRequestDecision;
-use codex_mcp::CODEX_APPS_MCP_SERVER_NAME;
 use codex_mcp::McpPermissionPromptAutoApproveContext;
 use codex_mcp::SandboxState;
 use codex_mcp::declared_openai_file_input_param_names;
@@ -120,13 +119,19 @@ pub(crate) async fn handle_mcp_tool_call(
         tool: tool_name.clone(),
         arguments: arguments_value.clone(),
     };
+    let is_host_owned_codex_apps_server = sess
+        .services
+        .mcp_connection_manager
+        .read()
+        .await
+        .is_host_owned_codex_apps_server(&server);
 
     let metadata =
         lookup_mcp_tool_metadata(sess.as_ref(), turn_context.as_ref(), &server, &tool_name).await;
     let mcp_app_resource_uri = metadata
         .as_ref()
         .and_then(|metadata| metadata.mcp_app_resource_uri.clone());
-    let app_tool_policy = if server == CODEX_APPS_MCP_SERVER_NAME {
+    let app_tool_policy = if is_host_owned_codex_apps_server {
         connectors::app_tool_policy(
             &turn_context.config,
             metadata
@@ -143,14 +148,14 @@ pub(crate) async fn handle_mcp_tool_call(
     } else {
         connectors::AppToolPolicy::default()
     };
-    let approval_mode = if server == CODEX_APPS_MCP_SERVER_NAME {
+    let approval_mode = if is_host_owned_codex_apps_server {
         app_tool_policy.approval
     } else {
         custom_mcp_tool_approval_mode(sess.as_ref(), turn_context.as_ref(), &server, &tool_name)
             .await
     };
 
-    if server == CODEX_APPS_MCP_SERVER_NAME && !app_tool_policy.enabled {
+    if is_host_owned_codex_apps_server && !app_tool_policy.enabled {
         let result = notify_mcp_tool_call_skip(
             sess.as_ref(),
             turn_context.as_ref(),
@@ -175,7 +180,7 @@ pub(crate) async fn handle_mcp_tool_call(
     }
     let request_meta = build_mcp_tool_call_request_meta(
         turn_context.as_ref(),
-        &server,
+        is_host_owned_codex_apps_server,
         &call_id,
         metadata.as_ref(),
     );
@@ -305,6 +310,12 @@ async fn handle_approved_mcp_tool_call(
     maybe_mark_thread_memory_mode_polluted(sess, turn_context).await;
 
     let server = invocation.server.clone();
+    let is_host_owned_codex_apps_server = sess
+        .services
+        .mcp_connection_manager
+        .read()
+        .await
+        .is_host_owned_codex_apps_server(&server);
     let tool_name = invocation.tool.clone();
     let arguments_value = invocation.arguments.clone();
     let connector_id = metadata.and_then(|metadata| metadata.connector_id.as_deref());
@@ -370,7 +381,14 @@ async fn handle_approved_mcp_tool_call(
         result: truncate_mcp_tool_result_for_event(&result),
     });
     notify_mcp_tool_call_event(sess, turn_context, tool_call_end_event.clone()).await;
-    maybe_track_codex_app_used(sess, turn_context, &server, &tool_name).await;
+    maybe_track_codex_app_used(
+        sess,
+        turn_context,
+        &server,
+        &tool_name,
+        is_host_owned_codex_apps_server,
+    )
+    .await;
 
     let status = if result.is_ok() { "ok" } else { "error" };
     emit_mcp_call_metrics(
@@ -711,8 +729,9 @@ async fn maybe_track_codex_app_used(
     turn_context: &TurnContext,
     server: &str,
     tool_name: &str,
+    is_host_owned_codex_apps_server: bool,
 ) {
-    if server != CODEX_APPS_MCP_SERVER_NAME {
+    if !is_host_owned_codex_apps_server {
         return;
     }
     let metadata = lookup_mcp_app_usage_metadata(sess, server, tool_name).await;
@@ -823,7 +842,7 @@ async fn custom_mcp_tool_approval_mode(
 
 fn build_mcp_tool_call_request_meta(
     turn_context: &TurnContext,
-    server: &str,
+    is_host_owned_codex_apps_server: bool,
     call_id: &str,
     metadata: Option<&McpToolApprovalMetadata>,
 ) -> Option<serde_json::Value> {
@@ -836,7 +855,7 @@ fn build_mcp_tool_call_request_meta(
         );
     }
 
-    if server == CODEX_APPS_MCP_SERVER_NAME {
+    if is_host_owned_codex_apps_server {
         let mut codex_apps_meta = metadata
             .and_then(|metadata| metadata.codex_apps_meta.clone())
             .unwrap_or_default();
@@ -885,6 +904,7 @@ struct McpToolApprovalPromptOptions {
 
 struct McpToolApprovalElicitationRequest<'a> {
     server: &'a str,
+    is_host_owned_codex_apps_server: bool,
     metadata: Option<&'a McpToolApprovalMetadata>,
     tool_params: Option<&'a serde_json::Value>,
     tool_params_display: Option<&'a [RenderedMcpToolApprovalParam]>,
@@ -929,6 +949,7 @@ pub(crate) fn is_mcp_tool_approval_question_id(question_id: &str) -> bool {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 struct McpToolApprovalKey {
     server: String,
+    is_host_owned_codex_apps_server: bool,
     connector_id: Option<String>,
     tool_name: String,
 }
@@ -954,6 +975,12 @@ async fn maybe_request_mcp_tool_approval(
     metadata: Option<&McpToolApprovalMetadata>,
     approval_mode: AppToolApproval,
 ) -> Option<McpToolApprovalDecision> {
+    let is_host_owned_codex_apps_server = sess
+        .services
+        .mcp_connection_manager
+        .read()
+        .await
+        .is_host_owned_codex_apps_server(&invocation.server);
     if mcp_permission_prompt_is_auto_approved(
         turn_context.approval_policy.value(),
         &turn_context.permission_profile(),
@@ -996,9 +1023,18 @@ async fn maybe_request_mcp_tool_approval(
         }
     }
 
-    let session_approval_key = session_mcp_tool_approval_key(invocation, metadata, approval_mode);
-    let persistent_approval_key =
-        persistent_mcp_tool_approval_key(invocation, metadata, approval_mode);
+    let session_approval_key = session_mcp_tool_approval_key(
+        invocation,
+        metadata,
+        approval_mode,
+        is_host_owned_codex_apps_server,
+    );
+    let persistent_approval_key = persistent_mcp_tool_approval_key(
+        invocation,
+        metadata,
+        approval_mode,
+        is_host_owned_codex_apps_server,
+    );
     if let Some(key) = session_approval_key.as_ref()
         && mcp_tool_approval_is_remembered(sess, key).await
     {
@@ -1077,6 +1113,7 @@ async fn maybe_request_mcp_tool_approval(
     let mut question = build_mcp_tool_approval_question(
         question_id.clone(),
         &invocation.server,
+        is_host_owned_codex_apps_server,
         &invocation.tool,
         metadata.and_then(|metadata| metadata.connector_name.as_deref()),
         prompt_options,
@@ -1095,6 +1132,7 @@ async fn maybe_request_mcp_tool_approval(
             turn_context.as_ref(),
             McpToolApprovalElicitationRequest {
                 server: &invocation.server,
+                is_host_owned_codex_apps_server,
                 metadata,
                 tool_params: rendered_template
                     .as_ref()
@@ -1183,18 +1221,20 @@ fn session_mcp_tool_approval_key(
     invocation: &McpInvocation,
     metadata: Option<&McpToolApprovalMetadata>,
     approval_mode: AppToolApproval,
+    is_host_owned_codex_apps_server: bool,
 ) -> Option<McpToolApprovalKey> {
     if approval_mode != AppToolApproval::Auto {
         return None;
     }
 
     let connector_id = metadata.and_then(|metadata| metadata.connector_id.clone());
-    if invocation.server == CODEX_APPS_MCP_SERVER_NAME && connector_id.is_none() {
+    if is_host_owned_codex_apps_server && connector_id.is_none() {
         return None;
     }
 
     Some(McpToolApprovalKey {
         server: invocation.server.clone(),
+        is_host_owned_codex_apps_server,
         connector_id,
         tool_name: invocation.tool.clone(),
     })
@@ -1204,8 +1244,14 @@ fn persistent_mcp_tool_approval_key(
     invocation: &McpInvocation,
     metadata: Option<&McpToolApprovalMetadata>,
     approval_mode: AppToolApproval,
+    is_host_owned_codex_apps_server: bool,
 ) -> Option<McpToolApprovalKey> {
-    session_mcp_tool_approval_key(invocation, metadata, approval_mode)
+    session_mcp_tool_approval_key(
+        invocation,
+        metadata,
+        approval_mode,
+        is_host_owned_codex_apps_server,
+    )
 }
 
 pub(crate) fn build_guardian_mcp_tool_review_request(
@@ -1275,6 +1321,12 @@ pub(crate) async fn lookup_mcp_tool_metadata(
     server: &str,
     tool_name: &str,
 ) -> Option<McpToolApprovalMetadata> {
+    let is_host_owned_codex_apps_server = sess
+        .services
+        .mcp_connection_manager
+        .read()
+        .await
+        .is_host_owned_codex_apps_server(server);
     let tools = sess
         .services
         .mcp_connection_manager
@@ -1285,7 +1337,7 @@ pub(crate) async fn lookup_mcp_tool_metadata(
     let tool_info = tools
         .into_values()
         .find(|tool_info| tool_info.server_name == server && tool_info.tool.name == tool_name)?;
-    let connector_description = if server == CODEX_APPS_MCP_SERVER_NAME {
+    let connector_description = if is_host_owned_codex_apps_server {
         let connectors = match connectors::list_cached_accessible_connectors_from_mcp_tools(
             turn_context.config.as_ref(),
         )
@@ -1326,17 +1378,17 @@ pub(crate) async fn lookup_mcp_tool_metadata(
             .cloned(),
         // Disallow custom MCPs from uploading files via fileParams.
         openai_file_input_params: openai_file_input_params_for_server(
-            server,
+            is_host_owned_codex_apps_server,
             tool_info.tool.meta.as_deref(),
         ),
     })
 }
 
 fn openai_file_input_params_for_server(
-    server: &str,
+    is_host_owned_codex_apps_server: bool,
     meta: Option<&serde_json::Map<String, serde_json::Value>>,
 ) -> Option<Vec<String>> {
-    (server == CODEX_APPS_MCP_SERVER_NAME)
+    is_host_owned_codex_apps_server
         .then_some(declared_openai_file_input_param_names(meta))
         .filter(|params| !params.is_empty())
 }
@@ -1393,6 +1445,7 @@ async fn lookup_mcp_app_usage_metadata(
 fn build_mcp_tool_approval_question(
     question_id: String,
     server: &str,
+    is_host_owned_codex_apps_server: bool,
     tool_name: &str,
     connector_name: Option<&str>,
     prompt_options: McpToolApprovalPromptOptions,
@@ -1401,7 +1454,12 @@ fn build_mcp_tool_approval_question(
     let question = question_override
         .map(ToString::to_string)
         .unwrap_or_else(|| {
-            build_mcp_tool_approval_fallback_message(server, tool_name, connector_name)
+            build_mcp_tool_approval_fallback_message(
+                server,
+                is_host_owned_codex_apps_server,
+                tool_name,
+                connector_name,
+            )
         });
     let question = format!("{}?", question.trim_end_matches('?'));
 
@@ -1438,6 +1496,7 @@ fn build_mcp_tool_approval_question(
 
 fn build_mcp_tool_approval_fallback_message(
     server: &str,
+    is_host_owned_codex_apps_server: bool,
     tool_name: &str,
     connector_name: Option<&str>,
 ) -> String {
@@ -1446,7 +1505,7 @@ fn build_mcp_tool_approval_fallback_message(
         .filter(|name| !name.is_empty())
         .map(ToString::to_string)
         .unwrap_or_else(|| {
-            if server == CODEX_APPS_MCP_SERVER_NAME {
+            if is_host_owned_codex_apps_server {
                 "this app".to_string()
             } else {
                 format!("the {server} MCP server")
@@ -1490,6 +1549,7 @@ fn build_mcp_tool_approval_elicitation_request(
         request: McpServerElicitationRequest::Form {
             meta: build_mcp_tool_approval_elicitation_meta(
                 request.server,
+                request.is_host_owned_codex_apps_server,
                 request.metadata,
                 request.tool_params,
                 request.tool_params_display,
@@ -1507,7 +1567,8 @@ fn build_mcp_tool_approval_elicitation_request(
 }
 
 fn build_mcp_tool_approval_elicitation_meta(
-    server: &str,
+    _server: &str,
+    is_host_owned_codex_apps_server: bool,
     metadata: Option<&McpToolApprovalMetadata>,
     tool_params: Option<&serde_json::Value>,
     tool_params_display: Option<&[RenderedMcpToolApprovalParam]>,
@@ -1558,7 +1619,7 @@ fn build_mcp_tool_approval_elicitation_meta(
                 serde_json::Value::String(tool_description.clone()),
             );
         }
-        if server == CODEX_APPS_MCP_SERVER_NAME
+        if is_host_owned_codex_apps_server
             && (metadata.connector_id.is_some()
                 || metadata.connector_name.is_some()
                 || metadata.connector_description.is_some())
@@ -1786,7 +1847,7 @@ async fn maybe_persist_mcp_tool_approval(
 ) {
     let tool_name = key.tool_name.clone();
 
-    let persist_result = if key.server == CODEX_APPS_MCP_SERVER_NAME {
+    let persist_result = if key.is_host_owned_codex_apps_server {
         let Some(connector_id) = key.connector_id.clone() else {
             remember_mcp_tool_approval(sess, key).await;
             return;

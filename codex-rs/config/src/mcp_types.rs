@@ -36,6 +36,14 @@ pub enum McpServerDisabledReason {
     Requirements { source: RequirementSource },
 }
 
+/// Runtime-only origin marker for an MCP server instance.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum McpServerProvenance {
+    #[default]
+    UserConfigured,
+    HostOwnedCodexApps,
+}
+
 impl fmt::Display for McpServerDisabledReason {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
@@ -138,6 +146,10 @@ pub struct McpServerConfig {
     /// Reason this server was disabled after applying requirements.
     #[serde(skip)]
     pub disabled_reason: Option<McpServerDisabledReason>,
+
+    /// Internal provenance marker for server configs created by Codex itself.
+    #[serde(skip)]
+    pub provenance: McpServerProvenance,
 
     /// Startup timeout in seconds for initializing MCP server & initially listing tools.
     #[serde(
@@ -334,6 +346,7 @@ impl TryFrom<RawMcpServerConfig> for McpServerConfig {
             required: required.unwrap_or_default(),
             supports_parallel_tool_calls: supports_parallel_tool_calls.unwrap_or_default(),
             disabled_reason: None,
+            provenance: McpServerProvenance::UserConfigured,
             default_tools_approval_mode,
             enabled_tools,
             disabled_tools,

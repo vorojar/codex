@@ -1,4 +1,5 @@
 use super::*;
+use crate::CODEX_APPS_MCP_SERVER_NAME;
 use crate::codex_apps::CODEX_APPS_TOOLS_CACHE_SCHEMA_VERSION;
 use crate::codex_apps::CodexAppsToolsCacheContext;
 use crate::codex_apps::load_startup_cached_codex_apps_tools_snapshot;
@@ -17,6 +18,7 @@ use crate::tools::filter_tools;
 use crate::tools::qualify_tools;
 use crate::tools::tool_with_model_visible_input_schema;
 use codex_config::Constrained;
+use codex_config::McpServerProvenance;
 use codex_protocol::ToolName;
 use codex_protocol::models::PermissionProfile;
 use codex_protocol::protocol::GranularApprovalConfig;
@@ -39,6 +41,7 @@ fn create_test_tool(server_name: &str, tool_name: &str) -> ToolInfo {
     let tool_namespace = format!("mcp__{server_name}__");
     ToolInfo {
         server_name: server_name.to_string(),
+        server_provenance: Default::default(),
         callable_name: tool_name.to_string(),
         callable_namespace: tool_namespace,
         server_instructions: None,
@@ -632,7 +635,7 @@ fn startup_cached_codex_apps_tools_loads_from_disk_cache() {
     write_cached_codex_apps_tools(&cache_context, &cached_tools);
 
     let startup_snapshot = load_startup_cached_codex_apps_tools_snapshot(
-        CODEX_APPS_MCP_SERVER_NAME,
+        /*is_host_owned_codex_apps_server*/ true,
         Some(&cache_context),
     );
     let startup_tools = startup_snapshot.expect("expected startup snapshot to load from cache");
@@ -663,6 +666,7 @@ async fn list_all_tools_uses_startup_snapshot_while_client_is_pending() {
             startup_complete: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             tool_plugin_provenance: Arc::new(ToolPluginProvenance::default()),
             cancel_token: CancellationToken::new(),
+            provenance: McpServerProvenance::HostOwnedCodexApps,
         },
     );
 
@@ -692,6 +696,7 @@ async fn resolve_tool_info_accepts_canonical_namespaced_tool_names() {
             startup_complete: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             tool_plugin_provenance: Arc::new(ToolPluginProvenance::default()),
             cancel_token: CancellationToken::new(),
+            provenance: Default::default(),
         },
     );
 
@@ -729,6 +734,7 @@ async fn list_all_tools_blocks_while_client_is_pending_without_startup_snapshot(
             startup_complete: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             tool_plugin_provenance: Arc::new(ToolPluginProvenance::default()),
             cancel_token: CancellationToken::new(),
+            provenance: McpServerProvenance::HostOwnedCodexApps,
         },
     );
 
@@ -754,6 +760,7 @@ async fn list_all_tools_does_not_block_when_startup_snapshot_cache_hit_is_empty(
             startup_complete: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             tool_plugin_provenance: Arc::new(ToolPluginProvenance::default()),
             cancel_token: CancellationToken::new(),
+            provenance: McpServerProvenance::HostOwnedCodexApps,
         },
     );
 
@@ -789,6 +796,7 @@ async fn list_all_tools_uses_startup_snapshot_when_client_startup_fails() {
             startup_complete,
             tool_plugin_provenance: Arc::new(ToolPluginProvenance::default()),
             cancel_token: CancellationToken::new(),
+            provenance: McpServerProvenance::HostOwnedCodexApps,
         },
     );
 
@@ -798,6 +806,42 @@ async fn list_all_tools_uses_startup_snapshot_when_client_startup_fails() {
         .expect("tool from startup cache");
     assert_eq!(tool.server_name, CODEX_APPS_MCP_SERVER_NAME);
     assert_eq!(tool.callable_name, "calendar_create_event");
+}
+
+#[tokio::test]
+async fn host_owned_codex_apps_server_is_identified_by_client_provenance() {
+    let pending_client = futures::future::pending::<Result<ManagedClient, StartupOutcomeError>>()
+        .boxed()
+        .shared();
+    let approval_policy = Constrained::allow_any(AskForApproval::OnFailure);
+    let permission_profile = Constrained::allow_any(PermissionProfile::default());
+    let mut manager =
+        McpConnectionManager::new_uninitialized(&approval_policy, &permission_profile);
+    manager.clients.insert(
+        CODEX_APPS_MCP_SERVER_NAME.to_string(),
+        AsyncManagedClient {
+            client: pending_client.clone(),
+            startup_snapshot: None,
+            startup_complete: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            tool_plugin_provenance: Arc::new(ToolPluginProvenance::default()),
+            cancel_token: CancellationToken::new(),
+            provenance: McpServerProvenance::UserConfigured,
+        },
+    );
+    manager.clients.insert(
+        "host_apps".to_string(),
+        AsyncManagedClient {
+            client: pending_client,
+            startup_snapshot: None,
+            startup_complete: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            tool_plugin_provenance: Arc::new(ToolPluginProvenance::default()),
+            cancel_token: CancellationToken::new(),
+            provenance: McpServerProvenance::HostOwnedCodexApps,
+        },
+    );
+
+    assert!(!manager.is_host_owned_codex_apps_server(CODEX_APPS_MCP_SERVER_NAME));
+    assert!(manager.is_host_owned_codex_apps_server("host_apps"));
 }
 
 #[test]
@@ -832,6 +876,7 @@ fn mcp_init_error_display_prompts_for_github_pat() {
             required: false,
             supports_parallel_tool_calls: false,
             disabled_reason: None,
+            provenance: Default::default(),
             startup_timeout_sec: None,
             tool_timeout_sec: None,
             default_tools_approval_mode: None,
@@ -884,6 +929,7 @@ fn mcp_init_error_display_reports_generic_errors() {
             required: false,
             supports_parallel_tool_calls: false,
             disabled_reason: None,
+            provenance: Default::default(),
             startup_timeout_sec: None,
             tool_timeout_sec: None,
             default_tools_approval_mode: None,

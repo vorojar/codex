@@ -518,7 +518,7 @@ pub(crate) fn accessible_connectors_from_mcp_tools(
     // ToolInfo already carries plugin provenance, so app-level plugin sources
     // can be derived here instead of requiring a separate enrichment pass.
     let tools = mcp_tools.values().filter_map(|tool| {
-        if tool.server_name != CODEX_APPS_MCP_SERVER_NAME {
+        if !tool.is_host_owned_codex_apps() {
             return None;
         }
         let connector_id = tool.connector_id.as_deref()?;
@@ -588,7 +588,7 @@ pub(crate) fn app_tool_policy(
 }
 
 pub(crate) fn codex_app_tool_is_enabled(config: &Config, tool_info: &ToolInfo) -> bool {
-    if tool_info.server_name != CODEX_APPS_MCP_SERVER_NAME {
+    if !tool_info.is_host_owned_codex_apps() {
         return true;
     }
 

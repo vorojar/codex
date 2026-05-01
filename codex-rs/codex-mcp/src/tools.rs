@@ -10,6 +10,7 @@ use std::collections::HashSet;
 use std::sync::Arc;
 
 use codex_config::McpServerConfig;
+use codex_config::McpServerProvenance;
 use codex_protocol::ToolName;
 use rmcp::model::Tool;
 use serde::Deserialize;
@@ -29,6 +30,9 @@ pub(crate) const MCP_TOOLS_CACHE_WRITE_DURATION_METRIC: &str =
 pub struct ToolInfo {
     /// Raw MCP server name used for routing the tool call.
     pub server_name: String,
+    /// Runtime-only provenance for the server that exposed this tool.
+    #[serde(skip)]
+    pub server_provenance: McpServerProvenance,
     /// Model-visible tool name used in Responses API tool declarations.
     #[serde(rename = "tool_name", alias = "callable_name")]
     pub callable_name: String,
@@ -50,6 +54,10 @@ pub struct ToolInfo {
 impl ToolInfo {
     pub fn canonical_tool_name(&self) -> ToolName {
         ToolName::namespaced(self.callable_namespace.clone(), self.callable_name.clone())
+    }
+
+    pub fn is_host_owned_codex_apps(&self) -> bool {
+        self.server_provenance == McpServerProvenance::HostOwnedCodexApps
     }
 }
 

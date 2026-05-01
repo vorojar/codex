@@ -19,6 +19,7 @@ use std::time::Duration;
 use async_channel::unbounded;
 use codex_config::Constrained;
 use codex_config::McpServerConfig;
+use codex_config::McpServerProvenance;
 use codex_config::McpServerTransportConfig;
 use codex_config::types::AppToolApproval;
 use codex_config::types::ApprovalsReviewer;
@@ -429,6 +430,7 @@ fn codex_apps_mcp_server_config(config: &McpConfig) -> McpServerConfig {
         required: false,
         supports_parallel_tool_calls: false,
         disabled_reason: None,
+        provenance: McpServerProvenance::HostOwnedCodexApps,
         startup_timeout_sec: Some(Duration::from_secs(30)),
         tool_timeout_sec: None,
         default_tools_approval_mode: None,

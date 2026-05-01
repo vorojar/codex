@@ -2,6 +2,7 @@ use std::collections::HashMap;
 
 use anyhow::Result;
 use codex_config::McpServerConfig;
+use codex_config::McpServerProvenance;
 use codex_config::McpServerTransportConfig;
 use codex_config::types::OAuthCredentialsStoreMode;
 use codex_login::CodexAuth;
@@ -11,8 +12,6 @@ use codex_rmcp_client::determine_streamable_http_auth_status;
 use codex_rmcp_client::discover_streamable_http_oauth;
 use futures::future::join_all;
 use tracing::warn;
-
-use super::CODEX_APPS_MCP_SERVER_NAME;
 
 #[derive(Debug, Clone)]
 pub struct McpOAuthLoginConfig {
@@ -136,7 +135,7 @@ where
     let futures = servers.into_iter().map(|(name, config)| {
         let name = name.clone();
         let config = config.clone();
-        let has_runtime_auth = name == CODEX_APPS_MCP_SERVER_NAME
+        let has_runtime_auth = config.provenance == McpServerProvenance::HostOwnedCodexApps
             && auth.is_some_and(CodexAuth::uses_codex_backend)
             && matches!(
                 &config.transport,

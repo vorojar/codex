@@ -15,6 +15,7 @@ use codex_config::types::McpServerConfig;
 use codex_config::types::McpServerToolConfig;
 use codex_hooks::Hooks;
 use codex_hooks::HooksConfig;
+use codex_mcp::CODEX_APPS_MCP_SERVER_NAME;
 use codex_model_provider::create_model_provider;
 use codex_protocol::models::PermissionProfile;
 use codex_protocol::protocol::AskForApproval;
@@ -218,11 +219,11 @@ fn openai_file_params_are_only_honored_for_codex_apps() {
     let meta = meta.as_object();
 
     assert_eq!(
-        openai_file_input_params_for_server(CODEX_APPS_MCP_SERVER_NAME, meta),
+        openai_file_input_params_for_server(/*is_host_owned_codex_apps_server*/ true, meta),
         Some(vec!["file".to_string()])
     );
     assert_eq!(
-        openai_file_input_params_for_server("minimaltest", meta),
+        openai_file_input_params_for_server(/*is_host_owned_codex_apps_server*/ false, meta),
         None
     );
 }
@@ -482,6 +483,7 @@ async fn approval_elicitation_request_uses_message_override_and_preserves_tool_p
     let question = build_mcp_tool_approval_question(
         "q".to_string(),
         CODEX_APPS_MCP_SERVER_NAME,
+        /*is_host_owned_codex_apps_server*/ true,
         "create_event",
         Some("Calendar"),
         prompt_options(
@@ -495,6 +497,7 @@ async fn approval_elicitation_request_uses_message_override_and_preserves_tool_p
         &turn_context,
         McpToolApprovalElicitationRequest {
             server: CODEX_APPS_MCP_SERVER_NAME,
+            is_host_owned_codex_apps_server: true,
             metadata: Some(&approval_metadata(
                 Some("calendar"),
                 Some("Calendar"),
@@ -579,6 +582,7 @@ fn custom_mcp_tool_question_mentions_server_name() {
     let question = build_mcp_tool_approval_question(
         "q".to_string(),
         "custom_server",
+        /*is_host_owned_codex_apps_server*/ false,
         "run_action",
         /*connector_name*/ None,
         prompt_options(
@@ -607,6 +611,7 @@ fn codex_apps_tool_question_uses_fallback_app_label() {
     let question = build_mcp_tool_approval_question(
         "q".to_string(),
         CODEX_APPS_MCP_SERVER_NAME,
+        /*is_host_owned_codex_apps_server*/ true,
         "run_action",
         /*connector_name*/ None,
         prompt_options(
@@ -622,10 +627,31 @@ fn codex_apps_tool_question_uses_fallback_app_label() {
 }
 
 #[test]
+fn spoofed_codex_apps_server_name_uses_custom_server_fallback() {
+    let question = build_mcp_tool_approval_question(
+        "q".to_string(),
+        CODEX_APPS_MCP_SERVER_NAME,
+        /*is_host_owned_codex_apps_server*/ false,
+        "run_action",
+        /*connector_name*/ None,
+        prompt_options(
+            /*allow_session_remember*/ true, /*allow_persistent_approval*/ true,
+        ),
+        /*question_override*/ None,
+    );
+
+    assert_eq!(
+        question.question,
+        "Allow the codex_apps MCP server to run tool \"run_action\"?"
+    );
+}
+
+#[test]
 fn trusted_codex_apps_tool_question_offers_always_allow() {
     let question = build_mcp_tool_approval_question(
         "q".to_string(),
         CODEX_APPS_MCP_SERVER_NAME,
+        /*is_host_owned_codex_apps_server*/ true,
         "run_action",
         Some("Calendar"),
         prompt_options(
@@ -661,6 +687,7 @@ fn trusted_codex_apps_tool_question_offers_always_allow() {
 fn codex_apps_tool_question_without_elicitation_omits_always_allow() {
     let session_key = McpToolApprovalKey {
         server: CODEX_APPS_MCP_SERVER_NAME.to_string(),
+        is_host_owned_codex_apps_server: true,
         connector_id: Some("calendar".to_string()),
         tool_name: "run_action".to_string(),
     };
@@ -668,6 +695,7 @@ fn codex_apps_tool_question_without_elicitation_omits_always_allow() {
     let question = build_mcp_tool_approval_question(
         "q".to_string(),
         CODEX_APPS_MCP_SERVER_NAME,
+        /*is_host_owned_codex_apps_server*/ true,
         "run_action",
         Some("Calendar"),
         mcp_tool_approval_prompt_options(
@@ -698,6 +726,7 @@ fn custom_mcp_tool_question_offers_session_remember_and_always_allow() {
     let question = build_mcp_tool_approval_question(
         "q".to_string(),
         "custom_server",
+        /*is_host_owned_codex_apps_server*/ false,
         "run_action",
         /*connector_name*/ None,
         prompt_options(
@@ -731,19 +760,26 @@ fn custom_servers_support_session_and_persistent_approval() {
     };
     let expected = McpToolApprovalKey {
         server: "custom_server".to_string(),
+        is_host_owned_codex_apps_server: false,
         connector_id: None,
         tool_name: "run_action".to_string(),
     };
 
     assert_eq!(
-        session_mcp_tool_approval_key(&invocation, /*metadata*/ None, AppToolApproval::Auto),
+        session_mcp_tool_approval_key(
+            &invocation,
+            /*metadata*/ None,
+            AppToolApproval::Auto,
+            /*is_host_owned_codex_apps_server*/ false,
+        ),
         Some(expected.clone())
     );
     assert_eq!(
         persistent_mcp_tool_approval_key(
             &invocation,
             /*metadata*/ None,
-            AppToolApproval::Auto
+            AppToolApproval::Auto,
+            /*is_host_owned_codex_apps_server*/ false,
         ),
         Some(expected)
     );
@@ -765,16 +801,27 @@ fn codex_apps_connectors_support_persistent_approval() {
     );
     let expected = McpToolApprovalKey {
         server: CODEX_APPS_MCP_SERVER_NAME.to_string(),
+        is_host_owned_codex_apps_server: true,
         connector_id: Some("calendar".to_string()),
         tool_name: "calendar/list_events".to_string(),
     };
 
     assert_eq!(
-        session_mcp_tool_approval_key(&invocation, Some(&metadata), AppToolApproval::Auto),
+        session_mcp_tool_approval_key(
+            &invocation,
+            Some(&metadata),
+            AppToolApproval::Auto,
+            /*is_host_owned_codex_apps_server*/ true,
+        ),
         Some(expected.clone())
     );
     assert_eq!(
-        persistent_mcp_tool_approval_key(&invocation, Some(&metadata), AppToolApproval::Auto),
+        persistent_mcp_tool_approval_key(
+            &invocation,
+            Some(&metadata),
+            AppToolApproval::Auto,
+            /*is_host_owned_codex_apps_server*/ true,
+        ),
         Some(expected)
     );
 }
@@ -917,7 +964,7 @@ async fn mcp_tool_call_request_meta_includes_turn_metadata_for_custom_server() {
 
     let meta = build_mcp_tool_call_request_meta(
         &turn_context,
-        "custom_server",
+        /*is_host_owned_codex_apps_server*/ false,
         "call-custom",
         /*metadata*/ None,
     )
@@ -940,7 +987,7 @@ async fn mcp_tool_call_request_meta_includes_turn_started_at_unix_ms() {
 
     let meta = build_mcp_tool_call_request_meta(
         &turn_context,
-        "custom_server",
+        /*is_host_owned_codex_apps_server*/ false,
         "call-custom",
         /*metadata*/ None,
     )
@@ -991,7 +1038,7 @@ async fn codex_apps_tool_call_request_meta_includes_turn_metadata_and_codex_apps
     assert_eq!(
         build_mcp_tool_call_request_meta(
             &turn_context,
-            CODEX_APPS_MCP_SERVER_NAME,
+            /*is_host_owned_codex_apps_server*/ true,
             "call_abc123xyz789",
             Some(&metadata),
         ),
@@ -1021,7 +1068,7 @@ async fn codex_apps_tool_call_request_meta_includes_call_id_without_existing_cod
     assert_eq!(
         build_mcp_tool_call_request_meta(
             &turn_context,
-            CODEX_APPS_MCP_SERVER_NAME,
+            /*is_host_owned_codex_apps_server*/ true,
             "call_abc123xyz789",
             /*metadata*/ None,
         ),
@@ -1089,6 +1136,7 @@ fn approval_elicitation_meta_marks_tool_approvals() {
     assert_eq!(
         build_mcp_tool_approval_elicitation_meta(
             "custom_server",
+            /*is_host_owned_codex_apps_server*/ false,
             /*metadata*/ None,
             /*tool_params*/ None,
             /*tool_params_display*/ None,
@@ -1107,6 +1155,7 @@ fn approval_elicitation_meta_merges_session_and_always_persist_for_custom_server
     assert_eq!(
         build_mcp_tool_approval_elicitation_meta(
             "custom_server",
+            /*is_host_owned_codex_apps_server*/ false,
             Some(&approval_metadata(
                 /*connector_id*/ None,
                 /*connector_name*/ None,
@@ -1319,6 +1368,7 @@ fn approval_elicitation_meta_includes_connector_source_for_codex_apps() {
     assert_eq!(
         build_mcp_tool_approval_elicitation_meta(
             CODEX_APPS_MCP_SERVER_NAME,
+            /*is_host_owned_codex_apps_server*/ true,
             Some(&approval_metadata(
                 Some("calendar"),
                 Some("Calendar"),
@@ -1354,6 +1404,7 @@ fn approval_elicitation_meta_merges_session_and_always_persist_with_connector_so
     assert_eq!(
         build_mcp_tool_approval_elicitation_meta(
             CODEX_APPS_MCP_SERVER_NAME,
+            /*is_host_owned_codex_apps_server*/ true,
             Some(&approval_metadata(
                 Some("calendar"),
                 Some("Calendar"),
@@ -1696,6 +1747,7 @@ async fn maybe_persist_mcp_tool_approval_reloads_session_config() {
     std::fs::create_dir_all(&codex_home).expect("create codex home");
     let key = McpToolApprovalKey {
         server: CODEX_APPS_MCP_SERVER_NAME.to_string(),
+        is_host_owned_codex_apps_server: true,
         connector_id: Some("calendar".to_string()),
         tool_name: "calendar/list_events".to_string(),
     };
@@ -1740,6 +1792,7 @@ async fn maybe_persist_mcp_tool_approval_reloads_session_config_for_custom_serve
     .expect("seed config");
     let key = McpToolApprovalKey {
         server: "docs".to_string(),
+        is_host_owned_codex_apps_server: false,
         connector_id: None,
         tool_name: "search".to_string(),
     };
@@ -1795,6 +1848,7 @@ enabled = true
     session.services.plugins_manager.clear_cache();
     let key = McpToolApprovalKey {
         server: "sample".to_string(),
+        is_host_owned_codex_apps_server: false,
         connector_id: None,
         tool_name: "search".to_string(),
     };
@@ -1851,6 +1905,7 @@ async fn maybe_persist_mcp_tool_approval_writes_project_config_for_project_serve
     turn_context.config = Arc::new(config);
     let key = McpToolApprovalKey {
         server: "docs".to_string(),
+        is_host_owned_codex_apps_server: false,
         connector_id: None,
         tool_name: "search".to_string(),
     };
@@ -2161,9 +2216,13 @@ async fn permission_request_hook_runs_after_remembered_mcp_approval() {
         codex_apps_meta: None,
         openai_file_input_params: None,
     };
-    let remembered_key =
-        session_mcp_tool_approval_key(&invocation, Some(&metadata), AppToolApproval::Auto)
-            .expect("memory MCP tool should support session approval");
+    let remembered_key = session_mcp_tool_approval_key(
+        &invocation,
+        Some(&metadata),
+        AppToolApproval::Auto,
+        /*is_host_owned_codex_apps_server*/ false,
+    )
+    .expect("memory MCP tool should support session approval");
     remember_mcp_tool_approval(&session, remembered_key).await;
 
     let session = Arc::new(session);

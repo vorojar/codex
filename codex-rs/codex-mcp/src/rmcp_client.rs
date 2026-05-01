@@ -26,7 +26,6 @@ use crate::codex_apps::normalize_codex_apps_callable_namespace;
 use crate::codex_apps::normalize_codex_apps_tool_title;
 use crate::codex_apps::write_cached_codex_apps_tools_if_needed;
 use crate::elicitation::ElicitationRequestManager;
-use crate::mcp::CODEX_APPS_MCP_SERVER_NAME;
 use crate::mcp::ToolPluginProvenance;
 use crate::runtime::McpRuntimeEnvironment;
 use crate::runtime::emit_duration;
@@ -41,6 +40,7 @@ use codex_api::SharedAuthProvider;
 use codex_async_utils::CancelErr;
 use codex_async_utils::OrCancelExt;
 use codex_config::McpServerConfig;
+use codex_config::McpServerProvenance;
 use codex_config::McpServerTransportConfig;
 use codex_config::types::OAuthCredentialsStoreMode;
 use codex_exec_server::HttpClient;
@@ -126,6 +126,7 @@ pub(crate) struct AsyncManagedClient {
     pub(crate) startup_complete: Arc<AtomicBool>,
     pub(crate) tool_plugin_provenance: Arc<ToolPluginProvenance>,
     pub(crate) cancel_token: CancellationToken,
+    pub(crate) provenance: McpServerProvenance,
 }
 
 impl AsyncManagedClient {
@@ -143,10 +144,12 @@ impl AsyncManagedClient {
         tool_plugin_provenance: Arc<ToolPluginProvenance>,
         runtime_environment: McpRuntimeEnvironment,
         runtime_auth_provider: Option<SharedAuthProvider>,
+        provenance: McpServerProvenance,
     ) -> Self {
         let tool_filter = ToolFilter::from_config(&config);
+        let is_host_owned_codex_apps_server = provenance == McpServerProvenance::HostOwnedCodexApps;
         let startup_snapshot = load_startup_cached_codex_apps_tools_snapshot(
-            &server_name,
+            is_host_owned_codex_apps_server,
             codex_apps_tools_cache_context.as_ref(),
         )
         .map(|tools| filter_tools(tools, &tool_filter));
@@ -182,6 +185,7 @@ impl AsyncManagedClient {
                         tx_event,
                         elicitation_requests,
                         codex_apps_tools_cache_context,
+                        provenance,
                     },
                 )
                 .await
@@ -210,6 +214,7 @@ impl AsyncManagedClient {
             startup_complete,
             tool_plugin_provenance,
             cancel_token,
+            provenance,
         }
     }
 
@@ -239,7 +244,8 @@ impl AsyncManagedClient {
         let annotate_tools = |tools: Vec<ToolInfo>| {
             let mut tools = tools;
             for tool in &mut tools {
-                if tool.server_name == CODEX_APPS_MCP_SERVER_NAME {
+                tool.server_provenance = self.provenance;
+                if tool.is_host_owned_codex_apps() {
                     tool.tool = tool_with_model_visible_input_schema(&tool.tool);
                 }
 
@@ -333,10 +339,13 @@ pub(crate) fn elicitation_capability_for_server(
 
 pub(crate) async fn list_tools_for_client_uncached(
     server_name: &str,
+    server_provenance: McpServerProvenance,
     client: &Arc<RmcpClient>,
     timeout: Option<Duration>,
     server_instructions: Option<&str>,
 ) -> Result<Vec<ToolInfo>> {
+    let is_host_owned_codex_apps_server =
+        server_provenance == McpServerProvenance::HostOwnedCodexApps;
     let resp = client
         .list_tools_with_connector_ids(/*params*/ None, timeout)
         .await?;
@@ -347,29 +356,36 @@ pub(crate) async fn list_tools_for_client_uncached(
             let mut tool_def = tool.tool;
             let (connector_id, connector_name, connector_description) =
                 sanitize_tool_connector_metadata(
-                    server_name,
+                    is_host_owned_codex_apps_server,
                     &mut tool_def,
                     tool.connector_id,
                     tool.connector_name,
                     tool.connector_description,
                 );
             let callable_name = normalize_codex_apps_callable_name(
-                server_name,
+                is_host_owned_codex_apps_server,
                 &tool_def.name,
                 connector_id.as_deref(),
                 connector_name.as_deref(),
             );
-            let callable_namespace =
-                normalize_codex_apps_callable_namespace(server_name, connector_name.as_deref());
+            let callable_namespace = normalize_codex_apps_callable_namespace(
+                server_name,
+                is_host_owned_codex_apps_server,
+                connector_name.as_deref(),
+            );
             if let Some(title) = tool_def.title.as_deref() {
-                let normalized_title =
-                    normalize_codex_apps_tool_title(server_name, connector_name.as_deref(), title);
+                let normalized_title = normalize_codex_apps_tool_title(
+                    is_host_owned_codex_apps_server,
+                    connector_name.as_deref(),
+                    title,
+                );
                 if tool_def.title.as_deref() != Some(normalized_title.as_str()) {
                     tool_def.title = Some(normalized_title);
                 }
             }
             ToolInfo {
                 server_name: server_name.to_owned(),
+                server_provenance,
                 callable_name,
                 callable_namespace,
                 server_instructions: server_instructions.map(str::to_string),
@@ -381,20 +397,20 @@ pub(crate) async fn list_tools_for_client_uncached(
             }
         })
         .collect();
-    if server_name == CODEX_APPS_MCP_SERVER_NAME {
+    if is_host_owned_codex_apps_server {
         return Ok(filter_disallowed_codex_apps_tools(tools));
     }
     Ok(tools)
 }
 
 fn sanitize_tool_connector_metadata(
-    server_name: &str,
+    is_host_owned_codex_apps_server: bool,
     tool: &mut RmcpTool,
     connector_id: Option<String>,
     connector_name: Option<String>,
     connector_description: Option<String>,
 ) -> (Option<String>, Option<String>, Option<String>) {
-    if server_name == CODEX_APPS_MCP_SERVER_NAME {
+    if is_host_owned_codex_apps_server {
         return (connector_id, connector_name, connector_description);
     }
 
@@ -462,9 +478,10 @@ async fn start_server_task(
         tx_event,
         elicitation_requests,
         codex_apps_tools_cache_context,
+        provenance,
     } = params;
     let elicitation = elicitation_capability_for_server(&server_name);
-    let params = InitializeRequestParams {
+    let initialize_params = InitializeRequestParams {
         meta: None,
         capabilities: ClientCapabilities {
             experimental: None,
@@ -488,7 +505,7 @@ async fn start_server_task(
     let send_elicitation = elicitation_requests.make_sender(server_name.clone(), tx_event);
 
     let initialize_result = client
-        .initialize(params, startup_timeout, send_elicitation)
+        .initialize(initialize_params, startup_timeout, send_elicitation)
         .await
         .map_err(StartupOutcomeError::from)?;
 
@@ -502,6 +519,7 @@ async fn start_server_task(
     let fetch_start = Instant::now();
     let tools = list_tools_for_client_uncached(
         &server_name,
+        provenance,
         &client,
         startup_timeout,
         initialize_result.instructions.as_deref(),
@@ -514,11 +532,11 @@ async fn start_server_task(
         &[],
     );
     write_cached_codex_apps_tools_if_needed(
-        &server_name,
+        provenance == McpServerProvenance::HostOwnedCodexApps,
         codex_apps_tools_cache_context.as_ref(),
         &tools,
     );
-    if server_name == CODEX_APPS_MCP_SERVER_NAME {
+    if provenance == McpServerProvenance::HostOwnedCodexApps {
         emit_duration(
             MCP_TOOLS_LIST_DURATION_METRIC,
             list_start.elapsed(),
@@ -547,6 +565,7 @@ struct StartServerTaskParams {
     tx_event: Sender<Event>,
     elicitation_requests: ElicitationRequestManager,
     codex_apps_tools_cache_context: Option<CodexAppsToolsCacheContext>,
+    provenance: McpServerProvenance,
 }
 
 async fn make_rmcp_client(
@@ -684,7 +703,7 @@ mod tests {
 
         let (connector_id, connector_name, connector_description) =
             sanitize_tool_connector_metadata(
-                "minimaltest",
+                /*is_host_owned_codex_apps_server*/ false,
                 &mut tool,
                 Some("connector_gmail".to_string()),
                 Some("Gmail".to_string()),
@@ -720,7 +739,7 @@ mod tests {
 
         let (connector_id, connector_name, connector_description) =
             sanitize_tool_connector_metadata(
-                CODEX_APPS_MCP_SERVER_NAME,
+                /*is_host_owned_codex_apps_server*/ true,
                 &mut tool,
                 Some("connector_gmail".to_string()),
                 Some("Gmail".to_string()),

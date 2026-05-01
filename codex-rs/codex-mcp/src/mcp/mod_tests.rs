@@ -229,6 +229,16 @@ fn codex_apps_server_config_uses_legacy_codex_apps_path() {
 }
 
 #[test]
+fn codex_apps_server_config_is_marked_host_owned() {
+    let config = test_mcp_config(PathBuf::from("/tmp"));
+
+    assert_eq!(
+        codex_apps_mcp_server_config(&config).provenance,
+        McpServerProvenance::HostOwnedCodexApps
+    );
+}
+
+#[test]
 fn codex_apps_server_config_uses_configured_apps_mcp_path_override() {
     let mut config = test_mcp_config(PathBuf::from("/tmp"));
     config.apps_mcp_path_override = Some("/custom/mcp".to_string());
@@ -268,6 +278,7 @@ async fn effective_mcp_servers_preserve_user_servers_and_add_codex_apps() {
             required: false,
             supports_parallel_tool_calls: false,
             disabled_reason: None,
+            provenance: Default::default(),
             startup_timeout_sec: None,
             tool_timeout_sec: None,
             default_tools_approval_mode: None,
@@ -292,6 +303,7 @@ async fn effective_mcp_servers_preserve_user_servers_and_add_codex_apps() {
             required: false,
             supports_parallel_tool_calls: false,
             disabled_reason: None,
+            provenance: Default::default(),
             startup_timeout_sec: None,
             tool_timeout_sec: None,
             default_tools_approval_mode: None,
