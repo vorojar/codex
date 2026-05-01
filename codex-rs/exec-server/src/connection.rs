@@ -16,6 +16,13 @@ use tokio::io::BufWriter;
 pub(crate) const CHANNEL_CAPACITY: usize = 128;
 
 pub(crate) type JsonRpcConnectionLifetimeGuard = Box<dyn Send>;
+pub(crate) type JsonRpcConnectionParts = (
+    mpsc::Sender<JSONRPCMessage>,
+    mpsc::Receiver<JsonRpcConnectionEvent>,
+    watch::Receiver<bool>,
+    Vec<tokio::task::JoinHandle<()>>,
+    Option<JsonRpcConnectionLifetimeGuard>,
+);
 
 #[derive(Debug)]
 pub(crate) enum JsonRpcConnectionEvent {
@@ -264,15 +271,7 @@ impl JsonRpcConnection {
         self
     }
 
-    pub(crate) fn into_parts(
-        self,
-    ) -> (
-        mpsc::Sender<JSONRPCMessage>,
-        mpsc::Receiver<JsonRpcConnectionEvent>,
-        watch::Receiver<bool>,
-        Vec<tokio::task::JoinHandle<()>>,
-        Option<JsonRpcConnectionLifetimeGuard>,
-    ) {
+    pub(crate) fn into_parts(self) -> JsonRpcConnectionParts {
         (
             self.outgoing_tx,
             self.incoming_rx,

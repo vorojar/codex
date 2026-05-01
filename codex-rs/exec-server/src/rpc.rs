@@ -2,6 +2,7 @@ use std::collections::HashMap;
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
+use std::sync::Mutex as StdMutex;
 use std::sync::atomic::AtomicI64;
 use std::sync::atomic::Ordering;
 
@@ -230,7 +231,7 @@ pub(crate) struct RpcClient {
     disconnected_rx: watch::Receiver<bool>,
     next_request_id: AtomicI64,
     transport_tasks: Vec<JoinHandle<()>>,
-    _transport_lifetime_guard: Option<JsonRpcConnectionLifetimeGuard>,
+    _transport_lifetime_guard: Option<StdMutex<JsonRpcConnectionLifetimeGuard>>,
     reader_task: JoinHandle<()>,
 }
 
@@ -278,7 +279,7 @@ impl RpcClient {
                 disconnected_rx,
                 next_request_id: AtomicI64::new(1),
                 transport_tasks,
-                _transport_lifetime_guard: lifetime_guard,
+                _transport_lifetime_guard: lifetime_guard.map(StdMutex::new),
                 reader_task,
             },
             event_rx,
