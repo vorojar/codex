@@ -200,11 +200,9 @@ async fn exec_server_reports_malformed_websocket_json_and_keeps_running() -> any
 }
 
 fn http_url(websocket_url: &str, path: &str) -> String {
-    format!(
-        "http://{}{}",
-        websocket_url
-            .strip_prefix("ws://")
-            .expect("exec-server harness should expose a ws:// URL"),
-        path
-    )
+    let http_authority = match websocket_url.strip_prefix("ws://") {
+        Some(http_authority) => http_authority,
+        None => panic!("exec-server harness should expose a ws:// URL: {websocket_url}"),
+    };
+    format!("http://{http_authority}{path}",)
 }

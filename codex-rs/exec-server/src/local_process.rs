@@ -106,11 +106,14 @@ impl Default for LocalProcess {
         let (outgoing_tx, mut outgoing_rx) =
             mpsc::channel::<RpcServerOutboundMessage>(NOTIFICATION_CHANNEL_CAPACITY);
         tokio::spawn(async move { while outgoing_rx.recv().await.is_some() {} });
-        let runtime_paths = crate::ExecServerRuntimePaths::new(
-            std::env::current_exe().expect("current executable should resolve"),
-            None,
-        )
-        .expect("current executable should be absolute");
+        let current_exe = match std::env::current_exe() {
+            Ok(current_exe) => current_exe,
+            Err(err) => panic!("current executable should resolve: {err}"),
+        };
+        let runtime_paths = match crate::ExecServerRuntimePaths::new(current_exe, None) {
+            Ok(runtime_paths) => runtime_paths,
+            Err(err) => panic!("current executable should be absolute: {err}"),
+        };
         Self::new(
             RpcNotificationSender::new(outgoing_tx),
             ExecServerStatusState::new(runtime_paths),
