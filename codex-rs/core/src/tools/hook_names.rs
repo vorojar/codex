@@ -29,22 +29,24 @@ impl HookToolName {
 
     /// Builds the canonical hook-facing identity for dynamic tools.
     ///
-    /// Plain dynamic tools keep their original name. Namespaced dynamic tools
-    /// use `dynamic__namespace__tool` so hooks can target the dynamic-tool
-    /// surface without colliding with plain Codex tools or MCP names.
+    /// Dynamic tools always use `dynamic__namespace__tool` so hooks can target
+    /// the dynamic-tool surface without colliding with plain Codex tools or
+    /// MCP names. Unnamespaced tools are assigned to the synthetic `default`
+    /// namespace for hook identity purposes.
     ///
     /// Each segment is escaped independently to keep the flattened form
     /// unambiguous even when namespaces or tool names contain separator-like
     /// substrings or punctuation.
     pub(crate) fn for_dynamic_tool(tool_name: &ToolName) -> Self {
-        match tool_name.namespace.as_deref() {
-            Some(namespace) => Self::new(format!(
-                "dynamic__{}__{}",
-                encode_dynamic_segment(namespace),
-                encode_dynamic_segment(&tool_name.name),
-            )),
-            None => Self::new(tool_name.name.clone()),
-        }
+        let namespace = tool_name
+            .namespace
+            .as_deref()
+            .unwrap_or(DEFAULT_DYNAMIC_HOOK_NAMESPACE);
+        Self::new(format!(
+            "{DYNAMIC_HOOK_PREFIX}{}__{}",
+            encode_dynamic_segment(namespace),
+            encode_dynamic_segment(&tool_name.name),
+        ))
     }
 
     /// Builds the canonical hook-facing identity for MCP tools.
@@ -92,7 +94,7 @@ fn encode_dynamic_segment(segment: &str) -> String {
         if should_preserve_dynamic_byte(bytes, index, byte) {
             encoded.push(char::from(byte));
         } else {
-            encoded.push('Z');
+            encoded.push('%');
             encoded.push(char::from(HEX_DIGITS[usize::from(byte >> 4)]));
             encoded.push(char::from(HEX_DIGITS[usize::from(byte & 0x0F)]));
         }
@@ -103,17 +105,21 @@ fn encode_dynamic_segment(segment: &str) -> String {
 
 fn should_preserve_dynamic_byte(bytes: &[u8], index: usize, byte: u8) -> bool {
     match byte {
-        b'a'..=b'z' | b'A'..=b'Y' | b'0'..=b'9' => true,
+        b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' => true,
         b'_' => {
             index > 0
                 && index + 1 < bytes.len()
                 && bytes[index - 1].is_ascii_alphanumeric()
                 && bytes[index + 1].is_ascii_alphanumeric()
+                && bytes[index - 1] != b'_'
+                && bytes[index + 1] != b'_'
         }
         _ => false,
     }
 }
 
+const DYNAMIC_HOOK_PREFIX: &str = "dynamic__";
+const DEFAULT_DYNAMIC_HOOK_NAMESPACE: &str = "default";
 const HEX_DIGITS: &[u8; 16] = b"0123456789ABCDEF";
 
 #[cfg(test)]
@@ -123,10 +129,10 @@ mod tests {
     use pretty_assertions::assert_eq;
 
     #[test]
-    fn for_dynamic_tool_keeps_plain_tool_names() {
+    fn for_dynamic_tool_assigns_default_namespace_to_plain_tool_names() {
         assert_eq!(
             HookToolName::for_dynamic_tool(&ToolName::plain("tool_search")),
-            HookToolName::new("tool_search"),
+            HookToolName::new("dynamic__default__tool_search"),
         );
     }
 
@@ -154,7 +160,7 @@ mod tests {
             HookToolName::for_dynamic_tool(
                 &ToolName::namespaced("mcp__filesystem__", "read_file",)
             ),
-            HookToolName::new("dynamic__mcpZ5FZ5FfilesystemZ5FZ5F__read_file"),
+            HookToolName::new("dynamic__mcp%5F%5Ffilesystem%5F%5F__read_file"),
         );
     }
 
@@ -163,8 +169,8 @@ mod tests {
         let first = HookToolName::for_dynamic_tool(&ToolName::namespaced("foo__bar", "baz"));
         let second = HookToolName::for_dynamic_tool(&ToolName::namespaced("foo", "bar__baz"));
 
-        assert_eq!(first, HookToolName::new("dynamic__fooZ5FZ5Fbar__baz"));
-        assert_eq!(second, HookToolName::new("dynamic__foo__barZ5FZ5Fbaz"));
+        assert_eq!(first, HookToolName::new("dynamic__foo%5F%5Fbar__baz"));
+        assert_eq!(second, HookToolName::new("dynamic__foo__bar%5F%5Fbaz"));
         assert_ne!(first, second);
     }
 
@@ -172,7 +178,23 @@ mod tests {
     fn for_dynamic_tool_escapes_punctuation_and_edge_underscores() {
         assert_eq!(
             HookToolName::for_dynamic_tool(&ToolName::namespaced("_google-drive", "update.file_",)),
-            HookToolName::new("dynamic__Z5FgoogleZ2Ddrive__updateZ2EfileZ5F"),
+            HookToolName::new("dynamic__%5Fgoogle%2Ddrive__update%2Efile%5F"),
+        );
+    }
+
+    #[test]
+    fn for_dynamic_tool_keeps_single_internal_underscores() {
+        assert_eq!(
+            HookToolName::for_dynamic_tool(&ToolName::namespaced("codex_app", "automation_update")),
+            HookToolName::new("dynamic__codex_app__automation_update"),
+        );
+    }
+
+    #[test]
+    fn for_dynamic_tool_percent_encodes_utf8_bytes() {
+        assert_eq!(
+            HookToolName::for_dynamic_tool(&ToolName::namespaced("検", "索")),
+            HookToolName::new("dynamic__%E6%A4%9C__%E7%B4%A2"),
         );
     }
 }

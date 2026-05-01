@@ -36,6 +36,7 @@ use wiremock::MockServer;
 
 const DYNAMIC_TOOL_NAME: &str = "automation_update";
 const DYNAMIC_NAMESPACE: &str = "codex_app";
+const PLAIN_DYNAMIC_HOOK_NAME: &str = "dynamic__default__automation_update";
 const DYNAMIC_HOOK_NAME: &str = "dynamic__codex_app__automation_update";
 
 fn dynamic_tool(namespace: Option<&str>, name: &str) -> DynamicToolSpec {
@@ -332,7 +333,7 @@ async fn pre_tool_use_blocks_plain_dynamic_tool_before_execution() -> Result<()>
         &server,
         vec![dynamic_tool(/*namespace*/ None, DYNAMIC_TOOL_NAME)],
         move |home| {
-            if let Err(err) = write_pre_tool_use_hook(home, DYNAMIC_TOOL_NAME, block_reason) {
+            if let Err(err) = write_pre_tool_use_hook(home, PLAIN_DYNAMIC_HOOK_NAME, block_reason) {
                 panic!("failed to write plain dynamic pre hook: {err}");
             }
         },
@@ -356,7 +357,7 @@ async fn pre_tool_use_blocks_plain_dynamic_tool_before_execution() -> Result<()>
         .expect("blocked plain dynamic tool output");
     assert!(
         output.contains(&format!(
-            "Tool call blocked by PreToolUse hook: {block_reason}. Tool: {DYNAMIC_TOOL_NAME}"
+            "Tool call blocked by PreToolUse hook: {block_reason}. Tool: {PLAIN_DYNAMIC_HOOK_NAME}"
         )),
         "blocked plain dynamic tool output should mention the reason and tool name",
     );
@@ -372,7 +373,7 @@ async fn pre_tool_use_blocks_plain_dynamic_tool_before_execution() -> Result<()>
         }),
         json!({
             "hook_event_name": "PreToolUse",
-            "tool_name": DYNAMIC_TOOL_NAME,
+            "tool_name": PLAIN_DYNAMIC_HOOK_NAME,
             "tool_use_id": call_id,
             "tool_input": { "job": "plain" },
         }),

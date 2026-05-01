@@ -277,6 +277,26 @@ mod tests {
     }
 
     #[test]
+    fn dynamic_matchers_support_percent_encoded_names() {
+        assert!(matches_matcher(
+            Some("dynamic__default__%E6%A4%9C%E7%B4%A2"),
+            Some("dynamic__default__%E6%A4%9C%E7%B4%A2")
+        ));
+        assert!(!matches_matcher(
+            Some("dynamic__default__%E6%A4%9C%E7%B4%A2"),
+            Some("dynamic__default__%E6%A4%9C%E7%B4%A2_extra")
+        ));
+        assert!(matches_matcher(
+            Some("dynamic__default__%E6%A4%9C.*"),
+            Some("dynamic__default__%E6%A4%9C%E7%B4%A2")
+        ));
+        assert_eq!(
+            validate_matcher_pattern("dynamic__default__%E6%A4%9C.*"),
+            Ok(())
+        );
+    }
+
+    #[test]
     fn matcher_supports_anchored_regexes() {
         assert!(matches_matcher(Some("^Bash$"), Some("Bash")));
         assert!(!matches_matcher(Some("^Bash$"), Some("BashOutput")));
