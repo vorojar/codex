@@ -8433,10 +8433,8 @@ async fn handle_pending_thread_resume_request(
     };
     pending.analytics_events_client.track_response(
         connection_id.0,
-        ClientResponse::ThreadResume {
-            request_id: request_id.request_id.clone(),
-            response: response.clone(),
-        },
+        request_id.request_id.clone(),
+        ClientResponsePayload::ThreadResume(response.clone()),
     );
     let token_usage_thread = pending.include_turns.then(|| response.thread.clone());
     outgoing.send_response(request_id, response).await;
