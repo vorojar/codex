@@ -205,20 +205,11 @@ fn shell_command_handler_rejects_login_when_disallowed() {
 
 #[tokio::test]
 async fn shell_pre_tool_use_payload_uses_joined_command() {
-    let payload = ToolPayload::LocalShell {
-        params: codex_protocol::models::ShellToolCallParams {
-            command: vec![
-                "bash".to_string(),
-                "-lc".to_string(),
-                "printf hi".to_string(),
-            ],
-            workdir: None,
-            timeout_ms: None,
-            sandbox_permissions: None,
-            prefix_rule: None,
-            additional_permissions: None,
-            justification: None,
-        },
+    let payload = ToolPayload::Function {
+        arguments: json!({
+            "command": ["bash", "-lc", "printf hi"],
+        })
+        .to_string(),
     };
     let (session, turn) = make_session_and_context().await;
     let handler = ShellHandler;
