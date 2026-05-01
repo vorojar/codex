@@ -265,26 +265,16 @@ fn secondary_line(
 }
 
 fn path_spans(row: &SearchResult, base_style: Style) -> Vec<Span<'static>> {
-    let file_name_start = file_name_start(row);
     let path_style = base_style.dim();
-    if file_name_start == 0 {
-        return styled_text_spans(CURRENT_DIR_PREFIX, path_style, /*match_indices*/ None);
+    match filesystem_display_name_parts(row) {
+        Some(("", _)) => {
+            styled_text_spans(CURRENT_DIR_PREFIX, path_style, /*match_indices*/ None)
+        }
+        Some((path_prefix, _)) => {
+            styled_text_spans(path_prefix, path_style, row.match_indices.as_deref())
+        }
+        None => styled_text_spans(&row.display_name, base_style, /*match_indices*/ None),
     }
-    if file_name_start != usize::MAX {
-        let byte_start = row
-            .display_name
-            .char_indices()
-            .nth(file_name_start)
-            .map(|(idx, _)| idx)
-            .unwrap_or(row.display_name.len());
-        return styled_text_spans(
-            &row.display_name[..byte_start],
-            path_style,
-            row.match_indices.as_deref(),
-        );
-    }
-
-    styled_text_spans(&row.display_name, base_style, /*match_indices*/ None)
 }
 
 fn primary_text_width(row: &SearchResult) -> usize {
@@ -294,31 +284,17 @@ fn primary_text_width(row: &SearchResult) -> usize {
 }
 
 fn file_name(row: &SearchResult) -> Option<&str> {
-    let file_name_start = file_name_start(row);
-    if file_name_start == usize::MAX {
-        return None;
-    }
-    if file_name_start == 0 {
-        return Some(&row.display_name);
-    }
-
-    let byte_start = row
-        .display_name
-        .char_indices()
-        .nth(file_name_start)
-        .map(|(idx, _)| idx)
-        .unwrap_or(row.display_name.len());
-    Some(&row.display_name[byte_start..])
+    filesystem_display_name_parts(row).map(|(_, file_name)| file_name)
 }
 
-fn file_name_start(row: &SearchResult) -> usize {
-    match row.selection {
-        Selection::File(_) if row.mention_type.is_filesystem() => row
-            .display_name
-            .rfind(['/', '\\'])
-            .map(|idx| row.display_name[..idx + 1].chars().count())
-            .unwrap_or(0),
-        Selection::File(_) | Selection::Tool { .. } => usize::MAX,
+fn filesystem_display_name_parts(row: &SearchResult) -> Option<(&str, &str)> {
+    if !matches!(&row.selection, Selection::File(_)) || !row.mention_type.is_filesystem() {
+        return None;
+    }
+
+    match row.display_name.rfind(['/', '\\']) {
+        Some(idx) => Some((&row.display_name[..=idx], &row.display_name[idx + 1..])),
+        None => Some(("", row.display_name.as_str())),
     }
 }
 

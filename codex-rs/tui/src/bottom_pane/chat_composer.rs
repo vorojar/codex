@@ -757,6 +757,30 @@ impl ChatComposer {
         }
     }
 
+    fn update_stored_unified_mentions_search_mode(
+        &mut self,
+        search_mode: UnifiedMentionsSearchMode,
+    ) {
+        if self.remember_unified_mentions_search_mode {
+            self.unified_mentions_search_mode = search_mode;
+        }
+    }
+
+    fn stop_file_search_if_active(&mut self) {
+        if self.current_file_query.is_none() {
+            return;
+        }
+
+        self.app_event_tx
+            .send(AppEvent::StartFileSearch(String::new()));
+        self.current_file_query = None;
+    }
+
+    fn clear_dismissed_popup_tokens(&mut self) {
+        self.dismissed_file_popup_token = None;
+        self.dismissed_mention_popup_token = None;
+    }
+
     pub fn set_collaboration_mode_indicator(
         &mut self,
         indicator: Option<CollaborationModeIndicator>,
@@ -2039,6 +2063,46 @@ impl ChatComposer {
             return (InputResult::None, true);
         }
 
+        if matches!(
+            key_event,
+            KeyEvent {
+                code: KeyCode::Left,
+                modifiers: KeyModifiers::NONE,
+                ..
+            }
+        ) {
+            let search_mode = {
+                let ActivePopup::UnifiedMentions(popup) = &mut self.active_popup else {
+                    unreachable!();
+                };
+                popup.previous_search_mode();
+                popup.search_mode()
+            };
+            self.update_stored_unified_mentions_search_mode(search_mode);
+            self.sync_unified_mentions_popup_config();
+            return (InputResult::None, true);
+        }
+
+        if matches!(
+            key_event,
+            KeyEvent {
+                code: KeyCode::Right,
+                modifiers: KeyModifiers::NONE,
+                ..
+            }
+        ) {
+            let search_mode = {
+                let ActivePopup::UnifiedMentions(popup) = &mut self.active_popup else {
+                    unreachable!();
+                };
+                popup.next_search_mode();
+                popup.search_mode()
+            };
+            self.update_stored_unified_mentions_search_mode(search_mode);
+            self.sync_unified_mentions_popup_config();
+            return (InputResult::None, true);
+        }
+
         let ActivePopup::UnifiedMentions(popup) = &mut self.active_popup else {
             unreachable!();
         };
@@ -2068,32 +2132,6 @@ impl ChatComposer {
                 ..
             } => {
                 popup.move_down();
-                (InputResult::None, true)
-            }
-            KeyEvent {
-                code: KeyCode::Left,
-                modifiers: KeyModifiers::NONE,
-                ..
-            } => {
-                popup.previous_search_mode();
-                if self.remember_unified_mentions_search_mode {
-                    let search_mode = popup.search_mode();
-                    self.unified_mentions_search_mode = search_mode;
-                    popup.set_remembered_search_mode(Some(search_mode));
-                }
-                (InputResult::None, true)
-            }
-            KeyEvent {
-                code: KeyCode::Right,
-                modifiers: KeyModifiers::NONE,
-                ..
-            } => {
-                popup.next_search_mode();
-                if self.remember_unified_mentions_search_mode {
-                    let search_mode = popup.search_mode();
-                    self.unified_mentions_search_mode = search_mode;
-                    popup.set_remembered_search_mode(Some(search_mode));
-                }
                 (InputResult::None, true)
             }
             KeyEvent {
@@ -3648,14 +3686,9 @@ impl ChatComposer {
     pub(crate) fn sync_popups(&mut self) {
         self.sync_slash_command_elements();
         if self.history_search.is_some() {
-            if self.current_file_query.is_some() {
-                self.app_event_tx
-                    .send(AppEvent::StartFileSearch(String::new()));
-                self.current_file_query = None;
-            }
+            self.stop_file_search_if_active();
             self.active_popup = ActivePopup::None;
-            self.dismissed_file_popup_token = None;
-            self.dismissed_mention_popup_token = None;
+            self.clear_dismissed_popup_tokens();
             return;
         }
         if !self.popups_enabled() {
@@ -3669,11 +3702,7 @@ impl ChatComposer {
         // When browsing input history (shell-style Up/Down recall), skip all popup
         // synchronization so nothing steals focus from continued history navigation.
         if browsing_history {
-            if self.current_file_query.is_some() {
-                self.app_event_tx
-                    .send(AppEvent::StartFileSearch(String::new()));
-                self.current_file_query = None;
-            }
+            self.stop_file_search_if_active();
             self.active_popup = ActivePopup::None;
             return;
         }
@@ -3686,13 +3715,8 @@ impl ChatComposer {
         self.sync_command_popup(allow_command_popup);
 
         if matches!(self.active_popup, ActivePopup::Command(_)) {
-            if self.current_file_query.is_some() {
-                self.app_event_tx
-                    .send(AppEvent::StartFileSearch(String::new()));
-                self.current_file_query = None;
-            }
-            self.dismissed_file_popup_token = None;
-            self.dismissed_mention_popup_token = None;
+            self.stop_file_search_if_active();
+            self.clear_dismissed_popup_tokens();
             return;
         }
 
@@ -3702,22 +3726,13 @@ impl ChatComposer {
         }
 
         if let Some(token) = mention_token {
-            if self.current_file_query.is_some() {
-                self.app_event_tx
-                    .send(AppEvent::StartFileSearch(String::new()));
-                self.current_file_query = None;
-            }
+            self.stop_file_search_if_active();
             self.sync_mention_popup(token);
             return;
         }
-        self.dismissed_file_popup_token = None;
-        self.dismissed_mention_popup_token = None;
+        self.clear_dismissed_popup_tokens();
 
-        if self.current_file_query.is_some() {
-            self.app_event_tx
-                .send(AppEvent::StartFileSearch(String::new()));
-            self.current_file_query = None;
-        }
+        self.stop_file_search_if_active();
         if matches!(
             self.active_popup,
             ActivePopup::Skill(_) | ActivePopup::UnifiedMentions(_)
