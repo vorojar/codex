@@ -287,18 +287,51 @@ fn best_tool_match(candidate: &Candidate, filter: &str) -> Option<(Option<Vec<us
 }
 
 fn sort_rows(rows: &mut [SearchResult], filter: &str) {
-    let type_order = |mention_type: MentionType| match mention_type {
-        MentionType::Plugin => 0,
-        MentionType::Skill => 1,
-        MentionType::File | MentionType::Directory => 2,
-    };
-
     rows.sort_by(|a, b| {
-        type_order(a.mention_type)
-            .cmp(&type_order(b.mention_type))
+        result_rank(a, filter)
+            .cmp(&result_rank(b, filter))
             .then_with(|| compare_within_rank(a, b, filter))
             .then_with(|| a.display_name.cmp(&b.display_name))
     });
+}
+
+fn result_rank(row: &SearchResult, filter: &str) -> u8 {
+    if filter.is_empty() {
+        return type_rank(row.mention_type);
+    }
+
+    let haystack = if row.mention_type.is_filesystem() {
+        file_name_from_result(row)
+    } else {
+        row.display_name.as_str()
+    };
+    let haystack = haystack.to_lowercase();
+    let filter = filter.to_lowercase();
+    let match_position = haystack.find(&filter);
+    let is_exact_match = haystack == filter;
+
+    match (row.mention_type, is_exact_match, match_position) {
+        (MentionType::File | MentionType::Directory, true, _) => 0,
+        (MentionType::Plugin, true, _) => 1,
+        (MentionType::Skill, true, _) => 2,
+        (MentionType::File | MentionType::Directory, false, Some(0)) => 3,
+        (MentionType::Plugin, false, Some(0)) => 4,
+        (MentionType::Skill, false, Some(0)) => 5,
+        (MentionType::File | MentionType::Directory, false, Some(_)) => 6,
+        (MentionType::Plugin, false, Some(_)) => 7,
+        (MentionType::Skill, false, Some(_)) => 8,
+        (MentionType::Plugin, false, None) => 9,
+        (MentionType::Skill, false, None) => 10,
+        (MentionType::File | MentionType::Directory, false, None) => 11,
+    }
+}
+
+fn type_rank(mention_type: MentionType) -> u8 {
+    match mention_type {
+        MentionType::Plugin => 0,
+        MentionType::Skill => 1,
+        MentionType::File | MentionType::Directory => 2,
+    }
 }
 
 fn compare_within_rank(a: &SearchResult, b: &SearchResult, filter: &str) -> std::cmp::Ordering {
@@ -331,6 +364,13 @@ fn file_match_to_row(file_match: &FileMatch) -> SearchResult {
             .map(|indices| indices.iter().map(|idx| *idx as usize).collect()),
         score: file_match.score as i32,
     }
+}
+
+fn file_name_from_result(row: &SearchResult) -> &str {
+    row.display_name
+        .rsplit(['/', '\\'])
+        .next()
+        .unwrap_or(row.display_name.as_str())
 }
 
 #[cfg(test)]

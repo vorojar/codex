@@ -12,6 +12,7 @@ use ratatui::widgets::Widget;
 use crate::bottom_pane::popup_consts::MAX_POPUP_ROWS;
 use crate::bottom_pane::scroll_state::ScrollState;
 use crate::key_hint;
+use crate::key_hint::KeyBinding;
 use crate::line_truncation::truncate_line_with_ellipsis_if_overflow;
 use crate::render::Insets;
 use crate::render::RectExt;
@@ -24,6 +25,7 @@ use super::unified_mentions_search::Selection;
 const TAG_WIDTH: usize = "Plugin".len();
 const POPUP_HORIZONTAL_INSET: u16 = 2;
 const CONTENT_TAG_GAP: usize = 2;
+const MAX_PRIMARY_COLUMN_WIDTH: usize = 4 * 8;
 const FOOTER_SECTION_GAP: &str = "  ";
 const CURRENT_DIR_PREFIX: &str = "./";
 const FOOTER_INSERT_KEY: KeyCode = KeyCode::Enter;
@@ -41,6 +43,8 @@ pub(super) fn render_popup(
     state: &ScrollState,
     empty_message: &str,
     search_mode: SearchMode,
+    remembered_search_mode: Option<SearchMode>,
+    toggle_remember_search_mode_key: Option<KeyBinding>,
 ) {
     let (list_area, hint_area) = if area.height > 2 {
         let hint_area = Rect {
@@ -80,7 +84,13 @@ pub(super) fn render_popup(
             width: hint_area.width.saturating_sub(POPUP_HORIZONTAL_INSET),
             height: hint_area.height,
         };
-        render_footer(hint_area, buf, search_mode);
+        render_footer(
+            hint_area,
+            buf,
+            search_mode,
+            remembered_search_mode,
+            toggle_remember_search_mode_key,
+        );
     }
 }
 
@@ -121,6 +131,7 @@ fn render_rows(
         .take(visible_items)
         .map(primary_text_width)
         .max()
+        .map(|width| width.min(MAX_PRIMARY_COLUMN_WIDTH))
         .unwrap_or(0);
     for (idx, row) in rows.iter().enumerate().skip(start_idx).take(visible_items) {
         if cur_y >= area.y + area.height {
@@ -194,10 +205,15 @@ fn content_line(
     primary_column_width: usize,
 ) -> Line<'static> {
     let mut spans = Vec::new();
-    spans.extend(primary_spans(row, base_style));
+    let primary = truncate_line_with_ellipsis_if_overflow(
+        Line::from(primary_spans(row, base_style)),
+        primary_column_width,
+    );
+    let primary_width = primary.width();
+    spans.extend(primary.spans);
     if let Some(secondary) = secondary_line(row, base_style, dim_style) {
         let padding = primary_column_width
-            .saturating_sub(primary_text_width(row))
+            .saturating_sub(primary_width)
             .saturating_add(CONTENT_TAG_GAP);
         spans.push(" ".repeat(padding).set_style(dim_style));
         spans.extend(secondary.spans);
@@ -328,13 +344,21 @@ fn styled_text_spans(
     spans
 }
 
-fn render_footer(area: Rect, buf: &mut Buffer, search_mode: SearchMode) {
-    let right_line = search_mode_indicator_line(search_mode);
+fn render_footer(
+    area: Rect,
+    buf: &mut Buffer,
+    search_mode: SearchMode,
+    remembered_search_mode: Option<SearchMode>,
+    toggle_remember_search_mode_key: Option<KeyBinding>,
+) {
+    let right_line = search_mode_indicator_line(search_mode, remembered_search_mode);
     let right_width = right_line.width() as u16;
     let gap = u16::from(right_width > 0);
     let left_width = area.width.saturating_sub(right_width).saturating_sub(gap);
-    let left_line =
-        truncate_line_with_ellipsis_if_overflow(footer_hint_line(), left_width as usize);
+    let left_line = truncate_line_with_ellipsis_if_overflow(
+        footer_hint_line(toggle_remember_search_mode_key),
+        left_width as usize,
+    );
     left_line.render(
         Rect {
             x: area.x,
@@ -357,8 +381,8 @@ fn render_footer(area: Rect, buf: &mut Buffer, search_mode: SearchMode) {
     }
 }
 
-fn footer_hint_line() -> Line<'static> {
-    Line::from(vec![
+fn footer_hint_line(toggle_remember_search_mode_key: Option<KeyBinding>) -> Line<'static> {
+    let mut spans = vec![
         key_hint::plain(FOOTER_INSERT_KEY).into(),
         "/".dim(),
         key_hint::plain(FOOTER_INSERT_ALTERNATE_KEY).into(),
@@ -369,10 +393,19 @@ fn footer_hint_line() -> Line<'static> {
         "/".dim(),
         key_hint::plain(FOOTER_NEXT_MODE_KEY).into(),
         " switch search modes".dim(),
-    ])
+    ];
+    if let Some(key) = toggle_remember_search_mode_key {
+        spans.push(" · ".dim());
+        spans.push(key.into());
+        spans.push(" remember search mode".dim());
+    }
+    Line::from(spans)
 }
 
-fn search_mode_indicator_line(active_search_mode: SearchMode) -> Line<'static> {
+fn search_mode_indicator_line(
+    active_search_mode: SearchMode,
+    remembered_search_mode: Option<SearchMode>,
+) -> Line<'static> {
     let modes = [
         SearchMode::Results,
         SearchMode::FilesystemOnly,
@@ -386,7 +419,12 @@ fn search_mode_indicator_line(active_search_mode: SearchMode) -> Line<'static> {
         }
 
         if search_mode == active_search_mode {
-            let label = format!("[{}]", search_mode.label());
+            let marker = if remembered_search_mode == Some(search_mode) {
+                "*"
+            } else {
+                ""
+            };
+            let label = format!("[{}{marker}]", search_mode.label());
             let style = match search_mode {
                 SearchMode::Results | SearchMode::FilesystemOnly => {
                     Style::default().fg(FILESYSTEM_ACCENT_COLOR).bold()
@@ -395,7 +433,12 @@ fn search_mode_indicator_line(active_search_mode: SearchMode) -> Line<'static> {
             };
             spans.push(label.set_style(style));
         } else {
-            spans.push(format!(" {} ", search_mode.label()).dim());
+            let marker = if remembered_search_mode == Some(search_mode) {
+                "*"
+            } else {
+                ""
+            };
+            spans.push(format!(" {}{marker} ", search_mode.label()).dim());
         }
     }
 
@@ -414,9 +457,36 @@ mod tests {
         width: u16,
         search_mode: SearchMode,
     ) -> String {
+        render_popup_text_with_remembered_mode(
+            query,
+            rows,
+            state,
+            width,
+            search_mode,
+            /*remembered_search_mode*/ None,
+        )
+    }
+
+    fn render_popup_text_with_remembered_mode(
+        query: &str,
+        rows: &[SearchResult],
+        state: ScrollState,
+        width: u16,
+        search_mode: SearchMode,
+        remembered_search_mode: Option<SearchMode>,
+    ) -> String {
         let area = Rect::new(0, 0, width, (MAX_POPUP_ROWS as u16) + 2);
         let mut buf = Buffer::empty(area);
-        render_popup(area, &mut buf, rows, &state, "no matches", search_mode);
+        render_popup(
+            area,
+            &mut buf,
+            rows,
+            &state,
+            "no matches",
+            search_mode,
+            remembered_search_mode,
+            Some(key_hint::alt(KeyCode::Char('r'))),
+        );
 
         let popup = (0..area.height)
             .map(|y| {
@@ -541,12 +611,13 @@ mod tests {
 
         insta::assert_snapshot!(
             "unified_mentions_plugins_mode_footer",
-            render_popup_text(
+            render_popup_text_with_remembered_mode(
                 "@calendar",
                 &rows,
                 state,
                 /*width*/ 86,
-                SearchMode::Tools
+                SearchMode::Tools,
+                Some(SearchMode::Tools)
             )
         );
     }

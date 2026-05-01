@@ -64,6 +64,7 @@ const KEYMAP_COMMON_ACTIONS: &[(&str, &str)] = &[
     ("global", "open_external_editor"),
     ("global", "copy"),
     ("global", "toggle_vim_mode"),
+    ("unified_mentions", "toggle_remember_search_mode"),
     ("editor", "delete_backward_word"),
     ("editor", "delete_forward_word"),
     ("editor", "move_word_left"),
@@ -89,8 +90,8 @@ const KEYMAP_CONTEXT_TABS: &[KeymapContextTab] = &[
     KeymapContextTab {
         id: "composer-shortcuts",
         label: "Composer",
-        description: "Composer submission and queue shortcuts.",
-        contexts: &["composer"],
+        description: "Composer submission, queue, and mention shortcuts.",
+        contexts: &["composer", "unified_mentions"],
     },
     KeymapContextTab {
         id: "editor-shortcuts",

@@ -556,6 +556,9 @@ pub struct Config {
     /// 3. built-in defaults
     pub tui_keymap: TuiKeymap,
 
+    /// Remember the last unified mentions type filter for the current TUI session.
+    pub tui_unified_mentions_remember_search_mode: bool,
+
     /// The absolute directory that should be treated as the current working
     /// directory for the session. All relative paths inside the business-logic
     /// layer are resolved against this path.
@@ -3166,6 +3169,11 @@ impl Config {
                 .as_ref()
                 .map(|t| t.keymap.clone())
                 .unwrap_or_default(),
+            tui_unified_mentions_remember_search_mode: cfg
+                .tui
+                .as_ref()
+                .map(|t| t.unified_mentions_remember_search_mode)
+                .unwrap_or(false),
             otel: {
                 let t: OtelConfigToml = cfg.otel.unwrap_or_default();
                 let log_user_prompt = t.log_user_prompt.unwrap_or(false);

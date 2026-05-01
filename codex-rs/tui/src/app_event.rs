@@ -859,6 +859,11 @@ pub(crate) enum AppEvent {
     /// Runtime syntax theme preview changed; refresh theme-derived UI colors.
     SyntaxThemePreviewed,
 
+    /// Persist whether unified mentions remembers the selected search mode.
+    SetUnifiedMentionsRememberSearchMode {
+        remember: bool,
+    },
+
     /// Open set/remove actions for the selected keymap action.
     OpenKeymapActionMenu {
         context: String,

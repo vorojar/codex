@@ -663,6 +663,11 @@ pub struct Tui {
     #[serde(default)]
     pub keymap: TuiKeymap,
 
+    /// Remember the last unified mentions type filter for the current TUI session.
+    /// Defaults to `false`.
+    #[serde(default)]
+    pub unified_mentions_remember_search_mode: bool,
+
     /// Startup tooltip availability NUX state persisted by the TUI.
     #[serde(default)]
     pub model_availability_nux: ModelAvailabilityNuxConfig,

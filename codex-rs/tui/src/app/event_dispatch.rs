@@ -1915,6 +1915,35 @@ impl App {
             AppEvent::SyntaxThemePreviewed => {
                 self.refresh_status_line();
             }
+            AppEvent::SetUnifiedMentionsRememberSearchMode { remember } => {
+                let edit =
+                    crate::legacy_core::config::edit::unified_mentions_remember_search_mode_edit(
+                        remember,
+                    );
+                match ConfigEditsBuilder::new(&self.config.codex_home)
+                    .with_edits([edit])
+                    .apply()
+                    .await
+                {
+                    Ok(()) => {
+                        self.config.tui_unified_mentions_remember_search_mode = remember;
+                        self.chat_widget
+                            .set_unified_mentions_remember_search_mode(remember);
+                    }
+                    Err(err) => {
+                        tracing::error!(
+                            error = %err,
+                            "failed to persist unified mentions search mode setting"
+                        );
+                        self.chat_widget.set_unified_mentions_remember_search_mode(
+                            self.config.tui_unified_mentions_remember_search_mode,
+                        );
+                        self.chat_widget.add_error_message(format!(
+                            "Failed to save unified mentions setting: {err}"
+                        ));
+                    }
+                }
+            }
             AppEvent::OpenKeymapActionMenu { context, action } => {
                 self.chat_widget
                     .open_keymap_action_menu(context, action, &self.keymap);

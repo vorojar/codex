@@ -5037,6 +5037,11 @@ impl ChatWidget {
             .set_vim_enabled(widget.config.tui_vim_mode_default);
         widget
             .bottom_pane
+            .set_unified_mentions_remember_search_mode(
+                widget.config.tui_unified_mentions_remember_search_mode,
+            );
+        widget
+            .bottom_pane
             .set_realtime_conversation_enabled(widget.realtime_conversation_enabled());
         widget
             .bottom_pane
@@ -10601,6 +10606,15 @@ impl ChatWidget {
         self.config.realtime = config.realtime.clone();
         self.config.memories = config.memories.clone();
         self.config.terminal_resize_reflow = config.terminal_resize_reflow;
+        self.set_unified_mentions_remember_search_mode(
+            config.tui_unified_mentions_remember_search_mode,
+        );
+    }
+
+    pub(crate) fn set_unified_mentions_remember_search_mode(&mut self, remember: bool) {
+        self.config.tui_unified_mentions_remember_search_mode = remember;
+        self.bottom_pane
+            .set_unified_mentions_remember_search_mode(remember);
     }
 
     pub(crate) fn open_review_popup(&mut self) {

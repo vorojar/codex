@@ -125,6 +125,17 @@ pub fn terminal_title_items_edit(items: &[String]) -> ConfigEdit {
     }
 }
 
+/// Produces a config edit that sets `[tui].unified_mentions_remember_search_mode`.
+pub fn unified_mentions_remember_search_mode_edit(enabled: bool) -> ConfigEdit {
+    ConfigEdit::SetPath {
+        segments: vec![
+            "tui".to_string(),
+            "unified_mentions_remember_search_mode".to_string(),
+        ],
+        value: value(enabled),
+    }
+}
+
 fn keymap_binding_value(keys: &[String]) -> TomlItem {
     if let [key] = keys {
         value(key.to_string())

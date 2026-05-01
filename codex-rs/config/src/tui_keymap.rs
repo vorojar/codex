@@ -310,6 +310,15 @@ pub struct TuiListKeymap {
     pub cancel: Option<KeybindingsSpec>,
 }
 
+/// Unified mentions popup keybindings.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, Default, JsonSchema)]
+#[serde(deny_unknown_fields)]
+#[schemars(deny_unknown_fields)]
+pub struct TuiUnifiedMentionsKeymap {
+    /// Toggle whether the popup remembers the last selected search mode.
+    pub toggle_remember_search_mode: Option<KeybindingsSpec>,
+}
+
 /// Approval overlay keybindings.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, Default, JsonSchema)]
 #[serde(deny_unknown_fields)]
@@ -363,6 +372,8 @@ pub struct TuiKeymap {
     pub pager: TuiPagerKeymap,
     #[serde(default)]
     pub list: TuiListKeymap,
+    #[serde(default)]
+    pub unified_mentions: TuiUnifiedMentionsKeymap,
     #[serde(default)]
     pub approval: TuiApprovalKeymap,
 }

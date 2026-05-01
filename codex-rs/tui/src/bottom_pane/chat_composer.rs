@@ -183,6 +183,7 @@ use super::skill_popup::SkillPopup;
 use super::slash_commands;
 use super::slash_commands::BuiltinCommandFlags;
 use super::unified_mentions_popup::UnifiedMentionsPopup;
+use super::unified_mentions_search::SearchMode as UnifiedMentionsSearchMode;
 use super::unified_mentions_search::Selection as UnifiedMentionsSelection;
 use super::unified_mentions_search::build_search_catalog;
 use crate::bottom_pane::paste_burst::FlushResult;
@@ -339,6 +340,8 @@ pub(crate) struct ChatComposer {
     use_shift_enter_hint: bool,
     dismissed_file_popup_token: Option<String>,
     current_file_query: Option<String>,
+    remember_unified_mentions_search_mode: bool,
+    unified_mentions_search_mode: UnifiedMentionsSearchMode,
     pending_pastes: Vec<(String, String)>,
     large_paste_counters: HashMap<usize, usize>,
     has_focus: bool,
@@ -410,6 +413,7 @@ pub(crate) struct ChatComposer {
     toggle_shortcuts_keys: Vec<KeyBinding>,
     history_search_previous_keys: Vec<KeyBinding>,
     history_search_next_keys: Vec<KeyBinding>,
+    unified_mentions_toggle_remember_search_mode_keys: Vec<KeyBinding>,
     editor_keymap: EditorKeymap,
     vim_normal_keymap: VimNormalKeymap,
     footer_external_editor_key: Option<KeyBinding>,
@@ -537,6 +541,8 @@ impl ChatComposer {
             use_shift_enter_hint,
             dismissed_file_popup_token: None,
             current_file_query: None,
+            remember_unified_mentions_search_mode: false,
+            unified_mentions_search_mode: UnifiedMentionsSearchMode::Results,
             pending_pastes: Vec::new(),
             large_paste_counters: HashMap::new(),
             has_focus: has_input_focus,
@@ -597,6 +603,10 @@ impl ChatComposer {
             ],
             history_search_previous_keys: default_keymap.composer.history_search_previous.clone(),
             history_search_next_keys: default_keymap.composer.history_search_next.clone(),
+            unified_mentions_toggle_remember_search_mode_keys: default_keymap
+                .unified_mentions
+                .toggle_remember_search_mode
+                .clone(),
             editor_keymap: default_editor_keymap,
             vim_normal_keymap: default_vim_normal_keymap,
             footer_external_editor_key: Some(key_hint::ctrl(KeyCode::Char('g'))),
@@ -641,6 +651,20 @@ impl ChatComposer {
     pub fn set_plugin_mentions(&mut self, plugins: Option<Vec<PluginCapabilitySummary>>) {
         self.plugins = plugins;
         self.sync_popups();
+    }
+
+    pub fn set_unified_mentions_remember_search_mode(&mut self, remember: bool) {
+        let was_remembering = self.remember_unified_mentions_search_mode;
+        self.remember_unified_mentions_search_mode = remember;
+        if remember && !was_remembering {
+            if let ActivePopup::UnifiedMentions(popup) = &self.active_popup {
+                let search_mode = popup.search_mode();
+                self.unified_mentions_search_mode = search_mode;
+            }
+        } else if !remember {
+            self.unified_mentions_search_mode = UnifiedMentionsSearchMode::Results;
+        }
+        self.sync_unified_mentions_popup_config();
     }
 
     pub fn set_plugins_command_enabled(&mut self, enabled: bool) {
@@ -705,6 +729,8 @@ impl ChatComposer {
         self.toggle_shortcuts_keys = keymap.composer.toggle_shortcuts.clone();
         self.history_search_previous_keys = keymap.composer.history_search_previous.clone();
         self.history_search_next_keys = keymap.composer.history_search_next.clone();
+        self.unified_mentions_toggle_remember_search_mode_keys =
+            keymap.unified_mentions.toggle_remember_search_mode.clone();
         self.editor_keymap = keymap.editor.clone();
         self.vim_normal_keymap = keymap.vim_normal.clone();
         self.textarea.set_keymap_bindings(keymap);
@@ -717,6 +743,18 @@ impl ChatComposer {
         self.footer_history_search_key = primary_binding(&keymap.composer.history_search_previous);
         self.footer_reasoning_down_key = primary_binding(&keymap.chat.decrease_reasoning_effort);
         self.footer_reasoning_up_key = primary_binding(&keymap.chat.increase_reasoning_effort);
+        self.sync_unified_mentions_popup_config();
+    }
+
+    fn sync_unified_mentions_popup_config(&mut self) {
+        let toggle_key = primary_binding(&self.unified_mentions_toggle_remember_search_mode_keys);
+        let remembered_search_mode = self
+            .remember_unified_mentions_search_mode
+            .then_some(self.unified_mentions_search_mode);
+        if let ActivePopup::UnifiedMentions(popup) = &mut self.active_popup {
+            popup.set_remembered_search_mode(remembered_search_mode);
+            popup.set_toggle_remember_search_mode_key(toggle_key);
+        }
     }
 
     pub fn set_collaboration_mode_indicator(
@@ -1990,6 +2028,17 @@ impl ChatComposer {
         }
         self.footer_mode = reset_mode_after_activity(self.footer_mode);
 
+        if self
+            .unified_mentions_toggle_remember_search_mode_keys
+            .is_pressed(key_event)
+        {
+            let remember = !self.remember_unified_mentions_search_mode;
+            self.set_unified_mentions_remember_search_mode(remember);
+            self.app_event_tx
+                .send(AppEvent::SetUnifiedMentionsRememberSearchMode { remember });
+            return (InputResult::None, true);
+        }
+
         let ActivePopup::UnifiedMentions(popup) = &mut self.active_popup else {
             unreachable!();
         };
@@ -2027,6 +2076,11 @@ impl ChatComposer {
                 ..
             } => {
                 popup.previous_search_mode();
+                if self.remember_unified_mentions_search_mode {
+                    let search_mode = popup.search_mode();
+                    self.unified_mentions_search_mode = search_mode;
+                    popup.set_remembered_search_mode(Some(search_mode));
+                }
                 (InputResult::None, true)
             }
             KeyEvent {
@@ -2035,6 +2089,11 @@ impl ChatComposer {
                 ..
             } => {
                 popup.next_search_mode();
+                if self.remember_unified_mentions_search_mode {
+                    let search_mode = popup.search_mode();
+                    self.unified_mentions_search_mode = search_mode;
+                    popup.set_remembered_search_mode(Some(search_mode));
+                }
                 (InputResult::None, true)
             }
             KeyEvent {
@@ -3890,11 +3949,17 @@ impl ChatComposer {
                 popup.set_candidates(candidates);
             }
             _ => {
-                let mut popup = UnifiedMentionsPopup::new(candidates);
+                let search_mode = if self.remember_unified_mentions_search_mode {
+                    self.unified_mentions_search_mode
+                } else {
+                    UnifiedMentionsSearchMode::Results
+                };
+                let mut popup = UnifiedMentionsPopup::new(candidates, search_mode);
                 popup.set_query(&query);
                 self.active_popup = ActivePopup::UnifiedMentions(popup);
             }
         }
+        self.sync_unified_mentions_popup_config();
 
         if query.is_empty() {
             self.current_file_query = None;

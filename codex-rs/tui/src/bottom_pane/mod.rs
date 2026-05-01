@@ -312,6 +312,12 @@ impl BottomPane {
         self.request_redraw();
     }
 
+    pub fn set_unified_mentions_remember_search_mode(&mut self, remember: bool) {
+        self.composer
+            .set_unified_mentions_remember_search_mode(remember);
+        self.request_redraw();
+    }
+
     pub fn set_plugins_command_enabled(&mut self, enabled: bool) {
         self.composer.set_plugins_command_enabled(enabled);
         self.request_redraw();

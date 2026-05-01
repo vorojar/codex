@@ -5,6 +5,7 @@ use ratatui::widgets::WidgetRef;
 
 use crate::bottom_pane::popup_consts::MAX_POPUP_ROWS;
 use crate::bottom_pane::scroll_state::ScrollState;
+use crate::key_hint::KeyBinding;
 
 use super::unified_mentions_render::render_popup;
 use super::unified_mentions_search::Candidate;
@@ -22,16 +23,20 @@ pub(crate) struct UnifiedMentionsPopup {
     file_search: FileSearchState,
     candidates: Vec<Candidate>,
     search_mode: SearchMode,
+    remembered_search_mode: Option<SearchMode>,
+    toggle_remember_search_mode_key: Option<KeyBinding>,
     state: ScrollState,
 }
 
 impl UnifiedMentionsPopup {
-    pub(crate) fn new(candidates: Vec<Candidate>) -> Self {
+    pub(crate) fn new(candidates: Vec<Candidate>, search_mode: SearchMode) -> Self {
         Self {
             query: String::new(),
             file_search: FileSearchState::new(),
             candidates,
-            search_mode: SearchMode::Results,
+            search_mode,
+            remembered_search_mode: None,
+            toggle_remember_search_mode_key: None,
             state: ScrollState::new(),
         }
     }
@@ -84,6 +89,18 @@ impl UnifiedMentionsPopup {
         self.clamp_selection();
     }
 
+    pub(crate) fn search_mode(&self) -> SearchMode {
+        self.search_mode
+    }
+
+    pub(crate) fn set_remembered_search_mode(&mut self, search_mode: Option<SearchMode>) {
+        self.remembered_search_mode = search_mode;
+    }
+
+    pub(crate) fn set_toggle_remember_search_mode_key(&mut self, key: Option<KeyBinding>) {
+        self.toggle_remember_search_mode_key = key;
+    }
+
     pub(crate) fn calculate_required_height(&self, _width: u16) -> u16 {
         // Keep a fixed popup height to avoid layout jitter while search results update.
         (MAX_POPUP_ROWS as u16).saturating_add(POPUP_FOOTER_HEIGHT)
@@ -115,6 +132,8 @@ impl WidgetRef for UnifiedMentionsPopup {
             &self.state,
             self.file_search.empty_message(),
             self.search_mode,
+            self.remembered_search_mode,
+            self.toggle_remember_search_mode_key,
         );
     }
 }
@@ -213,7 +232,7 @@ mod tests {
 
     #[test]
     fn unified_mentions_query_change_keeps_previous_file_selection_while_waiting_for_new_results() {
-        let mut popup = UnifiedMentionsPopup::new(Vec::new());
+        let mut popup = UnifiedMentionsPopup::new(Vec::new(), SearchMode::Results);
         popup.set_query("ma");
         popup.set_file_matches("ma", vec![file_match(/*index*/ 1)]);
 
@@ -241,7 +260,7 @@ mod tests {
 
     #[test]
     fn unified_mentions_stale_file_search_results_are_ignored_after_the_query_changes() {
-        let mut popup = UnifiedMentionsPopup::new(Vec::new());
+        let mut popup = UnifiedMentionsPopup::new(Vec::new(), SearchMode::Results);
         popup.set_query("ma");
         popup.set_query("main");
         popup.set_file_matches("ma", vec![file_match(/*index*/ 1)]);
