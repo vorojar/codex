@@ -824,6 +824,7 @@ mod tests {
                 codex_home.path().to_path_buf(),
                 Vec::new(),
                 LoaderOverrides::default(),
+                /*strict_config*/ false,
                 CloudRequirementsLoader::default(),
                 Arg0DispatchPaths::default(),
                 Arc::new(codex_config::NoopThreadConfigLoader),
