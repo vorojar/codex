@@ -117,16 +117,15 @@ filegroup(
 
 alias(
     name = "src_binding_release_x86_64_pc_windows_gnullvm",
-    # `rusty_v8` does not publish a Windows GNU binding file. The generated
-    # binding only describes this V8 release's C++ API surface, so reuse the
-    # Linux release binding while the windows-gnullvm archive build is still
-    # experimental.
-    actual = ":src_binding_release_x86_64_unknown_linux_gnu",
+    # `rusty_v8` does not publish a Windows GNU binding file. Use the Windows
+    # binding generated for the same architecture so Rust sees the Windows V8
+    # ABI/layout while the archive itself is built from source for gnullvm.
+    actual = ":src_binding_release_x86_64_pc_windows_msvc",
 )
 
 alias(
     name = "src_binding_release_aarch64_pc_windows_gnullvm",
-    actual = ":src_binding_release_aarch64_unknown_linux_gnu",
+    actual = ":src_binding_release_aarch64_pc_windows_msvc",
 )
 
 alias(
@@ -174,18 +173,18 @@ genrule(
     name = "binding_cc",
     srcs = ["@v8_crate_146_4_0//:binding_cc"],
     outs = ["binding.cc"],
-    # Keep this as a literal shell snippet. The string-concatenated form looked
-    # cleaner in Starlark but produced a broken `sed` invocation in CI.
-    cmd = """
-      sed \
-        -e '/#include "v8\\/src\\/flags\\/flags.h"/d' \
-        -e 's|"v8/src/libplatform/default-platform.h"|"src/libplatform/default-platform.h"|' \
-        -e 's|  namespace i = v8::internal;|  (void)usage;|' \
-        -e '/using HelpOptions = i::FlagList::HelpOptions;/d' \
-        -e '/HelpOptions help_options = HelpOptions(HelpOptions::kExit, usage);/d' \
-        -e 's|  i::FlagList::SetFlagsFromCommandLine(argc, argv, true, help_options);|  v8::V8::SetFlagsFromCommandLine(argc, argv, true);|' \
-        $(location @v8_crate_146_4_0//:binding_cc) > "$@"
-    """,
+    cmd = " ".join([
+        "sed",
+        "-e '/#include \"v8\\/src\\/flags\\/flags.h\"/d'",
+        "-e 's|\"v8/src/libplatform/default-platform.h\"|\"src/libplatform/default-platform.h\"|'",
+        "-e 's|  namespace i = v8::internal;|  (void)usage;|'",
+        "-e '/using HelpOptions = i::FlagList::HelpOptions;/d'",
+        "-e '/HelpOptions help_options = HelpOptions(HelpOptions::kExit, usage);/d'",
+        "-e 's|  i::FlagList::SetFlagsFromCommandLine(argc, argv, true, help_options);|  v8::V8::SetFlagsFromCommandLine(argc, argv, true);|'",
+        "$(location @v8_crate_146_4_0//:binding_cc)",
+        ">",
+        '"$@"',
+    ]),
 )
 
 copy_file(
