@@ -35,6 +35,7 @@ use codex_windows_sandbox::encode_bytes;
 use codex_windows_sandbox::get_current_token_for_restriction;
 use codex_windows_sandbox::hide_current_user_profile_dir;
 use codex_windows_sandbox::log_note;
+use codex_windows_sandbox::overlay_current_user_profile_env;
 use codex_windows_sandbox::parse_policy;
 use codex_windows_sandbox::read_frame;
 use codex_windows_sandbox::read_handle_loop;
@@ -189,6 +190,8 @@ fn effective_cwd(req_cwd: &Path, log_dir: Option<&Path>) -> PathBuf {
 fn spawn_ipc_process(req: &SpawnRequest) -> Result<IpcSpawnedProcess> {
     let log_dir = req.codex_home.clone();
     hide_current_user_profile_dir(req.codex_home.as_path());
+    let mut child_env = req.env.clone();
+    overlay_current_user_profile_env(&mut child_env);
     let policy = parse_policy(&req.policy_json_or_preset).context("parse policy_json_or_preset")?;
     let mut cap_psids: Vec<*mut c_void> = Vec::new();
     for sid in &req.cap_sids {
@@ -241,7 +244,7 @@ fn spawn_ipc_process(req: &SpawnRequest) -> Result<IpcSpawnedProcess> {
             h_token,
             &req.command,
             &effective_cwd,
-            &req.env,
+            &child_env,
             req.use_private_desktop,
             Some(log_dir.as_path()),
         )?;
@@ -272,7 +275,7 @@ fn spawn_ipc_process(req: &SpawnRequest) -> Result<IpcSpawnedProcess> {
             h_token,
             &req.command,
             &effective_cwd,
-            &req.env,
+            &child_env,
             stdin_mode,
             StderrMode::Separate,
             req.use_private_desktop,

@@ -1,4 +1,4 @@
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use dirs_next::home_dir;
 use std::collections::HashMap;
 use std::env;
@@ -39,6 +39,36 @@ pub fn inherit_path_env(env_map: &mut HashMap<String, String>) {
         && let Ok(pathext) = env::var("PATHEXT")
     {
         env_map.insert("PATHEXT".into(), pathext);
+    }
+}
+
+const PROFILE_ENV_KEYS: &[&str] = &[
+    "USERPROFILE",
+    "HOME",
+    "HOMEDRIVE",
+    "HOMEPATH",
+    "APPDATA",
+    "LOCALAPPDATA",
+    "TEMP",
+    "TMP",
+];
+
+pub fn overlay_current_user_profile_env(env_map: &mut HashMap<String, String>) {
+    let current_env: HashMap<String, String> = PROFILE_ENV_KEYS
+        .iter()
+        .filter_map(|key| env::var(key).ok().map(|value| ((*key).to_string(), value)))
+        .collect();
+    overlay_profile_env_from(env_map, &current_env);
+}
+
+pub fn overlay_profile_env_from(
+    env_map: &mut HashMap<String, String>,
+    current_env: &HashMap<String, String>,
+) {
+    for key in PROFILE_ENV_KEYS {
+        if let Some(value) = current_env.get(*key) {
+            env_map.insert((*key).to_string(), value.clone());
+        }
     }
 }
 
@@ -171,4 +201,52 @@ pub fn apply_no_network_to_env(env_map: &mut HashMap<String, String>) -> Result<
     prepend_path(env_map, &base.to_string_lossy());
     reorder_pathext_for_stubs(env_map);
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::overlay_profile_env_from;
+    use std::collections::HashMap;
+
+    #[test]
+    fn overlay_profile_env_replaces_profile_sensitive_paths() {
+        let mut env_map = HashMap::from([
+            ("USERPROFILE".to_string(), "C:\\Users\\host".to_string()),
+            (
+                "LOCALAPPDATA".to_string(),
+                "C:\\Users\\host\\AppData\\Local".to_string(),
+            ),
+            ("KEEP_ME".to_string(), "unchanged".to_string()),
+        ]);
+        let current_env = HashMap::from([
+            (
+                "USERPROFILE".to_string(),
+                "C:\\Users\\CodexSandbox".to_string(),
+            ),
+            (
+                "LOCALAPPDATA".to_string(),
+                "C:\\Users\\CodexSandbox\\AppData\\Local".to_string(),
+            ),
+            (
+                "TEMP".to_string(),
+                "C:\\Users\\CodexSandbox\\AppData\\Local\\Temp".to_string(),
+            ),
+        ]);
+
+        overlay_profile_env_from(&mut env_map, &current_env);
+
+        assert_eq!(
+            env_map.get("USERPROFILE"),
+            Some(&"C:\\Users\\CodexSandbox".to_string())
+        );
+        assert_eq!(
+            env_map.get("LOCALAPPDATA"),
+            Some(&"C:\\Users\\CodexSandbox\\AppData\\Local".to_string())
+        );
+        assert_eq!(
+            env_map.get("TEMP"),
+            Some(&"C:\\Users\\CodexSandbox\\AppData\\Local\\Temp".to_string())
+        );
+        assert_eq!(env_map.get("KEEP_ME"), Some(&"unchanged".to_string()));
+    }
 }
