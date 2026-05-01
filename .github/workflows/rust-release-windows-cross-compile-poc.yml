@@ -1,0 +1,182 @@
+name: rust-release-windows-cross-compile-poc
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/rust-release-windows-cross-compile-poc.yml"
+  workflow_dispatch:
+    inputs:
+      release_lto:
+        description: Cargo release LTO mode
+        type: choice
+        default: thin
+        options:
+          - thin
+          - fat
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  CARGO_PROFILE_RELEASE_LTO: ${{ github.event_name == 'workflow_dispatch' && inputs.release_lto || 'thin' }}
+  CARGO_TERM_COLOR: always
+  CARGO_XWIN_VERSION: 0.22.0
+  WINDOWS_TARGET: x86_64-pc-windows-msvc
+  XWIN_ARCH: x86_64
+  XWIN_CACHE_DIR: ${{ github.workspace }}/.xwin-cache
+  XWIN_VARIANT: desktop
+
+jobs:
+  build-windows-binaries:
+    name: Cross-compile Windows release binaries
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    defaults:
+      run:
+        working-directory: codex-rs
+
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+
+      - name: Print runner specs
+        shell: bash
+        run: |
+          set -euo pipefail
+          cpu_model="$(lscpu | awk -F: '/Model name/ {gsub(/^[ \t]+/, "", $2); print $2; exit}')"
+          total_ram="$(awk '/MemTotal/ {printf "%.1f GiB\n", $2 / 1024 / 1024}' /proc/meminfo)"
+          echo "Runner: ${RUNNER_NAME:-unknown}"
+          echo "OS: $(uname -a)"
+          echo "CPU model: ${cpu_model}"
+          echo "Logical CPUs: $(nproc)"
+          echo "Total RAM: ${total_ram}"
+          echo "Disk usage:"
+          df -h .
+
+      - name: Install cross-linker dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update -y
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+            clang \
+            cmake \
+            lld \
+            llvm \
+            nasm \
+            ninja-build \
+            pkg-config \
+            strace
+
+      - uses: dtolnay/rust-toolchain@a0b273b48ed29de4470960879e8381ff45632f26 # 1.93.0
+        with:
+          targets: ${{ env.WINDOWS_TARGET }}
+
+      - name: Compute cache key inputs
+        id: lockhash
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "lock_hash=$(sha256sum Cargo.lock | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
+          echo "toolchain_hash=$(sha256sum rust-toolchain.toml | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
+
+      - name: Restore cargo-xwin cache
+        id: cache_cargo_xwin_restore
+        uses: actions/cache/restore@668228422ae6a00e4ad889ee87cd7109ec5666a7 # v5
+        with:
+          path: |
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            ${{ env.XWIN_CACHE_DIR }}
+          key: cargo-xwin-${{ runner.os }}-${{ env.WINDOWS_TARGET }}-${{ env.CARGO_XWIN_VERSION }}-${{ steps.lockhash.outputs.lock_hash }}-${{ steps.lockhash.outputs.toolchain_hash }}
+          restore-keys: |
+            cargo-xwin-${{ runner.os }}-${{ env.WINDOWS_TARGET }}-${{ env.CARGO_XWIN_VERSION }}-
+
+      - name: Install cargo-xwin
+        shell: bash
+        run: |
+          set -euo pipefail
+          if ! cargo xwin --version 2>/dev/null | grep -F "$CARGO_XWIN_VERSION" >/dev/null; then
+            cargo install cargo-xwin --locked --version "$CARGO_XWIN_VERSION"
+          fi
+          cargo xwin --version
+
+      - name: Cache MSVC CRT and Windows SDK
+        shell: bash
+        run: cargo xwin cache xwin
+
+      - name: Build codex-responses-api-proxy
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo xwin build \
+            --release \
+            --target "$WINDOWS_TARGET" \
+            --timings \
+            --bin codex-responses-api-proxy
+
+      - name: Build codex-app-server
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo xwin build \
+            --release \
+            --target "$WINDOWS_TARGET" \
+            --timings \
+            --bin codex-app-server
+
+      - name: Build codex
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo xwin build \
+            --release \
+            --target "$WINDOWS_TARGET" \
+            --timings \
+            --bin codex
+
+      - name: Verify Windows artifacts
+        shell: bash
+        run: |
+          set -euo pipefail
+          for binary in codex-responses-api-proxy codex-app-server codex; do
+            path="target/${WINDOWS_TARGET}/release/${binary}.exe"
+            ls -lh "$path"
+            file "$path"
+          done
+
+      - name: Upload Cargo timings
+        if: always()
+        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7
+        with:
+          name: cargo-timings-rust-release-windows-cross-compile-poc-${{ env.WINDOWS_TARGET }}-primary-app-server
+          path: codex-rs/target/**/cargo-timings/cargo-timing.html
+          if-no-files-found: warn
+
+      - name: Upload Windows binaries
+        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7
+        with:
+          name: windows-cross-compile-poc-${{ env.WINDOWS_TARGET }}-primary-app-server
+          path: |
+            codex-rs/target/${{ env.WINDOWS_TARGET }}/release/codex-responses-api-proxy.exe
+            codex-rs/target/${{ env.WINDOWS_TARGET }}/release/codex-app-server.exe
+            codex-rs/target/${{ env.WINDOWS_TARGET }}/release/codex.exe
+          if-no-files-found: error
+
+      - name: Save cargo-xwin cache
+        if: always() && !cancelled() && steps.cache_cargo_xwin_restore.outputs.cache-hit != 'true'
+        continue-on-error: true
+        uses: actions/cache/save@668228422ae6a00e4ad889ee87cd7109ec5666a7 # v5
+        with:
+          path: |
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            ${{ env.XWIN_CACHE_DIR }}
+          key: cargo-xwin-${{ runner.os }}-${{ env.WINDOWS_TARGET }}-${{ env.CARGO_XWIN_VERSION }}-${{ steps.lockhash.outputs.lock_hash }}-${{ steps.lockhash.outputs.toolchain_hash }}
