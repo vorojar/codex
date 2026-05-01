@@ -89,6 +89,10 @@ impl FeatureConfig for NetworkProxyConfigToml {
     fn enabled(&self) -> Option<bool> {
         self.enabled
     }
+
+    fn set_enabled(&mut self, enabled: bool) {
+        self.enabled = Some(enabled);
+    }
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, JsonSchema)]
