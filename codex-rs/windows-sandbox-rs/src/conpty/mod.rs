@@ -10,6 +10,7 @@ mod proc_thread_attr;
 
 use self::proc_thread_attr::ProcThreadAttributeList;
 use crate::desktop::LaunchDesktop;
+use crate::program_resolution::resolve_spawn_command;
 use crate::winutil::format_last_error;
 use crate::winutil::quote_windows_arg;
 use crate::winutil::to_wide;
@@ -94,12 +95,15 @@ pub fn spawn_conpty_process_as_user(
     use_private_desktop: bool,
     logs_base_dir: Option<&Path>,
 ) -> Result<(PROCESS_INFORMATION, ConptyInstance)> {
-    let cmdline_str = argv
+    let resolved_command = resolve_spawn_command(argv, cwd, env_map);
+    let spawn_argv = resolved_command.argv;
+    let cmdline_str = spawn_argv
         .iter()
         .map(|arg| quote_windows_arg(arg))
         .collect::<Vec<_>>()
         .join(" ");
     let mut cmdline: Vec<u16> = to_wide(&cmdline_str);
+    let application_name = resolved_command.application_name.map(to_wide);
     let env_block = make_env_block(env_map);
     let mut si: STARTUPINFOEXW = unsafe { std::mem::zeroed() };
     si.StartupInfo.cb = std::mem::size_of::<STARTUPINFOEXW>() as u32;
@@ -119,7 +123,10 @@ pub fn spawn_conpty_process_as_user(
     let ok = unsafe {
         CreateProcessAsUserW(
             h_token,
-            std::ptr::null(),
+            application_name
+                .as_ref()
+                .map(|path| path.as_ptr())
+                .unwrap_or(std::ptr::null()),
             cmdline.as_mut_ptr(),
             std::ptr::null_mut(),
             std::ptr::null_mut(),

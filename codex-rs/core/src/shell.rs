@@ -1,5 +1,9 @@
 use crate::shell_detect::detect_shell_type;
 use crate::shell_snapshot::ShellSnapshot;
+#[cfg(windows)]
+use codex_shell_command::powershell::try_find_powershell_executable_blocking;
+#[cfg(windows)]
+use codex_shell_command::powershell::try_find_pwsh_executable_blocking;
 use serde::Deserialize;
 use serde::Serialize;
 use std::path::PathBuf;
@@ -250,6 +254,29 @@ const POWERSHELL_FALLBACK_PATHS: &[&str] =
 const POWERSHELL_FALLBACK_PATHS: &[&str] = &[];
 
 fn get_powershell_shell(path: Option<&PathBuf>) -> Option<Shell> {
+    #[cfg(windows)]
+    let shell_path = path
+        .and_then(file_exists)
+        .or_else(|| try_find_pwsh_executable_blocking().map(|path| path.into_path_buf()))
+        .or_else(|| try_find_powershell_executable_blocking().map(|path| path.into_path_buf()))
+        .or_else(|| {
+            get_shell_path(
+                ShellType::PowerShell,
+                /* provided_path */ None,
+                "pwsh",
+                PWSH_FALLBACK_PATHS,
+            )
+        })
+        .or_else(|| {
+            get_shell_path(
+                ShellType::PowerShell,
+                /* provided_path */ None,
+                "powershell",
+                POWERSHELL_FALLBACK_PATHS,
+            )
+        });
+
+    #[cfg(not(windows))]
     let shell_path = get_shell_path(ShellType::PowerShell, path, "pwsh", PWSH_FALLBACK_PATHS)
         .or_else(|| {
             get_shell_path(

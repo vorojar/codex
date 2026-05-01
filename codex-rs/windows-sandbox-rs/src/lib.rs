@@ -31,6 +31,9 @@ windows_modules!(
     workspace_acl
 );
 
+#[cfg(any(target_os = "windows", test))]
+mod program_resolution;
+
 #[cfg(target_os = "windows")]
 #[path = "conpty/mod.rs"]
 mod conpty;
