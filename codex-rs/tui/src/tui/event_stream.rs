@@ -248,7 +248,9 @@ impl<S: EventSource + Default + Unpin> TuiEventStream<S> {
             Event::Paste(pasted) => Some(TuiEvent::Paste(pasted)),
             Event::FocusGained => {
                 self.terminal_focused.store(true, Ordering::Relaxed);
+                self.broker.pause_events();
                 crate::terminal_palette::requery_default_colors();
+                self.broker.resume_events();
                 Some(TuiEvent::Draw)
             }
             Event::FocusLost => {
