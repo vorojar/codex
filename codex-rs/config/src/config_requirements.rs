@@ -2653,7 +2653,7 @@ allow_managed_hooks_only = true
         assert_eq!(
             target.allow_managed_hooks_only,
             Some(Sourced::new(
-                true,
+                /*value*/ true,
                 RequirementSource::SystemRequirementsToml {
                     file: system_requirements_toml_file_for_test()?,
                 },
