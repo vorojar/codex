@@ -1,7 +1,7 @@
-//! Codex Apps-specific auth elicitation helpers.
+//! Auth elicitation helpers.
 //!
-//! This module owns the protocol-neutral parsing and payload shaping for
-//! connector auth failures. Session orchestration stays in `codex-core`.
+//! This module owns protocol-neutral auth elicitation parsing and payload shaping.
+//! Session orchestration stays in `codex-core`.
 
 use codex_protocol::mcp::CallToolResult;
 use serde::Serialize;
@@ -34,6 +34,12 @@ pub struct CodexAppsAuthElicitation {
     pub message: String,
     pub url: String,
     pub elicitation_id: String,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct CodexAppsAuthElicitationPlan {
+    pub auth_failure: CodexAppsConnectorAuthFailure,
+    pub elicitation: CodexAppsAuthElicitation,
 }
 
 #[derive(Serialize)]
@@ -112,6 +118,22 @@ pub fn connector_auth_failure_from_tool_result(
             auth_failure,
             CONNECTOR_AUTH_FAILURE_ERROR_ACTION_KEY,
         ),
+    })
+}
+
+pub fn build_auth_elicitation_plan(
+    call_id: &str,
+    result: &CallToolResult,
+    connector_id: Option<&str>,
+    connector_name: Option<&str>,
+    install_url: Option<String>,
+) -> Option<CodexAppsAuthElicitationPlan> {
+    let auth_failure =
+        connector_auth_failure_from_tool_result(result, connector_id, connector_name, install_url)?;
+    let elicitation = build_auth_elicitation(call_id, &auth_failure);
+    Some(CodexAppsAuthElicitationPlan {
+        auth_failure,
+        elicitation,
     })
 }
 
@@ -306,5 +328,20 @@ mod tests {
                 elicitation_id: "codex_apps_auth_call_123".to_string(),
             }
         );
+    }
+
+    #[test]
+    fn builds_auth_elicitation_plan() {
+        let plan = build_auth_elicitation_plan(
+            "call_123",
+            &auth_failure_result(),
+            Some("connector_calendar"),
+            Some("Google Calendar"),
+            Some("https://chatgpt.com/apps/google-calendar/connector_calendar".to_string()),
+        )
+        .expect("auth elicitation plan");
+
+        assert_eq!(plan.auth_failure.connector_name, "Google Calendar");
+        assert_eq!(plan.elicitation.elicitation_id, "codex_apps_auth_call_123");
     }
 }

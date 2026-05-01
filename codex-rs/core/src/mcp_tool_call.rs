@@ -44,9 +44,7 @@ use codex_mcp::MCP_TOOL_CODEX_APPS_META_KEY;
 use codex_mcp::McpPermissionPromptAutoApproveContext;
 use codex_mcp::SandboxState;
 use codex_mcp::auth_elicitation_completed_result;
-use codex_mcp::auth_elicitation_id;
-use codex_mcp::build_auth_elicitation;
-use codex_mcp::connector_auth_failure_from_tool_result;
+use codex_mcp::build_auth_elicitation_plan;
 use codex_mcp::declared_openai_file_input_param_names;
 use codex_mcp::mcp_permission_prompt_is_auto_approved;
 use codex_otel::sanitize_metric_tag_value;
@@ -620,23 +618,22 @@ async fn maybe_request_codex_apps_auth_elicitation(
             connector_id,
         )
     });
-    let Some(auth_failure) =
-        connector_auth_failure_from_tool_result(&result, connector_id, connector_name, install_url)
+    let Some(plan) =
+        build_auth_elicitation_plan(call_id, &result, connector_id, connector_name, install_url)
     else {
         return result;
     };
 
-    let request_id = rmcp::model::RequestId::String(auth_elicitation_id(call_id).into());
-    let auth_elicitation = build_auth_elicitation(call_id, &auth_failure);
+    let request_id = rmcp::model::RequestId::String(plan.elicitation.elicitation_id.clone().into());
     let params = McpServerElicitationRequestParams {
         thread_id: sess.conversation_id.to_string(),
         turn_id: Some(turn_context.sub_id.clone()),
         server_name: CODEX_APPS_MCP_SERVER_NAME.to_string(),
         request: McpServerElicitationRequest::Url {
-            meta: Some(auth_elicitation.meta),
-            message: auth_elicitation.message,
-            url: auth_elicitation.url,
-            elicitation_id: auth_elicitation.elicitation_id,
+            meta: Some(plan.elicitation.meta),
+            message: plan.elicitation.message,
+            url: plan.elicitation.url,
+            elicitation_id: plan.elicitation.elicitation_id,
         },
     };
     let response = sess
@@ -650,7 +647,7 @@ async fn maybe_request_codex_apps_auth_elicitation(
     }
 
     refresh_codex_apps_after_connector_auth(sess, turn_context).await;
-    auth_elicitation_completed_result(&auth_failure, result.meta)
+    auth_elicitation_completed_result(&plan.auth_failure, result.meta)
 }
 
 #[expect(
