@@ -47,6 +47,25 @@ resolve_runfile() {
 workspace_root_marker="$(resolve_runfile "__WORKSPACE_ROOT_MARKER__")"
 workspace_root="$(dirname "$(dirname "$(dirname "${workspace_root_marker}")")")"
 test_bin="$(resolve_runfile "__TEST_BIN__")"
+RUNFILE_ENV_ARGS=()
+
+__RUNFILE_ENV_EXPORTS__
+
+run_test_bin() {
+  if (( ${#RUNFILE_ENV_ARGS[@]} > 0 )); then
+    env "${RUNFILE_ENV_ARGS[@]}" "${test_bin}" "$@"
+  else
+    "${test_bin}" "$@"
+  fi
+}
+
+exec_test_bin() {
+  if (( ${#RUNFILE_ENV_ARGS[@]} > 0 )); then
+    exec env "${RUNFILE_ENV_ARGS[@]}" "${test_bin}" "$@"
+  else
+    exec "${test_bin}" "$@"
+  fi
+}
 
 test_shard_index() {
   local test_name="$1"
@@ -75,7 +94,7 @@ run_sharded_libtest() {
   # Extra libtest args are usually ad-hoc local filters. Preserve those exactly
   # rather than combining them with generated exact filters.
   if [[ $# -gt 0 ]]; then
-    exec "${test_bin}" "$@"
+    exec_test_bin "$@"
   fi
 
   if [[ -z "${SHARD_INDEX}" ]]; then
@@ -85,7 +104,7 @@ run_sharded_libtest() {
 
   local list_output
   local test_list
-  list_output="$("${test_bin}" --list --format terse)"
+  list_output="$(run_test_bin --list --format terse)"
   test_list="$(printf '%s\n' "${list_output}" | grep ': test$' | sed 's/: test$//' | LC_ALL=C sort || true)"
 
   if [[ -z "${test_list}" ]]; then
@@ -104,11 +123,10 @@ run_sharded_libtest() {
     exit 0
   fi
 
-  exec "${test_bin}" "${shard_tests[@]}" --exact
+  exec_test_bin "${shard_tests[@]}" --exact
 }
 
-export INSTA_WORKSPACE_ROOT="${workspace_root}"
-cd "${workspace_root}"
+__WORKSPACE_ROOT_SETUP__
 
 TOTAL_SHARDS="${RULES_RUST_TEST_TOTAL_SHARDS:-${TEST_TOTAL_SHARDS:-}}"
 SHARD_INDEX="${RULES_RUST_TEST_SHARD_INDEX:-${TEST_SHARD_INDEX:-}}"
@@ -116,4 +134,4 @@ if [[ -n "${TOTAL_SHARDS}" && "${TOTAL_SHARDS}" != "0" ]]; then
   run_sharded_libtest "$@"
 fi
 
-exec "${test_bin}" "$@"
+exec_test_bin "$@"
