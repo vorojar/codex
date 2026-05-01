@@ -127,11 +127,9 @@ fn profile_network_requires_proxy(network: &NetworkToml) -> bool {
         || network.allow_upstream_proxy == Some(true)
         || network.dangerously_allow_non_loopback_proxy == Some(true)
         || network.dangerously_allow_all_unix_sockets == Some(true)
-        || network.mitm == Some(true)
-        || network
-            .mitm_hooks
-            .as_ref()
-            .is_some_and(|hooks| !hooks.is_empty())
+        || network.mitm.as_ref().is_some_and(|mitm| {
+            mitm.enabled == Some(true) || mitm.hooks.as_ref().is_some_and(|hooks| !hooks.is_empty())
+        })
         || network.mode.is_some()
         || network
             .domains

@@ -6,13 +6,14 @@ use codex_config::permissions_toml::FilesystemPermissionToml;
 use codex_config::permissions_toml::FilesystemPermissionsToml;
 use codex_config::permissions_toml::NetworkDomainPermissionToml;
 use codex_config::permissions_toml::NetworkDomainPermissionsToml;
+use codex_config::permissions_toml::NetworkMitmActionToml;
+use codex_config::permissions_toml::NetworkMitmHookToml;
+use codex_config::permissions_toml::NetworkMitmToml;
 use codex_config::permissions_toml::NetworkToml;
 use codex_config::permissions_toml::NetworkUnixSocketPermissionToml;
 use codex_config::permissions_toml::NetworkUnixSocketPermissionsToml;
 use codex_config::permissions_toml::PermissionProfileToml;
 use codex_config::permissions_toml::PermissionsToml;
-use codex_network_proxy::MitmHookConfig;
-use codex_network_proxy::MitmHookMatchConfig;
 use codex_protocol::permissions::FileSystemAccessMode;
 use codex_protocol::permissions::FileSystemPath;
 use codex_protocol::permissions::FileSystemSandboxEntry;
@@ -252,22 +253,80 @@ fn profile_network_proxy_config_keeps_proxy_disabled_for_bare_network_access() {
 fn profile_network_proxy_config_enables_proxy_for_mitm_hooks() {
     let config = network_proxy_config_from_profile_network(Some(&NetworkToml {
         enabled: Some(true),
-        mitm: Some(true),
-        mitm_hooks: Some(vec![MitmHookConfig {
-            host: "api.github.com".to_string(),
-            matcher: MitmHookMatchConfig {
-                methods: vec!["POST".to_string()],
-                path_prefixes: vec!["/repos/openai/".to_string()],
-                ..MitmHookMatchConfig::default()
-            },
-            ..MitmHookConfig::default()
-        }]),
+        mitm: Some(NetworkMitmToml {
+            enabled: Some(true),
+            hooks: Some(BTreeMap::from([(
+                "github_write".to_string(),
+                NetworkMitmHookToml {
+                    host: "api.github.com".to_string(),
+                    methods: vec!["POST".to_string()],
+                    path_prefixes: vec!["/repos/openai/".to_string()],
+                    query: BTreeMap::new(),
+                    headers: BTreeMap::new(),
+                    body: None,
+                    action: vec!["strip_auth".to_string()],
+                },
+            )])),
+            actions: Some(BTreeMap::from([(
+                "strip_auth".to_string(),
+                NetworkMitmActionToml {
+                    strip_request_headers: vec!["authorization".to_string()],
+                    ..NetworkMitmActionToml::default()
+                },
+            )])),
+        }),
         ..Default::default()
     }));
 
     assert!(config.network.enabled);
     assert!(config.network.mitm);
     assert_eq!(config.network.mitm_hooks.len(), 1);
+    assert_eq!(config.network.mitm_hooks[0].host, "api.github.com");
+    assert_eq!(
+        config.network.mitm_hooks[0].matcher.methods,
+        vec!["POST".to_string()]
+    );
+}
+
+#[test]
+fn profile_network_proxy_config_enables_proxy_for_mitm_hook_tables_without_enabled_flag() {
+    let config = network_proxy_config_from_profile_network(Some(&NetworkToml {
+        enabled: Some(true),
+        mitm: Some(NetworkMitmToml {
+            enabled: None,
+            hooks: Some(BTreeMap::from([(
+                "github_write".to_string(),
+                NetworkMitmHookToml {
+                    host: "api.github.com".to_string(),
+                    methods: vec!["POST".to_string()],
+                    path_prefixes: vec!["/repos/openai/".to_string()],
+                    query: BTreeMap::new(),
+                    headers: BTreeMap::new(),
+                    body: None,
+                    action: Vec::new(),
+                },
+            )])),
+            actions: None,
+        }),
+        ..Default::default()
+    }));
+
+    assert!(config.network.enabled);
+}
+
+#[test]
+fn profile_network_proxy_config_keeps_proxy_disabled_for_empty_mitm_table() {
+    let config = network_proxy_config_from_profile_network(Some(&NetworkToml {
+        enabled: Some(true),
+        mitm: Some(NetworkMitmToml {
+            enabled: None,
+            hooks: Some(BTreeMap::new()),
+            actions: None,
+        }),
+        ..Default::default()
+    }));
+
+    assert!(!config.network.enabled);
 }
 
 #[test]
