@@ -2950,6 +2950,7 @@ fn turn_environments_for_tests(
         environment_id: codex_exec_server::LOCAL_ENVIRONMENT_ID.to_string(),
         environment: Arc::clone(environment),
         cwd: cwd.clone(),
+        shell: "bash".to_string(),
     }]
 }
 
@@ -4489,6 +4490,7 @@ async fn primary_environment_uses_first_turn_environment() {
         environment_id: "second".to_string(),
         environment: Arc::clone(&first_environment.environment),
         cwd: second_cwd.clone(),
+        shell: first_environment.shell.clone(),
     });
 
     assert_eq!(
