@@ -1567,7 +1567,7 @@ fn build_mcp_tool_approval_elicitation_request(
         turn_id: Some(turn_context.sub_id.clone()),
         server_name: request.server.to_string(),
         request: McpServerElicitationRequest::Form {
-            meta: mcp_tool_approval_elicitation_meta(
+            meta: build_mcp_tool_approval_elicitation_meta(
                 request.approval_request,
                 request.tool_params,
                 request.tool_params_display,
@@ -1584,7 +1584,7 @@ fn build_mcp_tool_approval_elicitation_request(
     }
 }
 
-fn mcp_tool_approval_elicitation_meta(
+fn build_mcp_tool_approval_elicitation_meta(
     approval_request: &GuardianApprovalRequest,
     tool_params: Option<&JsonValue>,
     tool_params_display: Option<&[RenderedMcpToolApprovalParam]>,

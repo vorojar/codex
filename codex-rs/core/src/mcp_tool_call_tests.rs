@@ -1236,7 +1236,7 @@ fn approval_elicitation_meta_marks_tool_approvals() {
         /*metadata*/ None,
     );
     assert_eq!(
-        mcp_tool_approval_elicitation_meta(
+        build_mcp_tool_approval_elicitation_meta(
             &request,
             /*tool_params*/ None,
             /*tool_params_display*/ None,
@@ -1266,7 +1266,7 @@ fn approval_elicitation_meta_merges_session_and_always_persist_for_custom_server
         Some(&metadata),
     );
     assert_eq!(
-        mcp_tool_approval_elicitation_meta(
+        build_mcp_tool_approval_elicitation_meta(
             &request,
             Some(&serde_json::json!({"id": 1})),
             /*tool_params_display*/ None,
@@ -1490,7 +1490,7 @@ fn approval_elicitation_meta_includes_connector_source_for_codex_apps() {
         Some(&metadata),
     );
     assert_eq!(
-        mcp_tool_approval_elicitation_meta(
+        build_mcp_tool_approval_elicitation_meta(
             &request,
             Some(&serde_json::json!({
                 "calendar_id": "primary",
@@ -1533,7 +1533,7 @@ fn approval_elicitation_meta_merges_session_and_always_persist_with_connector_so
         Some(&metadata),
     );
     assert_eq!(
-        mcp_tool_approval_elicitation_meta(
+        build_mcp_tool_approval_elicitation_meta(
             &request,
             Some(&serde_json::json!({
                 "calendar_id": "primary",
