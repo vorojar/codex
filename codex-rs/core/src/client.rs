@@ -440,8 +440,9 @@ impl ModelClient {
             summary,
             None,
         )?;
-        // `/responses/compact` currently rejects these shared `/responses` fields, so omit only
-        // the unsupported subset while keeping the rest of the shared request builder output.
+        // Phase 1 builds the same request body that a normal `/responses` turn would send. Phase 2
+        // clears only the fields the compact endpoint currently rejects; the rest of the body stays
+        // shared so parity drift shows up in the integration snapshot.
         request.store = None;
         request.stream = None;
         request.include = None;

@@ -147,6 +147,11 @@ impl From<VerbosityConfig> for OpenAiVerbosity {
     }
 }
 
+/// Shared request body for `/responses`-style calls.
+///
+/// Normal sampling sends every populated field. `/responses/compact` starts from this same shape
+/// and then clears the fields that endpoint does not accept, so new request-body fields naturally
+/// stay visible to both paths unless compact explicitly opts out.
 #[derive(Debug, Serialize, Clone, PartialEq)]
 pub struct ResponsesApiRequest {
     pub model: String,

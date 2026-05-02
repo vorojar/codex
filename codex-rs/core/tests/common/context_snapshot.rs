@@ -243,6 +243,11 @@ pub fn format_labeled_items_snapshot(
     format!("Scenario: {scenario}\n\n{sections}")
 }
 
+/// Render a full unified diff between two captured `/responses` request inputs.
+///
+/// Request-parity tests use this instead of comparing raw JSON so the snapshot explains exactly
+/// which model-visible history items changed while still applying the same redactions as the other
+/// context snapshots.
 pub fn format_request_input_diff_snapshot(
     scenario: &str,
     before_title: &str,

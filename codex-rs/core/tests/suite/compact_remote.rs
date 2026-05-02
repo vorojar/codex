@@ -136,6 +136,8 @@ fn format_request_input_diff_snapshot(
     after_title: &str,
     after_request: &responses::ResponsesRequest,
 ) -> String {
+    // Keep compact parity snapshots on the same rendering path as the broader context snapshots,
+    // but show a unified diff because this test cares about the precise append-only delta.
     context_snapshot::format_request_input_diff_snapshot(
         scenario,
         before_title,
@@ -428,6 +430,9 @@ async fn remote_compact_replaces_history_for_followups() -> Result<()> {
 async fn remote_manual_compact_matches_last_sampling_request_after_varied_history() -> Result<()> {
     skip_if_no_network!(Ok(()));
 
+    // Phase 1: script five completed user turns with deliberately different output shapes. The
+    // unsupported tool call and local shell call each add a continuation request, so the mock
+    // captures seven normal `/responses` requests for five logical turns.
     let harness = TestCodexHarness::with_builder(
         test_codex().with_auth(CodexAuth::create_dummy_chatgpt_auth_for_testing()),
     )
@@ -492,6 +497,8 @@ async fn remote_manual_compact_matches_last_sampling_request_after_varied_histor
     )
     .await;
 
+    // Phase 2: drive the varied user inputs through the real session path. The final turn is a
+    // normal sampling request first; only after it completes do we manually compact.
     codex
         .submit(Op::UserInput {
             environments: None,
@@ -566,6 +573,9 @@ async fn remote_manual_compact_matches_last_sampling_request_after_varied_histor
         .await?;
     wait_for_turn_complete(&codex).await;
 
+    // Phase 3: trigger remote manual compaction after the fifth turn is fully recorded. This makes
+    // the last normal request the "before compact" baseline and the compact request the "after"
+    // request that should append only completed final-turn outputs.
     codex.submit(Op::Compact).await?;
     wait_for_turn_complete(&codex).await;
 
@@ -587,6 +597,9 @@ async fn remote_manual_compact_matches_last_sampling_request_after_varied_histor
         .expect("last turn request missing");
     let compact_request = compact_mock.single_request();
 
+    // Phase 4: first compare the full non-input request body. Normal `/responses` accepts a few
+    // transport/caching metadata fields that `/responses/compact` rejects, so strip those from the
+    // normal request only; if compact sends any of them, the whole-object equality still fails.
     let mut last_turn_body_without_input = last_turn_request.body_json();
     last_turn_body_without_input
         .as_object_mut()
@@ -597,20 +610,17 @@ async fn remote_manual_compact_matches_last_sampling_request_after_varied_histor
         .as_object_mut()
         .expect("compact request body should be an object")
         .remove("input");
-    for field in ["store", "stream", "include"] {
+    for field in ["store", "stream", "include", "client_metadata"] {
         last_turn_body_without_input
             .as_object_mut()
             .expect("responses request body should be an object")
             .remove(field);
-        assert!(
-            compact_body_without_input
-                .as_object()
-                .is_some_and(|body| !body.contains_key(field)),
-            "compact request should omit {field}"
-        );
     }
     assert_eq!(compact_body_without_input, last_turn_body_without_input);
 
+    // Phase 5: then snapshot the model-visible input delta. The expected diff is append-only:
+    // final-turn reasoning and assistant output appear in compact because the normal request was
+    // captured before those outputs existed.
     insta::assert_snapshot!(
         "remote_manual_compact_varied_history_request_diff",
         format_request_input_diff_snapshot(
