@@ -440,14 +440,11 @@ impl ModelClient {
             summary,
             None,
         )?;
-        // `/responses/compact` currently rejects several `/responses`-only transport and caching
-        // fields, so omit them while keeping the shared request builder for the supported shape.
+        // `/responses/compact` currently rejects these shared `/responses` fields, so omit only
+        // the unsupported subset while keeping the rest of the shared request builder output.
         request.store = None;
         request.stream = None;
         request.include = None;
-        request.service_tier = None;
-        request.prompt_cache_key = None;
-        request.client_metadata = None;
         let options = self.build_responses_options(
             /*turn_state*/ None,
             /*turn_metadata_header*/ None,

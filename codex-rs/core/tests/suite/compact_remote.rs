@@ -597,13 +597,7 @@ async fn remote_manual_compact_matches_last_sampling_request_after_varied_histor
         .as_object_mut()
         .expect("compact request body should be an object")
         .remove("input");
-    for field in [
-        "store",
-        "stream",
-        "include",
-        "prompt_cache_key",
-        "client_metadata",
-    ] {
+    for field in ["store", "stream", "include"] {
         last_turn_body_without_input
             .as_object_mut()
             .expect("responses request body should be an object")
