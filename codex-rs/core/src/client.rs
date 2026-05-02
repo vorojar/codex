@@ -406,15 +406,17 @@ impl ModelClient {
     /// This is a unary call (no streaming) that returns a new list of
     /// `ResponseItem`s representing the compacted transcript.
     ///
-    /// The model selection and telemetry context are passed explicitly to keep `ModelClient`
-    /// session-scoped.
+    /// Per-turn request settings are passed explicitly, matching the normal `/responses` streaming
+    /// callsite while keeping `ModelClient` session-scoped.
     pub async fn compact_conversation_history(
         &self,
         prompt: &Prompt,
         model_info: &ModelInfo,
+        session_telemetry: &SessionTelemetry,
         effort: Option<ReasoningEffortConfig>,
         summary: ReasoningSummaryConfig,
-        session_telemetry: &SessionTelemetry,
+        service_tier: Option<ServiceTier>,
+        turn_metadata_header: Option<&str>,
         compaction_trace: &CompactionTraceContext,
     ) -> Result<Vec<ResponseItem>> {
         if prompt.input.is_empty() {
@@ -438,7 +440,7 @@ impl ModelClient {
             model_info,
             effort,
             summary,
-            /*service_tier*/ None,
+            service_tier,
         )?;
         // Phase 1 builds the same request body that a normal `/responses` turn would send. Phase 2
         // clears only the fields the compact endpoint currently rejects; the rest of the body stays
@@ -449,7 +451,7 @@ impl ModelClient {
         request.client_metadata = None;
         let options = self.build_responses_options(
             /*turn_state*/ None,
-            /*turn_metadata_header*/ None,
+            turn_metadata_header,
             Compression::None,
         );
         let trace_attempt = compaction_trace.start_attempt(&request);
