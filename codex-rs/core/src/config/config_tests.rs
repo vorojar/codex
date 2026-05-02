@@ -733,54 +733,6 @@ allow_upstream_proxy = false
 }
 
 #[tokio::test]
-async fn permissions_profiles_network_enabled_allows_runtime_network_without_proxy()
--> std::io::Result<()> {
-    let codex_home = TempDir::new()?;
-    let cwd = TempDir::new()?;
-    std::fs::write(cwd.path().join(".git"), "gitdir: nowhere")?;
-
-    let config = Config::load_from_base_config_with_overrides(
-        ConfigToml {
-            default_permissions: Some("workspace".to_string()),
-            permissions: Some(PermissionsToml {
-                entries: BTreeMap::from([(
-                    "workspace".to_string(),
-                    PermissionProfileToml {
-                        filesystem: Some(FilesystemPermissionsToml {
-                            glob_scan_max_depth: None,
-                            entries: BTreeMap::from([(
-                                ":minimal".to_string(),
-                                FilesystemPermissionToml::Access(FileSystemAccessMode::Read),
-                            )]),
-                        }),
-                        network: Some(NetworkToml {
-                            enabled: Some(true),
-                            ..Default::default()
-                        }),
-                    },
-                )]),
-            }),
-            ..Default::default()
-        },
-        ConfigOverrides {
-            cwd: Some(cwd.path().to_path_buf()),
-            ..Default::default()
-        },
-        codex_home.abs(),
-    )
-    .await?;
-    assert_eq!(
-        config.permissions.network_sandbox_policy(),
-        NetworkSandboxPolicy::Enabled
-    );
-    assert!(
-        config.permissions.network.is_none(),
-        "bare profile network.enabled should not start the managed network proxy"
-    );
-    Ok(())
-}
-
-#[tokio::test]
 async fn permissions_profiles_proxy_policy_does_not_start_managed_network_proxy_without_feature()
 -> std::io::Result<()> {
     let codex_home = TempDir::new()?;
@@ -863,43 +815,145 @@ async fn network_proxy_feature_starts_proxy_without_enabling_sandbox_network() -
 }
 
 #[tokio::test]
-async fn network_proxy_feature_does_not_widen_legacy_workspace_write_network_access()
--> std::io::Result<()> {
-    let codex_home = TempDir::new()?;
-    let cwd = TempDir::new()?;
-    let config = Config::load_from_base_config_with_overrides(
-        toml::from_str(
-            r#"
-sandbox_mode = "workspace-write"
+async fn network_proxy_feature_matrix_preserves_sandbox_network_semantics() -> std::io::Result<()> {
+    #[derive(Clone, Copy)]
+    enum Surface {
+        PermissionProfile,
+        LegacyWorkspaceWrite,
+    }
 
-[sandbox_workspace_write]
-network_access = false
+    struct Case {
+        name: &'static str,
+        surface: Surface,
+        network_enabled: bool,
+        proxy_enabled: bool,
+        expected_network_policy: NetworkSandboxPolicy,
+    }
 
-[features]
-network_proxy = true
-"#,
-        )
-        .expect("valid config"),
-        ConfigOverrides {
-            cwd: Some(cwd.path().to_path_buf()),
-            ..Default::default()
+    let cases = [
+        Case {
+            name: "permission profile network disabled without proxy",
+            surface: Surface::PermissionProfile,
+            network_enabled: false,
+            proxy_enabled: false,
+            expected_network_policy: NetworkSandboxPolicy::Restricted,
         },
-        codex_home.abs(),
-    )
-    .await?;
+        Case {
+            name: "permission profile network disabled with proxy",
+            surface: Surface::PermissionProfile,
+            network_enabled: false,
+            proxy_enabled: true,
+            expected_network_policy: NetworkSandboxPolicy::Restricted,
+        },
+        Case {
+            name: "permission profile network enabled without proxy",
+            surface: Surface::PermissionProfile,
+            network_enabled: true,
+            proxy_enabled: false,
+            expected_network_policy: NetworkSandboxPolicy::Enabled,
+        },
+        Case {
+            name: "permission profile network enabled with proxy",
+            surface: Surface::PermissionProfile,
+            network_enabled: true,
+            proxy_enabled: true,
+            expected_network_policy: NetworkSandboxPolicy::Enabled,
+        },
+        Case {
+            name: "legacy workspace write network disabled without proxy",
+            surface: Surface::LegacyWorkspaceWrite,
+            network_enabled: false,
+            proxy_enabled: false,
+            expected_network_policy: NetworkSandboxPolicy::Restricted,
+        },
+        Case {
+            name: "legacy workspace write network disabled with proxy",
+            surface: Surface::LegacyWorkspaceWrite,
+            network_enabled: false,
+            proxy_enabled: true,
+            expected_network_policy: NetworkSandboxPolicy::Restricted,
+        },
+        Case {
+            name: "legacy workspace write network enabled without proxy",
+            surface: Surface::LegacyWorkspaceWrite,
+            network_enabled: true,
+            proxy_enabled: false,
+            expected_network_policy: NetworkSandboxPolicy::Enabled,
+        },
+        Case {
+            name: "legacy workspace write network enabled with proxy",
+            surface: Surface::LegacyWorkspaceWrite,
+            network_enabled: true,
+            proxy_enabled: true,
+            expected_network_policy: NetworkSandboxPolicy::Enabled,
+        },
+    ];
 
-    assert_eq!(
-        config.permissions.network_sandbox_policy(),
-        NetworkSandboxPolicy::Restricted
-    );
-    assert!(
-        config
-            .permissions
-            .network
-            .as_ref()
-            .expect("network_proxy should start the managed network proxy")
-            .enabled()
-    );
+    for case in cases {
+        let codex_home = TempDir::new()?;
+        let cwd = TempDir::new()?;
+        std::fs::write(cwd.path().join(".git"), "gitdir: nowhere")?;
+        let features = case
+            .proxy_enabled
+            .then(|| toml::from_str("network_proxy = true").expect("valid features"));
+        let base_config = match case.surface {
+            Surface::PermissionProfile => ConfigToml {
+                default_permissions: Some("workspace".to_string()),
+                permissions: Some(PermissionsToml {
+                    entries: BTreeMap::from([(
+                        "workspace".to_string(),
+                        PermissionProfileToml {
+                            filesystem: Some(FilesystemPermissionsToml {
+                                glob_scan_max_depth: None,
+                                entries: BTreeMap::from([(
+                                    ":minimal".to_string(),
+                                    FilesystemPermissionToml::Access(FileSystemAccessMode::Read),
+                                )]),
+                            }),
+                            network: Some(NetworkToml {
+                                enabled: Some(case.network_enabled),
+                                ..Default::default()
+                            }),
+                        },
+                    )]),
+                }),
+                features,
+                ..Default::default()
+            },
+            Surface::LegacyWorkspaceWrite => ConfigToml {
+                sandbox_mode: Some(SandboxMode::WorkspaceWrite),
+                sandbox_workspace_write: Some(SandboxWorkspaceWrite {
+                    network_access: case.network_enabled,
+                    ..Default::default()
+                }),
+                features,
+                ..Default::default()
+            },
+        };
+        let config = Config::load_from_base_config_with_overrides(
+            base_config,
+            ConfigOverrides {
+                cwd: Some(cwd.path().to_path_buf()),
+                ..Default::default()
+            },
+            codex_home.abs(),
+        )
+        .await?;
+
+        assert_eq!(
+            config.permissions.network_sandbox_policy(),
+            case.expected_network_policy,
+            "{}",
+            case.name
+        );
+        assert_eq!(
+            config.permissions.network.is_some(),
+            case.proxy_enabled,
+            "{}",
+            case.name
+        );
+    }
+
     Ok(())
 }
 
