@@ -15,7 +15,7 @@ fn absolute_path(path: &str) -> AbsolutePathBuf {
     AbsolutePathBuf::from_absolute_path(path).expect("absolute path")
 }
 
-fn thread_goal_updated_notification() -> ServerNotification {
+fn goal_updated_notification() -> ServerNotification {
     ServerNotification::ThreadGoalUpdated(ThreadGoalUpdatedNotification {
         thread_id: "thread-1".to_string(),
         turn_id: None,
@@ -182,7 +182,7 @@ async fn experimental_notifications_are_dropped_without_capability() {
         &mut connections,
         OutgoingEnvelope::ToConnection {
             connection_id,
-            message: OutgoingMessage::AppServerNotification(thread_goal_updated_notification()),
+            message: OutgoingMessage::AppServerNotification(goal_updated_notification()),
             write_complete_tx: None,
         },
     )
@@ -215,7 +215,7 @@ async fn experimental_notifications_are_preserved_with_capability() {
         &mut connections,
         OutgoingEnvelope::ToConnection {
             connection_id,
-            message: OutgoingMessage::AppServerNotification(thread_goal_updated_notification()),
+            message: OutgoingMessage::AppServerNotification(goal_updated_notification()),
             write_complete_tx: None,
         },
     )

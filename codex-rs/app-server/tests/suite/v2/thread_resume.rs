@@ -178,7 +178,7 @@ async fn thread_resume_rejects_unmaterialized_thread() -> Result<()> {
 }
 
 #[tokio::test]
-async fn thread_goal_get_rejects_unmaterialized_thread() -> Result<()> {
+async fn goal_get_rejects_unmaterialized_thread() -> Result<()> {
     let server = create_mock_responses_server_repeating_assistant("Done").await;
     let codex_home = TempDir::new()?;
     create_config_toml(codex_home.path(), &server.uri())?;
@@ -475,7 +475,7 @@ async fn thread_resume_emits_active_goal_update_before_continuation() -> Result<
     .await??;
     let notification: ServerNotification = notification.try_into()?;
     let ServerNotification::ThreadGoalUpdated(notification) = notification else {
-        anyhow::bail!("expected thread goal update notification");
+        anyhow::bail!("expected goal update notification");
     };
     assert_eq!(notification.goal.status, ThreadGoalStatus::Active);
     assert!(
@@ -489,7 +489,7 @@ async fn thread_resume_emits_active_goal_update_before_continuation() -> Result<
 }
 
 #[tokio::test]
-async fn thread_goal_set_preserves_budget_limited_same_objective() -> Result<()> {
+async fn goal_set_preserves_budget_limited_same_objective() -> Result<()> {
     let server = create_mock_responses_server_repeating_assistant("Done").await;
     let codex_home = TempDir::new()?;
     create_config_toml(codex_home.path(), &server.uri())?;
@@ -587,7 +587,7 @@ async fn thread_goal_set_preserves_budget_limited_same_objective() -> Result<()>
 }
 
 #[tokio::test]
-async fn thread_goal_clear_deletes_goal_and_notifies() -> Result<()> {
+async fn goal_clear_deletes_goal_and_notifies() -> Result<()> {
     let server = create_mock_responses_server_repeating_assistant("Done").await;
     let codex_home = TempDir::new()?;
     create_config_toml(codex_home.path(), &server.uri())?;

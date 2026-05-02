@@ -1,8 +1,8 @@
 use super::*;
-use codex_protocol::protocol::validate_thread_goal_objective;
+use codex_protocol::protocol::validate_thread_goal_objective as validate_goal_objective;
 
 impl CodexMessageProcessor {
-    pub(super) async fn thread_goal_set(
+    pub(super) async fn goal_set(
         &self,
         request_id: ConnectionRequestId,
         params: ThreadGoalSetParams,
@@ -80,11 +80,11 @@ impl CodexMessageProcessor {
             let thread_state = thread_state.lock().await;
             thread_state.listener_command_tx()
         };
-        let status = params.status.map(thread_goal_status_to_state);
+        let status = params.status.map(goal_status_to_state);
         let objective = params.objective.as_deref().map(str::trim);
 
         if let Some(objective) = objective {
-            if let Err(message) = validate_thread_goal_objective(objective) {
+            if let Err(message) = validate_goal_objective(objective) {
                 self.send_invalid_request_error(request_id, message).await;
                 return;
             }
@@ -170,14 +170,14 @@ impl CodexMessageProcessor {
             }
         };
         let goal_status = goal.status;
-        let goal = api_thread_goal_from_state(goal);
+        let goal = api_goal_from_state(goal);
         self.outgoing
             .send_response(
                 request_id.clone(),
                 ThreadGoalSetResponse { goal: goal.clone() },
             )
             .await;
-        self.emit_thread_goal_updated_ordered(thread_id, goal, listener_command_tx)
+        self.emit_goal_updated_ordered(thread_id, goal, listener_command_tx)
             .await;
         if let (Some(runtime), Some(thread)) = (self.goal_runtime.as_ref(), running_thread.as_ref())
         {
@@ -187,7 +187,7 @@ impl CodexMessageProcessor {
         }
     }
 
-    pub(super) async fn thread_goal_get(
+    pub(super) async fn goal_get(
         &self,
         request_id: ConnectionRequestId,
         params: ThreadGoalGetParams,
@@ -213,9 +213,9 @@ impl CodexMessageProcessor {
             }
         };
         let goal = match state_db.get_thread_goal(thread_id).await {
-            Ok(goal) => goal.map(api_thread_goal_from_state),
+            Ok(goal) => goal.map(api_goal_from_state),
             Err(err) => {
-                self.send_internal_error(request_id, format!("failed to read thread goal: {err}"))
+                self.send_internal_error(request_id, format!("failed to read goal: {err}"))
                     .await;
                 return;
             }
@@ -225,7 +225,7 @@ impl CodexMessageProcessor {
             .await;
     }
 
-    pub(super) async fn thread_goal_clear(
+    pub(super) async fn goal_clear(
         &self,
         request_id: ConnectionRequestId,
         params: ThreadGoalClearParams,
@@ -313,7 +313,7 @@ impl CodexMessageProcessor {
         let cleared = match state_db.delete_thread_goal(thread_id).await {
             Ok(cleared) => cleared,
             Err(err) => {
-                self.send_internal_error(request_id, format!("failed to clear thread goal: {err}"))
+                self.send_internal_error(request_id, format!("failed to clear goal: {err}"))
                     .await;
                 return;
             }
@@ -327,7 +327,7 @@ impl CodexMessageProcessor {
             .send_response(request_id, ThreadGoalClearResponse { cleared })
             .await;
         if cleared {
-            self.emit_thread_goal_cleared_ordered(thread_id, listener_command_tx)
+            self.emit_goal_cleared_ordered(thread_id, listener_command_tx)
                 .await;
         }
     }
@@ -362,15 +362,15 @@ impl CodexMessageProcessor {
 
         open_state_db_for_direct_thread_lookup(&self.config)
             .await
-            .ok_or_else(|| internal_error("sqlite state db unavailable for thread goals"))
+            .ok_or_else(|| internal_error("sqlite state db unavailable for goals"))
     }
 
-    pub(super) async fn emit_thread_goal_snapshot(&self, thread_id: ThreadId) {
+    pub(super) async fn emit_goal_snapshot(&self, thread_id: ThreadId) {
         let state_db = match self.state_db_for_materialized_thread(thread_id).await {
             Ok(state_db) => state_db,
             Err(err) => {
                 warn!(
-                    "failed to open state db before emitting thread goal resume snapshot for {thread_id}: {}",
+                    "failed to open state db before emitting goal resume snapshot for {thread_id}: {}",
                     err.message
                 );
                 return;
@@ -382,34 +382,33 @@ impl CodexMessageProcessor {
             thread_state.listener_command_tx()
         };
         if let Some(listener_command_tx) = listener_command_tx {
-            let command = crate::thread_state::ThreadListenerCommand::EmitThreadGoalSnapshot {
+            let command = crate::thread_state::ThreadListenerCommand::EmitGoalSnapshot {
                 state_db: state_db.clone(),
             };
             if listener_command_tx.send(command).is_ok() {
                 return;
             }
             warn!(
-                "failed to enqueue thread goal snapshot for {thread_id}: listener command channel is closed"
+                "failed to enqueue goal snapshot for {thread_id}: listener command channel is closed"
             );
         }
-        send_thread_goal_snapshot_notification(&self.outgoing, thread_id, &state_db).await;
+        send_goal_snapshot_notification(&self.outgoing, thread_id, &state_db).await;
     }
 
-    async fn emit_thread_goal_updated_ordered(
+    async fn emit_goal_updated_ordered(
         &self,
         thread_id: ThreadId,
         goal: ThreadGoal,
         listener_command_tx: Option<tokio::sync::mpsc::UnboundedSender<ThreadListenerCommand>>,
     ) {
         if let Some(listener_command_tx) = listener_command_tx {
-            let command = crate::thread_state::ThreadListenerCommand::EmitThreadGoalUpdated {
-                goal: goal.clone(),
-            };
+            let command =
+                crate::thread_state::ThreadListenerCommand::EmitGoalUpdated { goal: goal.clone() };
             if listener_command_tx.send(command).is_ok() {
                 return;
             }
             warn!(
-                "failed to enqueue thread goal update for {thread_id}: listener command channel is closed"
+                "failed to enqueue goal update for {thread_id}: listener command channel is closed"
             );
         }
         self.outgoing
@@ -423,18 +422,18 @@ impl CodexMessageProcessor {
             .await;
     }
 
-    async fn emit_thread_goal_cleared_ordered(
+    async fn emit_goal_cleared_ordered(
         &self,
         thread_id: ThreadId,
         listener_command_tx: Option<tokio::sync::mpsc::UnboundedSender<ThreadListenerCommand>>,
     ) {
         if let Some(listener_command_tx) = listener_command_tx {
-            let command = crate::thread_state::ThreadListenerCommand::EmitThreadGoalCleared;
+            let command = crate::thread_state::ThreadListenerCommand::EmitGoalCleared;
             if listener_command_tx.send(command).is_ok() {
                 return;
             }
             warn!(
-                "failed to enqueue thread goal clear for {thread_id}: listener command channel is closed"
+                "failed to enqueue goal clear for {thread_id}: listener command channel is closed"
             );
         }
         self.outgoing
@@ -456,7 +455,7 @@ fn validate_goal_budget(value: Option<i64>) -> Result<(), String> {
     Ok(())
 }
 
-fn thread_goal_status_to_state(status: ThreadGoalStatus) -> codex_state::ThreadGoalStatus {
+fn goal_status_to_state(status: ThreadGoalStatus) -> codex_state::ThreadGoalStatus {
     match status {
         ThreadGoalStatus::Active => codex_state::ThreadGoalStatus::Active,
         ThreadGoalStatus::Paused => codex_state::ThreadGoalStatus::Paused,
@@ -465,7 +464,7 @@ fn thread_goal_status_to_state(status: ThreadGoalStatus) -> codex_state::ThreadG
     }
 }
 
-fn thread_goal_status_from_state(status: codex_state::ThreadGoalStatus) -> ThreadGoalStatus {
+fn goal_status_from_state(status: codex_state::ThreadGoalStatus) -> ThreadGoalStatus {
     match status {
         codex_state::ThreadGoalStatus::Active => ThreadGoalStatus::Active,
         codex_state::ThreadGoalStatus::Paused => ThreadGoalStatus::Paused,
@@ -474,11 +473,11 @@ fn thread_goal_status_from_state(status: codex_state::ThreadGoalStatus) -> Threa
     }
 }
 
-pub(super) fn api_thread_goal_from_state(goal: codex_state::ThreadGoal) -> ThreadGoal {
+pub(super) fn api_goal_from_state(goal: codex_state::ThreadGoal) -> ThreadGoal {
     ThreadGoal {
         thread_id: goal.thread_id.to_string(),
         objective: goal.objective,
-        status: thread_goal_status_from_state(goal.status),
+        status: goal_status_from_state(goal.status),
         token_budget: goal.token_budget,
         tokens_used: goal.tokens_used,
         time_used_seconds: goal.time_used_seconds,

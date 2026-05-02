@@ -1,4 +1,4 @@
-//! App-server-owned runtime for thread goals, backed by codex-state persistence.
+//! App-server-owned runtime for goals, backed by codex-state persistence.
 
 mod accounting;
 mod prompts;
@@ -24,23 +24,18 @@ use std::sync::Arc;
 use tokio::sync::Mutex;
 
 #[derive(Default)]
-pub(crate) struct ThreadGoalRuntime {
+pub(crate) struct GoalRuntime {
     states: Mutex<HashMap<ThreadId, Arc<GoalRuntimeState>>>,
 }
 
-impl ThreadGoalRuntime {
+impl GoalRuntime {
     pub(crate) fn new() -> Self {
         Self::default()
     }
 
     pub(crate) async fn prepare_external_goal_mutation(&self, handle: SessionRuntimeHandle) {
-        if let Err(err) = self
-            .account_thread_goal_before_external_mutation(&handle)
-            .await
-        {
-            tracing::warn!(
-                "failed to account thread goal progress before external mutation: {err}"
-            );
+        if let Err(err) = self.account_goal_before_external_mutation(&handle).await {
+            tracing::warn!("failed to account goal progress before external mutation: {err}");
         }
     }
 
@@ -49,13 +44,11 @@ impl ThreadGoalRuntime {
         handle: SessionRuntimeHandle,
         status: codex_state::ThreadGoalStatus,
     ) {
-        self.apply_external_thread_goal_status(&handle, status)
-            .await;
+        self.apply_external_goal_status(&handle, status).await;
     }
 
     pub(crate) async fn apply_external_goal_clear(&self, thread_id: ThreadId) {
-        self.clear_stopped_thread_goal_runtime_state(thread_id)
-            .await;
+        self.clear_stopped_goal_runtime_state(thread_id).await;
     }
 
     pub(crate) async fn clear_thread_state(&self, thread_id: ThreadId) {
@@ -82,12 +75,12 @@ impl ThreadGoalRuntime {
             .state_db_for_persisted_thread()
             .await?
             .ok_or_else(|| {
-                anyhow::anyhow!("thread goals require a persisted thread; this thread is ephemeral")
+                anyhow::anyhow!("goals require a persisted thread; this thread is ephemeral")
             })
     }
 }
 
-impl SessionRuntimeExtension for ThreadGoalRuntime {
+impl SessionRuntimeExtension for GoalRuntime {
     fn tool_specs(&self, context: SessionToolSpecContext) -> Vec<ToolSpec> {
         if context.ephemeral {
             return Vec::new();

@@ -30,8 +30,8 @@ pub(crate) struct PendingThreadResumeRequest {
     pub(crate) config_snapshot: ThreadConfigSnapshot,
     pub(crate) instruction_sources: Vec<AbsolutePathBuf>,
     pub(crate) thread_summary: codex_app_server_protocol::Thread,
-    pub(crate) emit_thread_goal_update: bool,
-    pub(crate) thread_goal_state_db: Option<StateDbHandle>,
+    pub(crate) emit_goal_update: bool,
+    pub(crate) goal_state_db: Option<StateDbHandle>,
     pub(crate) include_turns: bool,
 }
 
@@ -39,14 +39,14 @@ pub(crate) struct PendingThreadResumeRequest {
 pub(crate) enum ThreadListenerCommand {
     // SendThreadResumeResponse is used to resume an already running thread by sending the thread's history to the client and atomically subscribing for new updates.
     SendThreadResumeResponse(Box<PendingThreadResumeRequest>),
-    // EmitThreadGoalUpdated is used to order app-server goal updates with running-thread resume responses.
-    EmitThreadGoalUpdated {
+    // EmitGoalUpdated is used to order app-server goal updates with running-thread resume responses.
+    EmitGoalUpdated {
         goal: ThreadGoal,
     },
-    // EmitThreadGoalCleared is used to order app-server goal clears with running-thread resume responses.
-    EmitThreadGoalCleared,
-    // EmitThreadGoalSnapshot is used to read and emit the latest goal state in the listener order.
-    EmitThreadGoalSnapshot {
+    // EmitGoalCleared is used to order app-server goal clears with running-thread resume responses.
+    EmitGoalCleared,
+    // EmitGoalSnapshot is used to read and emit the latest goal state in the listener order.
+    EmitGoalSnapshot {
         state_db: StateDbHandle,
     },
     // ResolveServerRequest is used to notify the client that the request has been resolved.

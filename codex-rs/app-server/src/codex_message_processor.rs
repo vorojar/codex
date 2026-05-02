@@ -432,7 +432,7 @@ mod token_usage_replay;
 
 use crate::filters::compute_source_filters;
 use crate::filters::source_kind_matches;
-use crate::thread_goal_runtime::ThreadGoalRuntime;
+use crate::goal_runtime::GoalRuntime;
 use crate::thread_state::ThreadListenerCommand;
 use crate::thread_state::ThreadState;
 use crate::thread_state::ThreadStateManager;
@@ -511,8 +511,8 @@ enum ThreadReadViewError {
     Internal(String),
 }
 
-mod thread_goal_handlers;
-use self::thread_goal_handlers::api_thread_goal_from_state;
+mod goal_handlers;
+use self::goal_handlers::api_goal_from_state;
 
 fn thread_read_view_error(err: ThreadReadViewError) -> JSONRPCErrorError {
     match err {
@@ -553,7 +553,7 @@ pub(crate) struct CodexMessageProcessor {
     background_tasks: TaskTracker,
     feedback: CodexFeedback,
     log_db: Option<LogDbLayer>,
-    goal_runtime: Option<Arc<ThreadGoalRuntime>>,
+    goal_runtime: Option<Arc<GoalRuntime>>,
 }
 
 #[derive(Clone)]
@@ -567,7 +567,7 @@ struct ListenerTaskContext {
     thread_list_state_permit: Arc<Semaphore>,
     fallback_model_provider: String,
     codex_home: PathBuf,
-    goal_runtime: Option<Arc<ThreadGoalRuntime>>,
+    goal_runtime: Option<Arc<GoalRuntime>>,
 }
 
 struct ThreadUnloadContext {
@@ -576,7 +576,7 @@ struct ThreadUnloadContext {
     pending_thread_unloads: Arc<Mutex<HashSet<ThreadId>>>,
     thread_state_manager: ThreadStateManager,
     thread_watch_manager: ThreadWatchManager,
-    goal_runtime: Option<Arc<ThreadGoalRuntime>>,
+    goal_runtime: Option<Arc<GoalRuntime>>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -874,7 +874,7 @@ impl CodexMessageProcessor {
         let goal_runtime = config
             .features
             .enabled(Feature::Goals)
-            .then(|| Arc::new(ThreadGoalRuntime::new()));
+            .then(|| Arc::new(GoalRuntime::new()));
         if let Some(goal_runtime) = goal_runtime.as_ref() {
             let extension: Arc<dyn SessionRuntimeExtension> = goal_runtime.clone();
             thread_manager.set_runtime_extension(Some(extension));
@@ -1078,15 +1078,15 @@ impl CodexMessageProcessor {
                     .await;
             }
             ClientRequest::ThreadGoalSet { request_id, params } => {
-                self.thread_goal_set(to_connection_request_id(request_id), params)
+                self.goal_set(to_connection_request_id(request_id), params)
                     .await;
             }
             ClientRequest::ThreadGoalGet { request_id, params } => {
-                self.thread_goal_get(to_connection_request_id(request_id), params)
+                self.goal_get(to_connection_request_id(request_id), params)
                     .await;
             }
             ClientRequest::ThreadGoalClear { request_id, params } => {
-                self.thread_goal_clear(to_connection_request_id(request_id), params)
+                self.goal_clear(to_connection_request_id(request_id), params)
                     .await;
             }
             ClientRequest::ThreadMetadataUpdate { request_id, params } => {
@@ -4559,7 +4559,7 @@ impl CodexMessageProcessor {
                     .await;
                 }
                 if self.config.features.enabled(Feature::Goals) {
-                    self.emit_thread_goal_snapshot(thread_id).await;
+                    self.emit_goal_snapshot(thread_id).await;
                     // App-server owns resume response and snapshot ordering, so wait
                     // until those are sent before letting the goal runtime continue.
                     if let Err(err) = codex_thread
@@ -4719,8 +4719,8 @@ impl CodexMessageProcessor {
                 )));
             };
 
-            let emit_thread_goal_update = self.config.features.enabled(Feature::Goals);
-            let thread_goal_state_db = if emit_thread_goal_update {
+            let emit_goal_update = self.config.features.enabled(Feature::Goals);
+            let goal_state_db = if emit_goal_update {
                 if let Some(state_db) = existing_thread.state_db() {
                     Some(state_db)
                 } else {
@@ -4737,8 +4737,8 @@ impl CodexMessageProcessor {
                     config_snapshot,
                     instruction_sources,
                     thread_summary,
-                    emit_thread_goal_update,
-                    thread_goal_state_db,
+                    emit_goal_update,
+                    goal_state_db,
                     include_turns: !params.exclude_turns,
                 }),
             );
@@ -8383,7 +8383,7 @@ async fn handle_thread_listener_command(
             )
             .await;
         }
-        ThreadListenerCommand::EmitThreadGoalUpdated { goal } => {
+        ThreadListenerCommand::EmitGoalUpdated { goal } => {
             outgoing
                 .send_server_notification(ServerNotification::ThreadGoalUpdated(
                     ThreadGoalUpdatedNotification {
@@ -8394,7 +8394,7 @@ async fn handle_thread_listener_command(
                 ))
                 .await;
         }
-        ThreadListenerCommand::EmitThreadGoalCleared => {
+        ThreadListenerCommand::EmitGoalCleared => {
             outgoing
                 .send_server_notification(ServerNotification::ThreadGoalCleared(
                     ThreadGoalClearedNotification {
@@ -8403,8 +8403,8 @@ async fn handle_thread_listener_command(
                 ))
                 .await;
         }
-        ThreadListenerCommand::EmitThreadGoalSnapshot { state_db } => {
-            send_thread_goal_snapshot_notification(outgoing, conversation_id, &state_db).await;
+        ThreadListenerCommand::EmitGoalSnapshot { state_db } => {
+            send_goal_snapshot_notification(outgoing, conversation_id, &state_db).await;
         }
         ThreadListenerCommand::ResolveServerRequest {
             request_id,
@@ -8509,7 +8509,7 @@ async fn handle_pending_thread_resume_request(
         }
     }
 
-    if pending.emit_thread_goal_update
+    if pending.emit_goal_update
         && let Err(err) = conversation
             .apply_runtime_extension_event(SessionRuntimeEvent::ThreadResumed)
             .await
@@ -8569,13 +8569,13 @@ async fn handle_pending_thread_resume_request(
         )
         .await;
     }
-    if pending.emit_thread_goal_update {
-        if let Some(state_db) = pending.thread_goal_state_db {
-            send_thread_goal_snapshot_notification(outgoing, conversation_id, &state_db).await;
+    if pending.emit_goal_update {
+        if let Some(state_db) = pending.goal_state_db {
+            send_goal_snapshot_notification(outgoing, conversation_id, &state_db).await;
         } else {
             tracing::warn!(
                 thread_id = %conversation_id,
-                "state db unavailable when reading thread goal for running thread resume"
+                "state db unavailable when reading goal for running thread resume"
             );
         }
     }
@@ -8584,7 +8584,7 @@ async fn handle_pending_thread_resume_request(
         .await;
     // App-server owns resume response and snapshot ordering, so wait until
     // replay completes before letting the goal runtime start continuation.
-    if pending.emit_thread_goal_update
+    if pending.emit_goal_update
         && let Err(err) = conversation
             .apply_runtime_extension_event(SessionRuntimeEvent::MaybeContinueIfIdle)
             .await
@@ -8593,7 +8593,7 @@ async fn handle_pending_thread_resume_request(
     }
 }
 
-async fn send_thread_goal_snapshot_notification(
+async fn send_goal_snapshot_notification(
     outgoing: &Arc<OutgoingMessageSender>,
     thread_id: ThreadId,
     state_db: &StateDbHandle,
@@ -8605,7 +8605,7 @@ async fn send_thread_goal_snapshot_notification(
                     ThreadGoalUpdatedNotification {
                         thread_id: thread_id.to_string(),
                         turn_id: None,
-                        goal: api_thread_goal_from_state(goal),
+                        goal: api_goal_from_state(goal),
                     },
                 ))
                 .await;
@@ -8622,7 +8622,7 @@ async fn send_thread_goal_snapshot_notification(
         Err(err) => {
             tracing::warn!(
                 thread_id = %thread_id,
-                "failed to read thread goal for resume snapshot: {err}"
+                "failed to read goal for resume snapshot: {err}"
             );
         }
     }

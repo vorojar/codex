@@ -1,4 +1,4 @@
-use super::ThreadGoalRuntime;
+use super::GoalRuntime;
 use super::prompts::budget_limit_prompt;
 use super::prompts::continuation_prompt;
 use super::prompts::goal_token_delta_for_usage;
@@ -22,7 +22,7 @@ use pretty_assertions::assert_eq;
 
 #[test]
 fn goal_runtime_exposes_goal_tools_for_persisted_threads_only() {
-    let runtime = ThreadGoalRuntime::new();
+    let runtime = GoalRuntime::new();
     let persisted_specs = runtime.tool_specs(SessionToolSpecContext {
         mode: ModeKind::Default,
         ephemeral: false,

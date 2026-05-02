@@ -1235,11 +1235,11 @@ pub(crate) async fn apply_bespoke_event_handling(
                 ))
                 .await;
         }
-        EventMsg::ThreadGoalUpdated(thread_goal_event) => {
+        EventMsg::ThreadGoalUpdated(goal_event) => {
             let notification = ThreadGoalUpdatedNotification {
-                thread_id: thread_goal_event.thread_id.to_string(),
-                turn_id: thread_goal_event.turn_id,
-                goal: thread_goal_event.goal.clone().into(),
+                thread_id: goal_event.thread_id.to_string(),
+                turn_id: goal_event.turn_id,
+                goal: goal_event.goal.clone().into(),
             };
             outgoing
                 .send_global_server_notification(ServerNotification::ThreadGoalUpdated(

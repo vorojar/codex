@@ -1,6 +1,6 @@
 //! Model-facing goal tool handling for the app-server runtime extension.
 
-use super::ThreadGoalRuntime;
+use super::GoalRuntime;
 use super::prompts::completion_budget_report;
 use super::prompts::protocol_goal_from_state;
 use super::prompts::state_goal_status_from_protocol;
@@ -14,7 +14,7 @@ use codex_protocol::protocol::EventMsg;
 use codex_protocol::protocol::ThreadGoal;
 use codex_protocol::protocol::ThreadGoalStatus;
 use codex_protocol::protocol::ThreadGoalUpdatedEvent;
-use codex_protocol::protocol::validate_thread_goal_objective;
+use codex_protocol::protocol::validate_thread_goal_objective as validate_goal_objective;
 use codex_tools::CREATE_GOAL_TOOL_NAME;
 use codex_tools::GET_GOAL_TOOL_NAME;
 use codex_tools::UPDATE_GOAL_TOOL_NAME;
@@ -60,11 +60,8 @@ pub(super) enum CompletionBudgetReport {
     Omit,
 }
 
-impl ThreadGoalRuntime {
-    async fn get_thread_goal(
-        &self,
-        handle: &SessionRuntimeHandle,
-    ) -> anyhow::Result<Option<ThreadGoal>> {
+impl GoalRuntime {
+    async fn get_goal(&self, handle: &SessionRuntimeHandle) -> anyhow::Result<Option<ThreadGoal>> {
         let state_db = self.require_state_db(handle).await?;
         state_db
             .get_thread_goal(handle.thread_id())
@@ -72,7 +69,7 @@ impl ThreadGoalRuntime {
             .map(|goal| goal.map(protocol_goal_from_state))
     }
 
-    async fn create_thread_goal(
+    async fn create_goal(
         &self,
         handle: &SessionRuntimeHandle,
         turn_id: String,
@@ -84,10 +81,10 @@ impl ThreadGoalRuntime {
         } = request;
         validate_goal_budget(token_budget)?;
         let objective = objective.trim();
-        validate_thread_goal_objective(objective).map_err(anyhow::Error::msg)?;
+        validate_goal_objective(objective).map_err(anyhow::Error::msg)?;
 
         let state_db = self.require_state_db(handle).await?;
-        self.account_thread_goal_wall_clock_usage(
+        self.account_goal_wall_clock_usage(
             handle.thread_id(),
             &state_db,
             codex_state::ThreadGoalAccountingMode::ActiveOnly,
@@ -132,7 +129,7 @@ impl ThreadGoalRuntime {
         Ok(goal)
     }
 
-    async fn set_thread_goal(
+    async fn set_goal(
         &self,
         handle: &SessionRuntimeHandle,
         turn_id: String,
@@ -147,12 +144,12 @@ impl ThreadGoalRuntime {
         let state_db = self.require_state_db(handle).await?;
         let objective = objective.map(|objective| objective.trim().to_string());
         if let Some(objective) = objective.as_deref()
-            && let Err(err) = validate_thread_goal_objective(objective)
+            && let Err(err) = validate_goal_objective(objective)
         {
             anyhow::bail!("{err}");
         }
 
-        self.account_thread_goal_wall_clock_usage(
+        self.account_goal_wall_clock_usage(
             handle.thread_id(),
             &state_db,
             codex_state::ThreadGoalAccountingMode::ActiveOnly,
@@ -263,7 +260,7 @@ impl ThreadGoalRuntime {
         match invocation.tool_name.name.as_str() {
             GET_GOAL_TOOL_NAME => {
                 let goal = self
-                    .get_thread_goal(&handle)
+                    .get_goal(&handle)
                     .await
                     .map_err(|err| SessionToolError::RespondToModel(format_goal_error(err)))?;
                 self.goal_response(goal, CompletionBudgetReport::Omit)
@@ -271,7 +268,7 @@ impl ThreadGoalRuntime {
             CREATE_GOAL_TOOL_NAME => {
                 let args: CreateGoalArgs = parse_arguments(&invocation.arguments)?;
                 let goal = self
-                    .create_thread_goal(
+                    .create_goal(
                         &handle,
                         invocation.turn_id,
                         CreateGoalRequest {
@@ -298,7 +295,7 @@ impl ThreadGoalRuntime {
             UPDATE_GOAL_TOOL_NAME => {
                 let args: UpdateGoalArgs = parse_arguments(&invocation.arguments)?;
                 validate_update_goal_status(args.status)?;
-                self.account_thread_goal_progress(
+                self.account_goal_progress(
                     &handle,
                     invocation.turn_id.as_str(),
                     BudgetLimitSteering::Suppressed,
@@ -306,7 +303,7 @@ impl ThreadGoalRuntime {
                 .await
                 .map_err(|err| SessionToolError::RespondToModel(format_goal_error(err)))?;
                 let goal = self
-                    .set_thread_goal(
+                    .set_goal(
                         &handle,
                         invocation.turn_id,
                         SetGoalRequest {

@@ -1,6 +1,6 @@
 //! Goal lifecycle accounting and continuation scheduling for running app-server threads.
 
-use super::ThreadGoalRuntime;
+use super::GoalRuntime;
 use super::prompts::budget_limit_steering_item;
 use super::prompts::continuation_prompt;
 use super::prompts::protocol_goal_from_state;
@@ -23,7 +23,7 @@ use codex_protocol::protocol::TurnAbortReason;
 use codex_rollout::state_db::StateDbHandle;
 use codex_tools::UPDATE_GOAL_TOOL_NAME;
 
-impl ThreadGoalRuntime {
+impl GoalRuntime {
     pub(super) async fn apply_event(
         &self,
         handle: SessionRuntimeHandle,
@@ -35,7 +35,7 @@ impl ThreadGoalRuntime {
                 mode,
                 token_usage,
             } => {
-                self.mark_thread_goal_turn_started(&handle, turn_id, mode, token_usage)
+                self.mark_goal_turn_started(&handle, turn_id, mode, token_usage)
                     .await;
                 Ok(())
             }
@@ -47,7 +47,7 @@ impl ThreadGoalRuntime {
                 if !should_ignore_goal_for_mode(mode)
                     && tool_name.name.as_str() != UPDATE_GOAL_TOOL_NAME
                 {
-                    self.account_thread_goal_progress(
+                    self.account_goal_progress(
                         &handle,
                         turn_id.as_str(),
                         BudgetLimitSteering::Allowed,
@@ -61,7 +61,7 @@ impl ThreadGoalRuntime {
                 mode,
                 turn_completed,
             } => {
-                self.finish_thread_goal_turn(&handle, turn_id.as_str(), mode, turn_completed)
+                self.finish_goal_turn(&handle, turn_id.as_str(), mode, turn_completed)
                     .await;
                 Ok(())
             }
@@ -70,19 +70,17 @@ impl ThreadGoalRuntime {
                 Ok(())
             }
             SessionRuntimeEvent::TaskAborted { turn_id, reason } => {
-                self.handle_thread_goal_task_abort(&handle, turn_id, reason)
-                    .await;
+                self.handle_goal_task_abort(&handle, turn_id, reason).await;
                 Ok(())
             }
             SessionRuntimeEvent::ThreadResumed => {
-                self.activate_paused_thread_goal_after_resume(&handle)
-                    .await?;
+                self.activate_paused_goal_after_resume(&handle).await?;
                 Ok(())
             }
         }
     }
 
-    pub(super) async fn apply_external_thread_goal_status(
+    pub(super) async fn apply_external_goal_status(
         &self,
         handle: &SessionRuntimeHandle,
         status: codex_state::ThreadGoalStatus,
@@ -123,18 +121,18 @@ impl ThreadGoalRuntime {
             }
             codex_state::ThreadGoalStatus::BudgetLimited => {
                 if !handle.has_active_turn().await {
-                    self.clear_stopped_thread_goal_runtime_state(handle.thread_id())
+                    self.clear_stopped_goal_runtime_state(handle.thread_id())
                         .await;
                 }
             }
             codex_state::ThreadGoalStatus::Paused | codex_state::ThreadGoalStatus::Complete => {
-                self.clear_stopped_thread_goal_runtime_state(handle.thread_id())
+                self.clear_stopped_goal_runtime_state(handle.thread_id())
                     .await;
             }
         }
     }
 
-    pub(super) async fn clear_stopped_thread_goal_runtime_state(&self, thread_id: ThreadId) {
+    pub(super) async fn clear_stopped_goal_runtime_state(&self, thread_id: ThreadId) {
         let Some(state) = self.maybe_state(thread_id).await else {
             return;
         };
@@ -182,7 +180,7 @@ impl ThreadGoalRuntime {
         accounting.wall_clock.mark_active_goal(goal_id);
     }
 
-    async fn mark_thread_goal_turn_started(
+    async fn mark_goal_turn_started(
         &self,
         handle: &SessionRuntimeHandle,
         turn_id: String,
@@ -228,12 +226,12 @@ impl ThreadGoalRuntime {
                 state.accounting.lock().await.wall_clock.clear_active_goal();
             }
             Err(err) => {
-                tracing::warn!("failed to read thread goal at turn start: {err}");
+                tracing::warn!("failed to read goal at turn start: {err}");
             }
         }
     }
 
-    async fn finish_thread_goal_turn(
+    async fn finish_goal_turn(
         &self,
         handle: &SessionRuntimeHandle,
         turn_id: &str,
@@ -243,10 +241,10 @@ impl ThreadGoalRuntime {
         if turn_completed
             && !should_ignore_goal_for_mode(mode)
             && let Err(err) = self
-                .account_thread_goal_progress(handle, turn_id, BudgetLimitSteering::Suppressed)
+                .account_goal_progress(handle, turn_id, BudgetLimitSteering::Suppressed)
                 .await
         {
-            tracing::warn!("failed to account thread goal progress at turn end: {err}");
+            tracing::warn!("failed to account goal progress at turn end: {err}");
         }
 
         let Some(state) = self.maybe_state(handle.thread_id()).await else {
@@ -264,7 +262,7 @@ impl ThreadGoalRuntime {
         }
     }
 
-    async fn handle_thread_goal_task_abort(
+    async fn handle_goal_task_abort(
         &self,
         handle: &SessionRuntimeHandle,
         turn_id: Option<String>,
@@ -272,14 +270,10 @@ impl ThreadGoalRuntime {
     ) {
         if let Some(turn_id) = turn_id {
             if let Err(err) = self
-                .account_thread_goal_progress(
-                    handle,
-                    turn_id.as_str(),
-                    BudgetLimitSteering::Suppressed,
-                )
+                .account_goal_progress(handle, turn_id.as_str(), BudgetLimitSteering::Suppressed)
                 .await
             {
-                tracing::warn!("failed to account thread goal progress after abort: {err}");
+                tracing::warn!("failed to account goal progress after abort: {err}");
             }
             if let Some(state) = self.maybe_state(handle.thread_id()).await {
                 let mut accounting = state.accounting.lock().await;
@@ -294,13 +288,13 @@ impl ThreadGoalRuntime {
         }
 
         if reason == TurnAbortReason::Interrupted
-            && let Err(err) = self.pause_active_thread_goal_for_interrupt(handle).await
+            && let Err(err) = self.pause_active_goal_for_interrupt(handle).await
         {
-            tracing::warn!("failed to pause active thread goal after interrupt: {err}");
+            tracing::warn!("failed to pause active goal after interrupt: {err}");
         }
     }
 
-    pub(super) async fn account_thread_goal_progress(
+    pub(super) async fn account_goal_progress(
         &self,
         handle: &SessionRuntimeHandle,
         turn_id: &str,
@@ -406,24 +400,20 @@ impl ThreadGoalRuntime {
         Ok(())
     }
 
-    pub(super) async fn account_thread_goal_before_external_mutation(
+    pub(super) async fn account_goal_before_external_mutation(
         &self,
         handle: &SessionRuntimeHandle,
     ) -> anyhow::Result<()> {
         if let Some(turn_id) = handle.active_turn_id().await {
             return self
-                .account_thread_goal_progress(
-                    handle,
-                    turn_id.as_str(),
-                    BudgetLimitSteering::Suppressed,
-                )
+                .account_goal_progress(handle, turn_id.as_str(), BudgetLimitSteering::Suppressed)
                 .await;
         }
 
         let Some(state_db) = handle.state_db_for_persisted_thread().await? else {
             return Ok(());
         };
-        self.account_thread_goal_wall_clock_usage(
+        self.account_goal_wall_clock_usage(
             handle.thread_id(),
             &state_db,
             codex_state::ThreadGoalAccountingMode::ActiveOnly,
@@ -432,7 +422,7 @@ impl ThreadGoalRuntime {
         Ok(())
     }
 
-    pub(super) async fn account_thread_goal_wall_clock_usage(
+    pub(super) async fn account_goal_wall_clock_usage(
         &self,
         thread_id: ThreadId,
         state_db: &StateDbHandle,
@@ -481,7 +471,7 @@ impl ThreadGoalRuntime {
         }
     }
 
-    async fn pause_active_thread_goal_for_interrupt(
+    async fn pause_active_goal_for_interrupt(
         &self,
         handle: &SessionRuntimeHandle,
     ) -> anyhow::Result<()> {
@@ -498,7 +488,7 @@ impl ThreadGoalRuntime {
         let Some(state_db) = handle.state_db_for_persisted_thread().await? else {
             return Ok(());
         };
-        self.account_thread_goal_wall_clock_usage(
+        self.account_goal_wall_clock_usage(
             handle.thread_id(),
             &state_db,
             codex_state::ThreadGoalAccountingMode::ActiveStatusOnly,
@@ -523,7 +513,7 @@ impl ThreadGoalRuntime {
         Ok(())
     }
 
-    async fn activate_paused_thread_goal_after_resume(
+    async fn activate_paused_goal_after_resume(
         &self,
         handle: &SessionRuntimeHandle,
     ) -> anyhow::Result<bool> {
@@ -631,7 +621,7 @@ impl ThreadGoalRuntime {
                     );
                 }
                 Err(err) => {
-                    tracing::warn!("failed to re-read thread goal after continuation: {err}");
+                    tracing::warn!("failed to re-read goal after continuation: {err}");
                 }
             },
             Ok(None) => {}
@@ -681,12 +671,12 @@ impl ThreadGoalRuntime {
                 return None;
             }
             Err(err) => {
-                tracing::warn!("failed to read thread goal for continuation: {err}");
+                tracing::warn!("failed to read goal for continuation: {err}");
                 return None;
             }
         };
         if goal.status != codex_state::ThreadGoalStatus::Active {
-            tracing::debug!(status = ?goal.status, "skipping inactive thread goal");
+            tracing::debug!(status = ?goal.status, "skipping inactive goal");
             return None;
         }
         if handle.has_active_turn().await
