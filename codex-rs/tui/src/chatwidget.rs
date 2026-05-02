@@ -150,11 +150,11 @@ use codex_protocol::config_types::CollaborationMode;
 use codex_protocol::config_types::CollaborationModeMask;
 use codex_protocol::config_types::ModeKind;
 use codex_protocol::config_types::Personality;
+use codex_protocol::config_types::SERVICE_TIER_PRIORITY;
 use codex_protocol::config_types::ServiceTier;
 use codex_protocol::config_types::Settings;
 #[cfg(target_os = "windows")]
 use codex_protocol::config_types::WindowsSandboxLevel;
-use codex_protocol::config_types::is_priority_service_tier;
 use codex_protocol::items::AgentMessageContent;
 use codex_protocol::items::AgentMessageItem;
 use codex_protocol::models::MessagePhase;
@@ -9268,7 +9268,9 @@ impl ChatWidget {
         service_tier: Option<ServiceTier>,
     ) -> bool {
         model_supports_fast_mode(self, model)
-            && service_tier.as_ref().is_some_and(is_priority_service_tier)
+            && service_tier
+                .as_ref()
+                .is_some_and(|tier| tier.as_ref() == SERVICE_TIER_PRIORITY)
             && self.has_chatgpt_account
     }
 

@@ -1,6 +1,6 @@
 use super::*;
 use crate::bottom_pane::goal_status_indicator_line;
-use codex_protocol::config_types::priority_service_tier;
+use codex_protocol::config_types::SERVICE_TIER_PRIORITY;
 use codex_protocol::openai_models::model_supports_service_tier;
 use pretty_assertions::assert_eq;
 
@@ -1020,9 +1020,9 @@ async fn fast_status_indicator_requires_chatgpt_auth() {
     set_fast_mode_test_catalog(&mut chat);
     assert!(model_supports_service_tier(
         &get_available_model(&chat, "gpt-5.4"),
-        &priority_service_tier()
+        &SERVICE_TIER_PRIORITY.into()
     ));
-    chat.set_service_tier(Some(priority_service_tier()));
+    chat.set_service_tier(Some(SERVICE_TIER_PRIORITY.into()));
 
     assert!(!chat.should_show_fast_status(chat.current_model(), chat.current_service_tier(),));
 
@@ -1030,7 +1030,7 @@ async fn fast_status_indicator_requires_chatgpt_auth() {
     set_fast_mode_test_catalog(&mut chat);
     assert!(model_supports_service_tier(
         &get_available_model(&chat, "gpt-5.4"),
-        &priority_service_tier()
+        &SERVICE_TIER_PRIORITY.into()
     ));
 
     assert!(chat.should_show_fast_status(chat.current_model(), chat.current_service_tier(),));
@@ -1042,14 +1042,14 @@ async fn fast_status_indicator_is_hidden_for_models_without_fast_support() {
     set_fast_mode_test_catalog(&mut chat);
     assert!(!model_supports_service_tier(
         &get_available_model(&chat, "gpt-5.3-codex"),
-        &priority_service_tier()
+        &SERVICE_TIER_PRIORITY.into()
     ));
-    chat.set_service_tier(Some(priority_service_tier()));
+    chat.set_service_tier(Some(SERVICE_TIER_PRIORITY.into()));
     set_chatgpt_auth(&mut chat);
     set_fast_mode_test_catalog(&mut chat);
     assert!(!model_supports_service_tier(
         &get_available_model(&chat, "gpt-5.3-codex"),
-        &priority_service_tier()
+        &SERVICE_TIER_PRIORITY.into()
     ));
 
     assert!(!chat.should_show_fast_status(chat.current_model(), chat.current_service_tier(),));
@@ -1061,13 +1061,13 @@ async fn fast_status_indicator_is_hidden_when_fast_mode_is_off() {
     set_fast_mode_test_catalog(&mut chat);
     assert!(model_supports_service_tier(
         &get_available_model(&chat, "gpt-5.4"),
-        &priority_service_tier()
+        &SERVICE_TIER_PRIORITY.into()
     ));
     set_chatgpt_auth(&mut chat);
     set_fast_mode_test_catalog(&mut chat);
     assert!(model_supports_service_tier(
         &get_available_model(&chat, "gpt-5.4"),
-        &priority_service_tier()
+        &SERVICE_TIER_PRIORITY.into()
     ));
 
     assert!(!chat.should_show_fast_status(chat.current_model(), chat.current_service_tier(),));
@@ -1385,7 +1385,7 @@ async fn status_line_fast_mode_renders_on_and_off() {
     chat.refresh_status_line();
     assert_eq!(status_line_text(&chat), Some("Tier default".to_string()));
 
-    chat.set_service_tier(Some(priority_service_tier()));
+    chat.set_service_tier(Some(SERVICE_TIER_PRIORITY.into()));
     chat.refresh_status_line();
     assert_eq!(status_line_text(&chat), Some("Tier Fast".to_string()));
 }
@@ -1398,7 +1398,7 @@ async fn status_line_fast_mode_footer_snapshot() {
     let (mut chat, _rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
     chat.show_welcome_banner = false;
     chat.config.tui_status_line = Some(vec!["fast-mode".to_string()]);
-    chat.set_service_tier(Some(priority_service_tier()));
+    chat.set_service_tier(Some(SERVICE_TIER_PRIORITY.into()));
     chat.refresh_status_line();
 
     let width = 80;
@@ -1419,7 +1419,7 @@ async fn status_line_model_with_reasoning_includes_fast_for_fast_capable_models(
     set_fast_mode_test_catalog(&mut chat);
     assert!(model_supports_service_tier(
         &get_available_model(&chat, "gpt-5.4"),
-        &priority_service_tier()
+        &SERVICE_TIER_PRIORITY.into()
     ));
     chat.config.cwd = test_project_path().abs();
     chat.config.tui_status_line = Some(vec![
@@ -1428,12 +1428,12 @@ async fn status_line_model_with_reasoning_includes_fast_for_fast_capable_models(
         "current-dir".to_string(),
     ]);
     chat.set_reasoning_effort(Some(ReasoningEffortConfig::XHigh));
-    chat.set_service_tier(Some(priority_service_tier()));
+    chat.set_service_tier(Some(SERVICE_TIER_PRIORITY.into()));
     set_chatgpt_auth(&mut chat);
     set_fast_mode_test_catalog(&mut chat);
     assert!(model_supports_service_tier(
         &get_available_model(&chat, "gpt-5.4"),
-        &priority_service_tier()
+        &SERVICE_TIER_PRIORITY.into()
     ));
     chat.refresh_status_line();
     let test_cwd = test_path_display("/tmp/project");
@@ -1572,7 +1572,7 @@ async fn status_line_model_with_reasoning_fast_footer_snapshot() {
     set_fast_mode_test_catalog(&mut chat);
     assert!(model_supports_service_tier(
         &get_available_model(&chat, "gpt-5.4"),
-        &priority_service_tier()
+        &SERVICE_TIER_PRIORITY.into()
     ));
     chat.show_welcome_banner = false;
     chat.config.cwd = test_project_path().abs();
@@ -1582,12 +1582,12 @@ async fn status_line_model_with_reasoning_fast_footer_snapshot() {
         "current-dir".to_string(),
     ]);
     chat.set_reasoning_effort(Some(ReasoningEffortConfig::XHigh));
-    chat.set_service_tier(Some(priority_service_tier()));
+    chat.set_service_tier(Some(SERVICE_TIER_PRIORITY.into()));
     set_chatgpt_auth(&mut chat);
     set_fast_mode_test_catalog(&mut chat);
     assert!(model_supports_service_tier(
         &get_available_model(&chat, "gpt-5.4"),
-        &priority_service_tier()
+        &SERVICE_TIER_PRIORITY.into()
     ));
     chat.refresh_status_line();
 
@@ -1612,7 +1612,7 @@ async fn status_line_model_with_reasoning_context_remaining_footer_snapshot() {
     set_fast_mode_test_catalog(&mut chat);
     assert!(model_supports_service_tier(
         &get_available_model(&chat, "gpt-5.4"),
-        &priority_service_tier()
+        &SERVICE_TIER_PRIORITY.into()
     ));
     chat.show_welcome_banner = false;
     chat.config.cwd = test_project_path().abs();
@@ -1622,12 +1622,12 @@ async fn status_line_model_with_reasoning_context_remaining_footer_snapshot() {
         "current-dir".to_string(),
     ]);
     chat.set_reasoning_effort(Some(ReasoningEffortConfig::XHigh));
-    chat.set_service_tier(Some(priority_service_tier()));
+    chat.set_service_tier(Some(SERVICE_TIER_PRIORITY.into()));
     set_chatgpt_auth(&mut chat);
     set_fast_mode_test_catalog(&mut chat);
     assert!(model_supports_service_tier(
         &get_available_model(&chat, "gpt-5.4"),
-        &priority_service_tier()
+        &SERVICE_TIER_PRIORITY.into()
     ));
     chat.refresh_status_line();
 

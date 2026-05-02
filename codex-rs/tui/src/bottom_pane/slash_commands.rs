@@ -6,8 +6,8 @@
 use std::collections::HashSet;
 use std::str::FromStr;
 
+use codex_protocol::config_types::SERVICE_TIER_PRIORITY;
 use codex_protocol::config_types::ServiceTier;
-use codex_protocol::config_types::priority_service_tier;
 use codex_protocol::openai_models::ModelPreset;
 use codex_protocol::openai_models::ModelServiceTier;
 use codex_utils_fuzzy_match::fuzzy_match;
@@ -291,7 +291,7 @@ mod tests {
     #[test]
     fn service_tier_command_is_hidden_when_disabled() {
         let service_tier_commands = vec![ServiceTierCommand {
-            service_tier: priority_service_tier(),
+            service_tier: SERVICE_TIER_PRIORITY.into(),
             command: "fast".to_string(),
             name: "Fast".to_string(),
             description: "Fast tier".to_string(),
@@ -382,7 +382,7 @@ mod tests {
             supports_personality: false,
             service_tiers: vec![
                 ModelServiceTier {
-                    id: priority_service_tier(),
+                    id: SERVICE_TIER_PRIORITY.into(),
                     name: "Fast".to_string(),
                     description: "Fast tier".to_string(),
                 },
@@ -406,7 +406,7 @@ mod tests {
             commands,
             vec![
                 ServiceTierCommand {
-                    service_tier: priority_service_tier(),
+                    service_tier: SERVICE_TIER_PRIORITY.into(),
                     command: "fast".to_string(),
                     name: "Fast".to_string(),
                     description: "Fast tier".to_string(),

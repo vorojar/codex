@@ -1,5 +1,5 @@
+use codex_protocol::config_types::SERVICE_TIER_PRIORITY;
 use codex_protocol::config_types::ServiceTier;
-use codex_protocol::config_types::priority_service_tier;
 use codex_protocol::openai_models::ModelPreset;
 use codex_protocol::openai_models::model_service_tier;
 use codex_protocol::openai_models::model_supports_service_tier;
@@ -44,6 +44,6 @@ pub(crate) fn current_service_tier_status_label(chat: &ChatWidget) -> String {
 
 pub(crate) fn model_supports_fast_mode(chat: &ChatWidget, model: &str) -> bool {
     model_preset(chat, model)
-        .map(|preset| model_supports_service_tier(&preset, &priority_service_tier()))
+        .map(|preset| model_supports_service_tier(&preset, &SERVICE_TIER_PRIORITY.into()))
         .unwrap_or(false)
 }

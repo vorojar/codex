@@ -1,7 +1,8 @@
 use super::*;
 use crate::bottom_pane::slash_commands::ServiceTierCommand;
 use crate::bottom_pane::slash_commands::SlashCommandAction;
-use codex_protocol::config_types::priority_service_tier;
+use codex_protocol::config_types::SERVICE_TIER_PRIORITY;
+use codex_protocol::config_types::ServiceTier;
 use pretty_assertions::assert_eq;
 
 fn complete_turn_with_message(chat: &mut ChatWidget, turn_id: &str, message: Option<&str>) {
@@ -32,7 +33,7 @@ fn queue_composer_text_with_tab(chat: &mut ChatWidget, text: &str) {
 
 fn fast_service_tier_command() -> SlashCommandAction {
     SlashCommandAction::ServiceTier(ServiceTierCommand {
-        service_tier: priority_service_tier(),
+        service_tier: SERVICE_TIER_PRIORITY.into(),
         command: "fast".to_string(),
         name: "Fast".to_string(),
         description: "Fast tier".to_string(),
@@ -1709,7 +1710,7 @@ async fn fast_slash_command_updates_and_persists_local_service_tier() {
     chat.dispatch_command(fast_service_tier_command());
 
     let events = std::iter::from_fn(|| rx.try_recv().ok()).collect::<Vec<_>>();
-    let priority_tier = priority_service_tier();
+    let priority_tier = ServiceTier::from(SERVICE_TIER_PRIORITY);
     assert!(
         events.iter().any(|event| matches!(
             event,
@@ -1752,7 +1753,7 @@ async fn user_turn_carries_service_tier_after_fast_toggle() {
         Op::UserTurn {
             service_tier: Some(Some(tier)),
             ..
-        } if tier == priority_service_tier() => {}
+        } if tier == SERVICE_TIER_PRIORITY.into() => {}
         other => panic!("expected Op::UserTurn with fast service tier, got {other:?}"),
     }
 }
@@ -1771,7 +1772,7 @@ async fn queued_fast_slash_applies_before_next_queued_message() {
     complete_turn_with_message(&mut chat, "turn-1", Some("done"));
 
     let events = std::iter::from_fn(|| rx.try_recv().ok()).collect::<Vec<_>>();
-    let priority_tier = priority_service_tier();
+    let priority_tier = ServiceTier::from(SERVICE_TIER_PRIORITY);
     assert!(
         events.iter().any(|event| matches!(
             event,
@@ -1788,7 +1789,7 @@ async fn queued_fast_slash_applies_before_next_queued_message() {
             items,
             service_tier: Some(Some(tier)),
             ..
-        } if tier == priority_service_tier() => assert_eq!(
+        } if tier == SERVICE_TIER_PRIORITY.into() => assert_eq!(
             items,
             vec![UserInput::Text {
                 text: "hello after fast".to_string(),

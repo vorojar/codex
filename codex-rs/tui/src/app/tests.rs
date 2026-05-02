@@ -71,8 +71,8 @@ use codex_protocol::ThreadId;
 use codex_protocol::config_types::CollaborationMode;
 use codex_protocol::config_types::CollaborationModeMask;
 use codex_protocol::config_types::ModeKind;
+use codex_protocol::config_types::SERVICE_TIER_PRIORITY;
 use codex_protocol::config_types::Settings;
-use codex_protocol::config_types::priority_service_tier;
 use codex_protocol::models::AdditionalPermissionProfile as CoreAdditionalPermissionProfile;
 use codex_protocol::models::FileSystemPermissions;
 use codex_protocol::models::NetworkPermissions;
@@ -3705,7 +3705,7 @@ async fn clear_ui_header_shows_fast_status_for_fast_capable_models() {
     app.chat_widget
         .set_reasoning_effort(Some(ReasoningEffortConfig::XHigh));
     app.chat_widget
-        .set_service_tier(Some(priority_service_tier()));
+        .set_service_tier(Some(SERVICE_TIER_PRIORITY.into()));
     set_chatgpt_auth(&mut app.chat_widget);
     set_fast_mode_test_catalog(&mut app.chat_widget);
 
@@ -4325,11 +4325,11 @@ fn active_turn_steer_race_extracts_actual_turn_id_from_mismatch() {
 async fn fresh_session_config_uses_current_service_tier() {
     let mut app = make_test_app().await;
     app.chat_widget
-        .set_service_tier(Some(priority_service_tier()));
+        .set_service_tier(Some(SERVICE_TIER_PRIORITY.into()));
 
     let config = app.fresh_session_config();
 
-    assert_eq!(config.service_tier, Some(priority_service_tier()));
+    assert_eq!(config.service_tier, Some(SERVICE_TIER_PRIORITY.into()));
 }
 
 #[tokio::test]
