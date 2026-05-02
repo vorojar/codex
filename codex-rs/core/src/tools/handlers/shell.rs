@@ -87,6 +87,7 @@ struct RunExecLikeArgs {
     call_id: String,
     freeform: bool,
     shell_runtime_backend: ShellRuntimeBackend,
+    pre_tool_use_permission_decision: Option<codex_hooks::PreToolUsePermissionDecision>,
 }
 
 impl ShellHandler {
@@ -236,6 +237,7 @@ impl ToolHandler for ShellHandler {
             call_id,
             tool_name,
             payload,
+            pre_tool_use_permission_decision,
             ..
         } = invocation;
 
@@ -258,6 +260,7 @@ impl ToolHandler for ShellHandler {
                     call_id,
                     freeform: false,
                     shell_runtime_backend: ShellRuntimeBackend::Generic,
+                    pre_tool_use_permission_decision,
                 })
                 .await
             }
@@ -276,6 +279,7 @@ impl ToolHandler for ShellHandler {
                     call_id,
                     freeform: false,
                     shell_runtime_backend: ShellRuntimeBackend::Generic,
+                    pre_tool_use_permission_decision,
                 })
                 .await
             }
@@ -350,6 +354,7 @@ impl ToolHandler for ShellCommandHandler {
             call_id,
             tool_name,
             payload,
+            pre_tool_use_permission_decision,
             ..
         } = invocation;
 
@@ -390,6 +395,7 @@ impl ToolHandler for ShellCommandHandler {
             call_id,
             freeform: true,
             shell_runtime_backend: self.shell_runtime_backend(),
+            pre_tool_use_permission_decision,
         })
         .await
     }
@@ -409,6 +415,7 @@ impl ShellHandler {
             call_id,
             freeform,
             shell_runtime_backend,
+            pre_tool_use_permission_decision,
         } = args;
 
         let mut exec_params = exec_params;
@@ -492,6 +499,7 @@ impl ShellHandler {
             Some(&tracker),
             &call_id,
             tool_name.as_str(),
+            pre_tool_use_permission_decision.clone(),
         )
         .await?
         {
@@ -563,6 +571,7 @@ impl ShellHandler {
             turn: turn.clone(),
             call_id: call_id.clone(),
             tool_name,
+            pre_tool_use_permission_decision,
         };
         let out = orchestrator
             .run(

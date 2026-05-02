@@ -1043,6 +1043,7 @@ impl UnifiedExecProcessManager {
             turn: context.turn.clone(),
             call_id: context.call_id.clone(),
             tool_name: "exec_command".to_string(),
+            pre_tool_use_permission_decision: context.pre_tool_use_permission_decision.clone(),
         };
         orchestrator
             .run(

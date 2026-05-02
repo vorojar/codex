@@ -975,6 +975,7 @@ async fn danger_full_access_tool_attempts_do_not_enforce_managed_network() -> an
         turn: Arc::clone(&turn),
         call_id: "probe-call".to_string(),
         tool_name: "probe".to_string(),
+        pre_tool_use_permission_decision: None,
     };
 
     orchestrator
@@ -990,6 +991,178 @@ async fn danger_full_access_tool_attempts_do_not_enforce_managed_network() -> an
 
     assert_eq!(tool.enforce_managed_network, vec![false]);
 
+    Ok(())
+}
+
+#[tokio::test]
+async fn pre_tool_use_allow_bypasses_required_approval() -> anyhow::Result<()> {
+    #[derive(Default)]
+    struct ApprovalProbeRuntime {
+        approval_calls: Vec<(Option<String>, Option<String>)>,
+    }
+
+    impl crate::tools::sandboxing::Approvable<()> for ApprovalProbeRuntime {
+        type ApprovalKey = String;
+
+        fn approval_keys(&self, _req: &()) -> Vec<Self::ApprovalKey> {
+            vec!["probe".to_string()]
+        }
+
+        fn exec_approval_requirement(
+            &self,
+            _req: &(),
+        ) -> Option<crate::tools::sandboxing::ExecApprovalRequirement> {
+            Some(
+                crate::tools::sandboxing::ExecApprovalRequirement::NeedsApproval {
+                    reason: Some("required".to_string()),
+                    proposed_execpolicy_amendment: None,
+                },
+            )
+        }
+
+        fn start_approval_async<'a>(
+            &'a mut self,
+            _req: &'a (),
+            ctx: crate::tools::sandboxing::ApprovalCtx<'a>,
+        ) -> futures::future::BoxFuture<'a, ReviewDecision> {
+            self.approval_calls
+                .push((ctx.guardian_review_id.clone(), ctx.retry_reason));
+            Box::pin(async { ReviewDecision::Approved })
+        }
+    }
+
+    impl crate::tools::sandboxing::Sandboxable for ApprovalProbeRuntime {
+        fn sandbox_preference(&self) -> codex_sandboxing::SandboxablePreference {
+            codex_sandboxing::SandboxablePreference::Auto
+        }
+    }
+
+    impl crate::tools::sandboxing::ToolRuntime<(), ()> for ApprovalProbeRuntime {
+        async fn run(
+            &mut self,
+            _req: &(),
+            _attempt: &crate::tools::sandboxing::SandboxAttempt<'_>,
+            _ctx: &crate::tools::sandboxing::ToolCtx,
+        ) -> Result<(), crate::tools::sandboxing::ToolError> {
+            Ok(())
+        }
+    }
+
+    let (session, turn) = make_session_and_context().await;
+    let session = Arc::new(session);
+    let turn = Arc::new(turn);
+    let mut orchestrator = crate::tools::orchestrator::ToolOrchestrator::new();
+    let mut tool = ApprovalProbeRuntime::default();
+    let tool_ctx = crate::tools::sandboxing::ToolCtx {
+        session: Arc::clone(&session),
+        turn: Arc::clone(&turn),
+        call_id: "allow-call".to_string(),
+        tool_name: "probe".to_string(),
+        pre_tool_use_permission_decision: Some(codex_hooks::PreToolUsePermissionDecision::Allow {
+            reason: None,
+        }),
+    };
+
+    orchestrator
+        .run(
+            &mut tool,
+            &(),
+            &tool_ctx,
+            turn.as_ref(),
+            AskForApproval::OnRequest,
+        )
+        .await
+        .expect("pre-tool-use allow should bypass approval");
+
+    assert_eq!(tool.approval_calls, vec![]);
+    Ok(())
+}
+
+#[tokio::test]
+async fn pre_tool_use_ask_forces_user_prompt_ahead_of_guardian() -> anyhow::Result<()> {
+    #[derive(Default)]
+    struct ApprovalProbeRuntime {
+        approval_calls: Vec<(Option<String>, Option<String>)>,
+    }
+
+    impl crate::tools::sandboxing::Approvable<()> for ApprovalProbeRuntime {
+        type ApprovalKey = String;
+
+        fn approval_keys(&self, _req: &()) -> Vec<Self::ApprovalKey> {
+            vec!["probe".to_string()]
+        }
+
+        fn exec_approval_requirement(
+            &self,
+            _req: &(),
+        ) -> Option<crate::tools::sandboxing::ExecApprovalRequirement> {
+            Some(crate::tools::sandboxing::ExecApprovalRequirement::Skip {
+                bypass_sandbox: false,
+                proposed_execpolicy_amendment: None,
+            })
+        }
+
+        fn start_approval_async<'a>(
+            &'a mut self,
+            _req: &'a (),
+            ctx: crate::tools::sandboxing::ApprovalCtx<'a>,
+        ) -> futures::future::BoxFuture<'a, ReviewDecision> {
+            self.approval_calls
+                .push((ctx.guardian_review_id.clone(), ctx.retry_reason));
+            Box::pin(async { ReviewDecision::Approved })
+        }
+    }
+
+    impl crate::tools::sandboxing::Sandboxable for ApprovalProbeRuntime {
+        fn sandbox_preference(&self) -> codex_sandboxing::SandboxablePreference {
+            codex_sandboxing::SandboxablePreference::Auto
+        }
+    }
+
+    impl crate::tools::sandboxing::ToolRuntime<(), ()> for ApprovalProbeRuntime {
+        async fn run(
+            &mut self,
+            _req: &(),
+            _attempt: &crate::tools::sandboxing::SandboxAttempt<'_>,
+            _ctx: &crate::tools::sandboxing::ToolCtx,
+        ) -> Result<(), crate::tools::sandboxing::ToolError> {
+            Ok(())
+        }
+    }
+
+    let (session, mut turn) = make_session_and_context().await;
+    let session = Arc::new(session);
+    let mut config = (*turn.config).clone();
+    config.approvals_reviewer = ApprovalsReviewer::AutoReview;
+    turn.config = Arc::new(config);
+    let turn = Arc::new(turn);
+    let mut orchestrator = crate::tools::orchestrator::ToolOrchestrator::new();
+    let mut tool = ApprovalProbeRuntime::default();
+    let tool_ctx = crate::tools::sandboxing::ToolCtx {
+        session: Arc::clone(&session),
+        turn: Arc::clone(&turn),
+        call_id: "ask-call".to_string(),
+        tool_name: "probe".to_string(),
+        pre_tool_use_permission_decision: Some(codex_hooks::PreToolUsePermissionDecision::Ask {
+            reason: Some("please confirm".to_string()),
+        }),
+    };
+
+    orchestrator
+        .run(
+            &mut tool,
+            &(),
+            &tool_ctx,
+            turn.as_ref(),
+            AskForApproval::OnFailure,
+        )
+        .await
+        .expect("pre-tool-use ask should force approval");
+
+    assert_eq!(
+        tool.approval_calls,
+        vec![(None, Some("please confirm".to_string()))]
+    );
     Ok(())
 }
 
@@ -8157,6 +8330,7 @@ async fn create_goal_tool_rejects_existing_goal() {
                 })
                 .to_string(),
             },
+            pre_tool_use_permission_decision: None,
         })
         .await
         .expect("initial create_goal should succeed");
@@ -8177,6 +8351,7 @@ async fn create_goal_tool_rejects_existing_goal() {
                 })
                 .to_string(),
             },
+            pre_tool_use_permission_decision: None,
         })
         .await;
 
@@ -8219,6 +8394,7 @@ async fn update_goal_tool_rejects_pausing_goal() {
                 })
                 .to_string(),
             },
+            pre_tool_use_permission_decision: None,
         })
         .await
         .expect("initial create_goal should succeed");
@@ -8238,6 +8414,7 @@ async fn update_goal_tool_rejects_pausing_goal() {
                 })
                 .to_string(),
             },
+            pre_tool_use_permission_decision: None,
         })
         .await;
 
@@ -8279,6 +8456,7 @@ async fn update_goal_tool_marks_goal_complete() {
                 })
                 .to_string(),
             },
+            pre_tool_use_permission_decision: None,
         })
         .await
         .expect("initial create_goal should succeed");
@@ -8298,6 +8476,7 @@ async fn update_goal_tool_marks_goal_complete() {
                 })
                 .to_string(),
             },
+            pre_tool_use_permission_decision: None,
         })
         .await
         .expect("update_goal should mark the goal complete");
@@ -8385,6 +8564,7 @@ async fn rejects_escalated_permissions_when_policy_not_on_request() {
                 })
                 .to_string(),
             },
+            pre_tool_use_permission_decision: None,
         })
         .await;
 
@@ -8458,6 +8638,7 @@ async fn unified_exec_rejects_escalated_permissions_when_policy_not_on_request()
                 })
                 .to_string(),
             },
+            pre_tool_use_permission_decision: None,
         })
         .await;
 

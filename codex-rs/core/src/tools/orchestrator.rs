@@ -27,6 +27,7 @@ use crate::tools::sandboxing::ToolError;
 use crate::tools::sandboxing::ToolRuntime;
 use crate::tools::sandboxing::default_exec_approval_requirement;
 use codex_hooks::PermissionRequestDecision;
+use codex_hooks::PreToolUsePermissionDecision;
 use codex_otel::ToolDecisionSource;
 use codex_protocol::error::CodexErr;
 use codex_protocol::error::SandboxErr;
@@ -76,6 +77,7 @@ impl ToolOrchestrator {
             turn: tool_ctx.turn.clone(),
             call_id: tool_ctx.call_id.clone(),
             tool_name: tool_ctx.tool_name.clone(),
+            pre_tool_use_permission_decision: tool_ctx.pre_tool_use_permission_decision.clone(),
         };
         let attempt_with_network_approval = SandboxAttempt {
             sandbox: attempt.sandbox,
@@ -148,8 +150,83 @@ impl ToolOrchestrator {
         let requirement = tool.exec_approval_requirement(req).unwrap_or_else(|| {
             default_exec_approval_requirement(approval_policy, &file_system_sandbox_policy)
         });
-        match requirement {
-            ExecApprovalRequirement::Skip { .. } => {
+        match (&tool_ctx.pre_tool_use_permission_decision, requirement) {
+            (
+                Some(PreToolUsePermissionDecision::Allow { .. }),
+                ExecApprovalRequirement::Forbidden { reason },
+            ) => {
+                return Err(ToolError::Rejected(reason));
+            }
+            (
+                Some(PreToolUsePermissionDecision::Allow { .. }),
+                ExecApprovalRequirement::Skip { .. }
+                | ExecApprovalRequirement::NeedsApproval { .. },
+            ) => {
+                let decision = ReviewDecision::Approved;
+                otel.tool_decision(otel_tn, otel_ci, &decision, ToolDecisionSource::Config);
+                already_approved = true;
+            }
+            (
+                Some(PreToolUsePermissionDecision::Ask { .. }),
+                ExecApprovalRequirement::Forbidden {
+                    reason: forbidden_reason,
+                },
+            ) => {
+                return Err(ToolError::Rejected(forbidden_reason));
+            }
+            (
+                Some(PreToolUsePermissionDecision::Ask { reason }),
+                ExecApprovalRequirement::Skip { .. },
+            ) => {
+                let approval_ctx = ApprovalCtx {
+                    session: &tool_ctx.session,
+                    turn: &tool_ctx.turn,
+                    call_id: &tool_ctx.call_id,
+                    guardian_review_id: None,
+                    retry_reason: reason.clone(),
+                    network_approval_context: None,
+                };
+                let decision = Self::request_approval(
+                    tool,
+                    req,
+                    tool_ctx.call_id.as_str(),
+                    approval_ctx,
+                    tool_ctx,
+                    /*evaluate_permission_request_hooks*/ false,
+                    &otel,
+                )
+                .await?;
+                Self::reject_if_not_approved(tool_ctx, None, decision).await?;
+                already_approved = true;
+            }
+            (
+                Some(PreToolUsePermissionDecision::Ask {
+                    reason: hook_reason,
+                }),
+                ExecApprovalRequirement::NeedsApproval { reason, .. },
+            ) => {
+                let approval_ctx = ApprovalCtx {
+                    session: &tool_ctx.session,
+                    turn: &tool_ctx.turn,
+                    call_id: &tool_ctx.call_id,
+                    guardian_review_id: None,
+                    retry_reason: hook_reason.clone().or(reason),
+                    network_approval_context: None,
+                };
+                let decision = Self::request_approval(
+                    tool,
+                    req,
+                    tool_ctx.call_id.as_str(),
+                    approval_ctx,
+                    tool_ctx,
+                    /*evaluate_permission_request_hooks*/ false,
+                    &otel,
+                )
+                .await?;
+                Self::reject_if_not_approved(tool_ctx, None, decision).await?;
+                already_approved = true;
+            }
+            (None, ExecApprovalRequirement::Skip { .. }) => {
                 if strict_auto_review {
                     let guardian_review_id = Some(new_guardian_review_id());
                     let approval_ctx = ApprovalCtx {
@@ -182,10 +259,10 @@ impl ToolOrchestrator {
                     );
                 }
             }
-            ExecApprovalRequirement::Forbidden { reason } => {
+            (None, ExecApprovalRequirement::Forbidden { reason }) => {
                 return Err(ToolError::Rejected(reason));
             }
-            ExecApprovalRequirement::NeedsApproval { reason, .. } => {
+            (None, ExecApprovalRequirement::NeedsApproval { reason, .. }) => {
                 let guardian_review_id = use_guardian.then(new_guardian_review_id);
                 let approval_ctx = ApprovalCtx {
                     session: &tool_ctx.session,
@@ -315,17 +392,30 @@ impl ToolOrchestrator {
 
                 // Strict auto-review approval covers the sandboxed attempt only;
                 // retrying without the sandbox requires a fresh guardian review.
-                let bypass_retry_approval = !strict_auto_review
+                let bypass_retry_approval = matches!(
+                    tool_ctx.pre_tool_use_permission_decision,
+                    Some(PreToolUsePermissionDecision::Allow { .. })
+                ) || (!strict_auto_review
                     && tool.should_bypass_approval(approval_policy, already_approved)
-                    && network_approval_context.is_none();
+                    && network_approval_context.is_none());
                 if !bypass_retry_approval {
-                    let guardian_review_id = use_guardian.then(new_guardian_review_id);
+                    let force_user_prompt = matches!(
+                        tool_ctx.pre_tool_use_permission_decision,
+                        Some(PreToolUsePermissionDecision::Ask { .. })
+                    );
+                    let guardian_review_id =
+                        (!force_user_prompt && use_guardian).then(new_guardian_review_id);
                     let approval_ctx = ApprovalCtx {
                         session: &tool_ctx.session,
                         turn: &tool_ctx.turn,
                         call_id: &tool_ctx.call_id,
                         guardian_review_id: guardian_review_id.clone(),
-                        retry_reason: Some(retry_reason),
+                        retry_reason: tool_ctx
+                            .pre_tool_use_permission_decision
+                            .as_ref()
+                            .and_then(PreToolUsePermissionDecision::reason)
+                            .map(ToString::to_string)
+                            .or(Some(retry_reason)),
                         network_approval_context: network_approval_context.clone(),
                     };
 
@@ -336,7 +426,8 @@ impl ToolOrchestrator {
                         &permission_request_run_id,
                         approval_ctx,
                         tool_ctx,
-                        /*evaluate_permission_request_hooks*/ !strict_auto_review,
+                        /*evaluate_permission_request_hooks*/
+                        !strict_auto_review && !force_user_prompt,
                         &otel,
                     )
                     .await?;

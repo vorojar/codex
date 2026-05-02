@@ -184,6 +184,7 @@ impl ToolHandler for UnifiedExecHandler {
             call_id,
             tool_name,
             payload,
+            pre_tool_use_permission_decision,
             ..
         } = invocation;
 
@@ -204,7 +205,12 @@ impl ToolHandler for UnifiedExecHandler {
         let fs = turn_environment.environment.get_filesystem();
 
         let manager: &UnifiedExecProcessManager = &session.services.unified_exec_manager;
-        let context = UnifiedExecContext::new(session.clone(), turn.clone(), call_id.clone());
+        let context = UnifiedExecContext::new(
+            session.clone(),
+            turn.clone(),
+            call_id.clone(),
+            pre_tool_use_permission_decision,
+        );
 
         let response = match tool_name.name.as_str() {
             "exec_command" => {
@@ -313,6 +319,7 @@ impl ToolHandler for UnifiedExecHandler {
                     Some(&tracker),
                     &context.call_id,
                     &tool_name.name,
+                    context.pre_tool_use_permission_decision.clone(),
                 )
                 .await?
                 {

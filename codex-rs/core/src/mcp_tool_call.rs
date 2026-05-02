@@ -45,6 +45,7 @@ use codex_analytics::build_track_events_context;
 use codex_config::types::AppToolApproval;
 use codex_features::Feature;
 use codex_hooks::PermissionRequestDecision;
+use codex_hooks::PreToolUsePermissionDecision;
 use codex_mcp::CODEX_APPS_MCP_SERVER_NAME;
 use codex_mcp::McpPermissionPromptAutoApproveContext;
 use codex_mcp::SandboxState;
@@ -94,6 +95,7 @@ const MCP_TOOL_CALL_EVENT_RESULT_MAX_BYTES: usize = DEFAULT_OUTPUT_BYTES_CAP;
 
 /// Handles the specified tool call dispatches the appropriate
 /// `McpToolCallBegin` and `McpToolCallEnd` events to the `Session`.
+#[allow(clippy::too_many_arguments)]
 pub(crate) async fn handle_mcp_tool_call(
     sess: Arc<Session>,
     turn_context: &Arc<TurnContext>,
@@ -102,6 +104,7 @@ pub(crate) async fn handle_mcp_tool_call(
     tool_name: String,
     hook_tool_name: String,
     arguments: String,
+    pre_tool_use_permission_decision: Option<PreToolUsePermissionDecision>,
 ) -> HandledMcpToolCall {
     // Parse the `arguments` as JSON. An empty string is OK, but invalid JSON
     // is not.
@@ -198,7 +201,7 @@ pub(crate) async fn handle_mcp_tool_call(
     });
     notify_mcp_tool_call_event(sess.as_ref(), turn_context.as_ref(), tool_call_begin_event).await;
 
-    if let Some(decision) = maybe_request_mcp_tool_approval(
+    if let Some(decision) = maybe_request_mcp_tool_approval_with_pre_tool_use_decision(
         &sess,
         turn_context,
         &call_id,
@@ -206,6 +209,7 @@ pub(crate) async fn handle_mcp_tool_call(
         &hook_tool_name,
         metadata.as_ref(),
         approval_mode,
+        pre_tool_use_permission_decision.as_ref(),
     )
     .await
     {
@@ -914,6 +918,7 @@ fn mcp_tool_approval_prompt_options(
     }
 }
 
+#[cfg(test)]
 async fn maybe_request_mcp_tool_approval(
     sess: &Arc<Session>,
     turn_context: &Arc<TurnContext>,
@@ -923,6 +928,41 @@ async fn maybe_request_mcp_tool_approval(
     metadata: Option<&McpToolApprovalMetadata>,
     approval_mode: AppToolApproval,
 ) -> Option<McpToolApprovalDecision> {
+    maybe_request_mcp_tool_approval_with_pre_tool_use_decision(
+        sess,
+        turn_context,
+        call_id,
+        invocation,
+        hook_tool_name,
+        metadata,
+        approval_mode,
+        None,
+    )
+    .await
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn maybe_request_mcp_tool_approval_with_pre_tool_use_decision(
+    sess: &Arc<Session>,
+    turn_context: &Arc<TurnContext>,
+    call_id: &str,
+    invocation: &McpInvocation,
+    hook_tool_name: &str,
+    metadata: Option<&McpToolApprovalMetadata>,
+    approval_mode: AppToolApproval,
+    pre_tool_use_permission_decision: Option<&PreToolUsePermissionDecision>,
+) -> Option<McpToolApprovalDecision> {
+    if matches!(
+        pre_tool_use_permission_decision,
+        Some(PreToolUsePermissionDecision::Allow { .. })
+    ) {
+        return None;
+    }
+
+    let force_user_prompt = matches!(
+        pre_tool_use_permission_decision,
+        Some(PreToolUsePermissionDecision::Ask { .. })
+    );
     if mcp_permission_prompt_is_auto_approved(
         turn_context.approval_policy.value(),
         &turn_context.permission_profile(),
@@ -930,20 +970,23 @@ async fn maybe_request_mcp_tool_approval(
             approvals_reviewer: Some(turn_context.config.approvals_reviewer),
             tool_approval_mode: Some(approval_mode),
         },
-    ) {
+    ) && !force_user_prompt
+    {
         return None;
     }
 
     let annotations = metadata.and_then(|metadata| metadata.annotations.as_ref());
     let approval_required = requires_mcp_tool_approval(annotations);
-    if !approval_required && approval_mode != AppToolApproval::Prompt {
+    if !approval_required && approval_mode != AppToolApproval::Prompt && !force_user_prompt {
         return None;
     }
 
-    let mut monitor_reason = None;
+    let mut monitor_reason = pre_tool_use_permission_decision
+        .and_then(PreToolUsePermissionDecision::reason)
+        .map(ToString::to_string);
     let auto_approved_by_policy = approval_mode == AppToolApproval::Approve;
 
-    if auto_approved_by_policy {
+    if auto_approved_by_policy && !force_user_prompt {
         match maybe_monitor_auto_approved_mcp_tool_call(
             sess,
             turn_context,
@@ -968,7 +1011,8 @@ async fn maybe_request_mcp_tool_approval(
     let session_approval_key = session_mcp_tool_approval_key(invocation, metadata, approval_mode);
     let persistent_approval_key =
         persistent_mcp_tool_approval_key(invocation, metadata, approval_mode);
-    if let Some(key) = session_approval_key.as_ref()
+    if !force_user_prompt
+        && let Some(key) = session_approval_key.as_ref()
         && mcp_tool_approval_is_remembered(sess, key).await
     {
         return Some(McpToolApprovalDecision::Accept);
@@ -977,23 +1021,25 @@ async fn maybe_request_mcp_tool_approval(
     let approval_request =
         build_mcp_tool_approval_request(call_id, hook_tool_name, invocation, metadata);
 
-    match run_permission_request_hooks(sess, turn_context, call_id, {
-        let Some(payload) = approval_request.permission_request_payload() else {
-            unreachable!("MCP approvals always project a permission request payload");
-        };
-        payload
-    })
-    .await
-    {
-        Some(PermissionRequestDecision::Allow) => {
-            return Some(McpToolApprovalDecision::Accept);
+    if !force_user_prompt {
+        match run_permission_request_hooks(sess, turn_context, call_id, {
+            let Some(payload) = approval_request.permission_request_payload() else {
+                unreachable!("MCP approvals always project a permission request payload");
+            };
+            payload
+        })
+        .await
+        {
+            Some(PermissionRequestDecision::Allow) => {
+                return Some(McpToolApprovalDecision::Accept);
+            }
+            Some(PermissionRequestDecision::Deny { message }) => {
+                return Some(McpToolApprovalDecision::Decline {
+                    message: Some(message),
+                });
+            }
+            None => {}
         }
-        Some(PermissionRequestDecision::Deny { message }) => {
-            return Some(McpToolApprovalDecision::Decline {
-                message: Some(message),
-            });
-        }
-        None => {}
     }
 
     let tool_call_mcp_elicitation_enabled = turn_context
@@ -1001,7 +1047,7 @@ async fn maybe_request_mcp_tool_approval(
         .features
         .enabled(Feature::ToolCallMcpElicitation);
 
-    if routes_approval_to_guardian(turn_context) {
+    if !force_user_prompt && routes_approval_to_guardian(turn_context) {
         let review_id = new_guardian_review_id();
         let decision = review_approval_request(
             sess,

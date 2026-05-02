@@ -74,14 +74,21 @@ pub(crate) struct UnifiedExecContext {
     pub session: Arc<Session>,
     pub turn: Arc<TurnContext>,
     pub call_id: String,
+    pub pre_tool_use_permission_decision: Option<codex_hooks::PreToolUsePermissionDecision>,
 }
 
 impl UnifiedExecContext {
-    pub fn new(session: Arc<Session>, turn: Arc<TurnContext>, call_id: String) -> Self {
+    pub fn new(
+        session: Arc<Session>,
+        turn: Arc<TurnContext>,
+        call_id: String,
+        pre_tool_use_permission_decision: Option<codex_hooks::PreToolUsePermissionDecision>,
+    ) -> Self {
         Self {
             session,
             turn,
             call_id,
+            pre_tool_use_permission_decision,
         }
     }
 }

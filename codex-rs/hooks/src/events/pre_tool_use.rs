@@ -18,6 +18,20 @@ use crate::engine::dispatcher;
 use crate::engine::output_parser;
 use crate::schema::PreToolUseCommandInput;
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PreToolUsePermissionDecision {
+    Allow { reason: Option<String> },
+    Ask { reason: Option<String> },
+}
+
+impl PreToolUsePermissionDecision {
+    pub fn reason(&self) -> Option<&str> {
+        match self {
+            Self::Allow { reason } | Self::Ask { reason } => reason.as_deref(),
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct PreToolUseRequest {
     pub session_id: ThreadId,
@@ -37,12 +51,14 @@ pub struct PreToolUseOutcome {
     pub hook_events: Vec<HookCompletedEvent>,
     pub should_block: bool,
     pub block_reason: Option<String>,
+    pub permission_decision: Option<PreToolUsePermissionDecision>,
 }
 
 #[derive(Debug, Default, PartialEq, Eq)]
 struct PreToolUseHandlerData {
     should_block: bool,
     block_reason: Option<String>,
+    permission_decision: Option<PreToolUsePermissionDecision>,
 }
 
 pub(crate) fn preview(
@@ -78,6 +94,7 @@ pub(crate) async fn run(
             hook_events: Vec::new(),
             should_block: false,
             block_reason: None,
+            permission_decision: None,
         };
     }
 
@@ -108,6 +125,17 @@ pub(crate) async fn run(
     let block_reason = results
         .iter()
         .find_map(|result| result.data.block_reason.clone());
+    let permission_decision = results
+        .iter()
+        .find_map(|result| match &result.data.permission_decision {
+            Some(decision @ PreToolUsePermissionDecision::Ask { .. }) => Some(decision.clone()),
+            _ => None,
+        })
+        .or_else(|| {
+            results
+                .iter()
+                .find_map(|result| result.data.permission_decision.clone())
+        });
 
     PreToolUseOutcome {
         hook_events: results
@@ -118,6 +146,7 @@ pub(crate) async fn run(
             .collect(),
         should_block,
         block_reason,
+        permission_decision,
     }
 }
 
@@ -151,6 +180,7 @@ fn parse_completed(
     let mut status = HookRunStatus::Completed;
     let mut should_block = false;
     let mut block_reason = None;
+    let mut permission_decision = None;
 
     match run_result.error.as_deref() {
         Some(error) => {
@@ -185,6 +215,8 @@ fn parse_completed(
                             kind: HookOutputEntryKind::Feedback,
                             text: reason,
                         });
+                    } else {
+                        permission_decision = parsed.permission_decision;
                     }
                 } else if trimmed_stdout.starts_with('{') || trimmed_stdout.starts_with('[') {
                     status = HookRunStatus::Failed;
@@ -238,6 +270,7 @@ fn parse_completed(
         data: PreToolUseHandlerData {
             should_block,
             block_reason,
+            permission_decision,
         },
     }
 }
@@ -247,6 +280,7 @@ fn serialization_failure_outcome(hook_events: Vec<HookCompletedEvent>) -> PreToo
         hook_events,
         should_block: false,
         block_reason: None,
+        permission_decision: None,
     }
 }
 
@@ -298,6 +332,7 @@ mod tests {
             PreToolUseHandlerData {
                 should_block: true,
                 block_reason: Some("do not run that".to_string()),
+                permission_decision: None,
             }
         );
         assert_eq!(parsed.completed.run.status, HookRunStatus::Blocked);
@@ -327,6 +362,7 @@ mod tests {
             PreToolUseHandlerData {
                 should_block: true,
                 block_reason: Some("do not run that".to_string()),
+                permission_decision: None,
             }
         );
         assert_eq!(parsed.completed.run.status, HookRunStatus::Blocked);
@@ -340,7 +376,33 @@ mod tests {
     }
 
     #[test]
-    fn unsupported_permission_decision_fails_open() {
+    fn permission_decision_allow_flows_through() {
+        let parsed = parse_completed(
+            &handler(),
+            run_result(
+                Some(0),
+                r#"{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"allow","permissionDecisionReason":"already reviewed"}}"#,
+                "",
+            ),
+            Some("turn-1".to_string()),
+        );
+
+        assert_eq!(
+            parsed.data,
+            PreToolUseHandlerData {
+                should_block: false,
+                block_reason: None,
+                permission_decision: Some(super::PreToolUsePermissionDecision::Allow {
+                    reason: Some("already reviewed".to_string()),
+                }),
+            }
+        );
+        assert_eq!(parsed.completed.run.status, HookRunStatus::Completed);
+        assert_eq!(parsed.completed.run.entries, vec![]);
+    }
+
+    #[test]
+    fn permission_decision_ask_flows_through() {
         let parsed = parse_completed(
             &handler(),
             run_result(
@@ -356,16 +418,13 @@ mod tests {
             PreToolUseHandlerData {
                 should_block: false,
                 block_reason: None,
+                permission_decision: Some(super::PreToolUsePermissionDecision::Ask {
+                    reason: Some("please confirm".to_string()),
+                }),
             }
         );
-        assert_eq!(parsed.completed.run.status, HookRunStatus::Failed);
-        assert_eq!(
-            parsed.completed.run.entries,
-            vec![HookOutputEntry {
-                kind: HookOutputEntryKind::Error,
-                text: "PreToolUse hook returned unsupported permissionDecision:ask".to_string(),
-            }]
-        );
+        assert_eq!(parsed.completed.run.status, HookRunStatus::Completed);
+        assert_eq!(parsed.completed.run.entries, vec![]);
     }
 
     #[test]
@@ -381,6 +440,7 @@ mod tests {
             PreToolUseHandlerData {
                 should_block: false,
                 block_reason: None,
+                permission_decision: None,
             }
         );
         assert_eq!(parsed.completed.run.status, HookRunStatus::Failed);
@@ -410,6 +470,7 @@ mod tests {
             PreToolUseHandlerData {
                 should_block: false,
                 block_reason: None,
+                permission_decision: None,
             }
         );
         assert_eq!(parsed.completed.run.status, HookRunStatus::Failed);
@@ -435,6 +496,7 @@ mod tests {
             PreToolUseHandlerData {
                 should_block: false,
                 block_reason: None,
+                permission_decision: None,
             }
         );
         assert_eq!(parsed.completed.run.status, HookRunStatus::Completed);
@@ -454,6 +516,7 @@ mod tests {
             PreToolUseHandlerData {
                 should_block: false,
                 block_reason: None,
+                permission_decision: None,
             }
         );
         assert_eq!(parsed.completed.run.status, HookRunStatus::Failed);
@@ -479,6 +542,7 @@ mod tests {
             PreToolUseHandlerData {
                 should_block: true,
                 block_reason: Some("blocked by policy".to_string()),
+                permission_decision: None,
             }
         );
         assert_eq!(parsed.completed.run.status, HookRunStatus::Blocked);

@@ -2020,6 +2020,47 @@ async fn approve_mode_skips_when_annotations_do_not_require_approval() {
 }
 
 #[tokio::test]
+async fn pre_tool_use_allow_skips_mcp_approval_flow() {
+    let (session, turn_context) = make_session_and_context().await;
+    let session = Arc::new(session);
+    let turn_context = Arc::new(turn_context);
+    let invocation = McpInvocation {
+        server: "custom_server".to_string(),
+        tool: "dangerous_tool".to_string(),
+        arguments: None,
+    };
+    let metadata = McpToolApprovalMetadata {
+        annotations: Some(annotations(
+            Some(false),
+            Some(true),
+            /*open_world*/ None,
+        )),
+        connector_id: None,
+        connector_name: None,
+        connector_description: None,
+        tool_title: Some("Dangerous Tool".to_string()),
+        tool_description: None,
+        mcp_app_resource_uri: None,
+        codex_apps_meta: None,
+        openai_file_input_params: None,
+    };
+
+    let decision = maybe_request_mcp_tool_approval_with_pre_tool_use_decision(
+        &session,
+        &turn_context,
+        "call-pretool-allow",
+        &invocation,
+        "mcp__test__tool",
+        Some(&metadata),
+        AppToolApproval::Prompt,
+        Some(&codex_hooks::PreToolUsePermissionDecision::Allow { reason: None }),
+    )
+    .await;
+
+    assert_eq!(decision, None);
+}
+
+#[tokio::test]
 async fn guardian_mode_skips_auto_when_annotations_do_not_require_approval() {
     use wiremock::Mock;
     use wiremock::ResponseTemplate;

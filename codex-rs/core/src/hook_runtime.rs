@@ -10,6 +10,7 @@ use codex_hooks::PermissionRequestRequest;
 use codex_hooks::PostToolUseOutcome;
 use codex_hooks::PostToolUseRequest;
 use codex_hooks::PreToolUseOutcome;
+use codex_hooks::PreToolUsePermissionDecision;
 use codex_hooks::PreToolUseRequest;
 use codex_hooks::SessionStartOutcome;
 use codex_hooks::UserPromptSubmitOutcome;
@@ -140,7 +141,7 @@ pub(crate) async fn run_pre_tool_use_hooks(
     tool_use_id: String,
     tool_name: &HookToolName,
     tool_input: &Value,
-) -> Option<String> {
+) -> Result<Option<PreToolUsePermissionDecision>, String> {
     let request = PreToolUseRequest {
         session_id: sess.conversation_id,
         turn_id: turn_context.sub_id.clone(),
@@ -161,24 +162,28 @@ pub(crate) async fn run_pre_tool_use_hooks(
         hook_events,
         should_block,
         block_reason,
+        permission_decision,
     } = hooks.run_pre_tool_use(request).await;
     emit_hook_completed_events(sess, turn_context, hook_events).await;
 
     if should_block {
-        block_reason.map(|reason| {
-            if (tool_name.name() == "Bash" || tool_name.name() == "apply_patch")
-                && let Some(command) = tool_input.get("command").and_then(Value::as_str)
-            {
-                format!("Command blocked by PreToolUse hook: {reason}. Command: {command}")
-            } else {
-                format!(
-                    "Tool call blocked by PreToolUse hook: {reason}. Tool: {}",
-                    tool_name.name()
-                )
-            }
-        })
+        Err(block_reason.map_or_else(
+            || "Tool call blocked by PreToolUse hook".to_string(),
+            |reason| {
+                if (tool_name.name() == "Bash" || tool_name.name() == "apply_patch")
+                    && let Some(command) = tool_input.get("command").and_then(Value::as_str)
+                {
+                    format!("Command blocked by PreToolUse hook: {reason}. Command: {command}")
+                } else {
+                    format!(
+                        "Tool call blocked by PreToolUse hook: {reason}. Tool: {}",
+                        tool_name.name()
+                    )
+                }
+            },
+        ))
     } else {
-        None
+        Ok(permission_decision)
     }
 }
 

@@ -266,6 +266,7 @@ impl ToolRegistry {
         &self,
         invocation: ToolInvocation,
     ) -> Result<AnyToolResult, FunctionCallError> {
+        let mut invocation = invocation;
         let tool_name = invocation.tool_name.clone();
         let display_name = tool_name.display();
         let call_id_owned = invocation.call_id.clone();
@@ -354,8 +355,8 @@ impl ToolRegistry {
             return Err(err);
         }
 
-        if let Some(pre_tool_use_payload) = handler.pre_tool_use_payload(&invocation)
-            && let Some(message) = run_pre_tool_use_hooks(
+        if let Some(pre_tool_use_payload) = handler.pre_tool_use_payload(&invocation) {
+            match run_pre_tool_use_hooks(
                 &invocation.session,
                 &invocation.turn,
                 invocation.call_id.clone(),
@@ -363,10 +364,16 @@ impl ToolRegistry {
                 &pre_tool_use_payload.tool_input,
             )
             .await
-        {
-            let err = FunctionCallError::RespondToModel(message);
-            dispatch_trace.record_failed(&err);
-            return Err(err);
+            {
+                Ok(permission_decision) => {
+                    invocation.pre_tool_use_permission_decision = permission_decision;
+                }
+                Err(message) => {
+                    let err = FunctionCallError::RespondToModel(message);
+                    dispatch_trace.record_failed(&err);
+                    return Err(err);
+                }
+            }
         }
 
         let is_mutating = handler.is_mutating(&invocation).await;

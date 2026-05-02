@@ -12,6 +12,7 @@ use crate::session::turn_context::TurnContext;
 use crate::state::SessionServices;
 use crate::tools::hook_names::HookToolName;
 use crate::tools::network_approval::NetworkApprovalSpec;
+use codex_hooks::PreToolUsePermissionDecision;
 use codex_network_proxy::NetworkProxy;
 use codex_protocol::approvals::ExecPolicyAmendment;
 use codex_protocol::approvals::NetworkApprovalContext;
@@ -346,6 +347,7 @@ pub(crate) struct ToolCtx {
     pub turn: Arc<TurnContext>,
     pub call_id: String,
     pub tool_name: String,
+    pub pre_tool_use_permission_decision: Option<PreToolUsePermissionDecision>,
 }
 
 #[derive(Debug)]

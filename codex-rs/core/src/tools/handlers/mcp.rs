@@ -60,6 +60,7 @@ impl ToolHandler for McpHandler {
             call_id,
             tool_name: model_tool_name,
             payload,
+            pre_tool_use_permission_decision,
             ..
         } = invocation;
 
@@ -88,6 +89,7 @@ impl ToolHandler for McpHandler {
             tool,
             model_tool_name.display(),
             arguments_str,
+            pre_tool_use_permission_decision,
         )
         .await;
 
@@ -145,6 +147,7 @@ mod tests {
                 tool_name: codex_tools::ToolName::namespaced("mcp__memory__", "create_entities"),
                 source: ToolCallSource::Direct,
                 payload,
+                pre_tool_use_permission_decision: None,
             }),
             Some(PreToolUsePayload {
                 tool_name: HookToolName::new("mcp__memory__create_entities"),
@@ -194,6 +197,7 @@ mod tests {
             tool_name: codex_tools::ToolName::namespaced("mcp__filesystem__", "read_file"),
             source: ToolCallSource::Direct,
             payload,
+            pre_tool_use_permission_decision: None,
         };
         assert_eq!(
             McpHandler.post_tool_use_payload(&invocation, &output),
