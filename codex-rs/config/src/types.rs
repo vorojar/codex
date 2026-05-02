@@ -617,10 +617,10 @@ pub enum PromptSubmitKey {
     #[default]
     Enter,
 
-    /// Swap the main prompt behavior so `Shift+Enter` submits and plain
+    /// Swap the main prompt behavior so `Ctrl+Enter` submits and plain
     /// `Enter` inserts a newline when the terminal can report modified enter
     /// keys.
-    ShiftEnter,
+    CtrlEnter,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, Default, JsonSchema)]
@@ -663,7 +663,7 @@ pub struct Tui {
     ///
     /// - `enter` (default): Preserve the legacy bindings, with `Enter` to
     ///   submit and `Shift+Enter` to insert a newline when supported.
-    /// - `shift-enter`: Use `Shift+Enter` to submit and plain `Enter` to insert
+    /// - `ctrl-enter`: Use `Ctrl+Enter` to submit and plain `Enter` to insert
     ///   a newline when the terminal can report modified enter keys. Terminals
     ///   without that capability keep the legacy bindings.
     #[serde(default)]

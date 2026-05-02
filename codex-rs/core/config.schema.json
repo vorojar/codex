@@ -1856,9 +1856,9 @@
           "type": "string"
         },
         {
-          "description": "Swap the main prompt behavior so `Shift+Enter` submits and plain `Enter` inserts a newline when the terminal can report modified enter keys.",
+          "description": "Swap the main prompt behavior so `Ctrl+Enter` submits and plain `Enter` inserts a newline when the terminal can report modified enter keys.",
           "enum": [
-            "shift-enter"
+            "ctrl-enter"
           ],
           "type": "string"
         }
@@ -2524,7 +2524,7 @@
             }
           ],
           "default": "enter",
-          "description": "Controls which key submits the main TUI prompt composer.\n\n- `enter` (default): Preserve the legacy bindings, with `Enter` to submit and `Shift+Enter` to insert a newline when supported. - `shift-enter`: Use `Shift+Enter` to submit and plain `Enter` to insert a newline when the terminal can report modified enter keys. Terminals without that capability keep the legacy bindings."
+          "description": "Controls which key submits the main TUI prompt composer.\n\n- `enter` (default): Preserve the legacy bindings, with `Enter` to submit and `Shift+Enter` to insert a newline when supported. - `ctrl-enter`: Use `Ctrl+Enter` to submit and plain `Enter` to insert a newline when the terminal can report modified enter keys. Terminals without that capability keep the legacy bindings."
         },
         "show_tooltips": {
           "default": true,

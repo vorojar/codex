@@ -8826,9 +8826,9 @@ fn test_tui_fork_tab_exit_behavior() {
 fn test_tui_prompt_submit_key() {
     let toml = r#"
             [tui]
-            prompt_submit_key = "shift-enter"
+            prompt_submit_key = "ctrl-enter"
         "#;
     let parsed: RootTomlTest =
-        toml::from_str(toml).expect("deserialize prompt_submit_key=\"shift-enter\"");
-    assert_eq!(parsed.tui.prompt_submit_key, PromptSubmitKey::ShiftEnter);
+        toml::from_str(toml).expect("deserialize prompt_submit_key=\"ctrl-enter\"");
+    assert_eq!(parsed.tui.prompt_submit_key, PromptSubmitKey::CtrlEnter);
 }

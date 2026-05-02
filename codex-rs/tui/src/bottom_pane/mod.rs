@@ -1818,7 +1818,7 @@ mod tests {
     }
 
     #[test]
-    fn shift_enter_submit_key_reaches_main_prompt_composer() {
+    fn ctrl_enter_submit_key_reaches_main_prompt_composer() {
         let (tx_raw, _rx) = unbounded_channel::<AppEvent>();
         let tx = AppEventSender::new(tx_raw);
         let mut pane = BottomPane::new(BottomPaneParams {
@@ -1826,7 +1826,7 @@ mod tests {
             frame_requester: FrameRequester::test_dummy(),
             has_input_focus: true,
             enhanced_keys_supported: true,
-            prompt_submit_key: PromptSubmitKey::ShiftEnter,
+            prompt_submit_key: PromptSubmitKey::CtrlEnter,
             placeholder_text: "Ask Codex to do anything".to_string(),
             disable_paste_burst: false,
             animations_enabled: true,
@@ -1840,7 +1840,7 @@ mod tests {
         );
         assert_eq!(pane.composer_text(), "hello\n");
         assert_matches!(
-            pane.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::SHIFT)),
+            pane.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL)),
             InputResult::Submitted { text, .. } if text == "hello"
         );
     }

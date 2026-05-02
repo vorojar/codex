@@ -39,7 +39,7 @@
 //! # Submission and Prompt Expansion
 //!
 //! `Enter` submits immediately by default. The main prompt composer can opt into a mode where
-//! plain `Enter` inserts a newline and `Shift+Enter` submits when the terminal reports modified
+//! plain `Enter` inserts a newline and `Ctrl+Enter` submits when the terminal reports modified
 //! enter keys. `Tab` requests queuing while a task is running; if no task is running, `Tab`
 //! submits just like Enter so input is never dropped.
 //! `Tab` does not submit when entering a `!` shell command.
@@ -734,8 +734,8 @@ impl ChatComposer {
         enhanced_keys_supported: bool,
     ) -> PromptSubmitKey {
         match (configured_submit_key, enhanced_keys_supported) {
-            (PromptSubmitKey::ShiftEnter, true) => PromptSubmitKey::ShiftEnter,
-            (PromptSubmitKey::ShiftEnter, false) | (PromptSubmitKey::Enter, _) => {
+            (PromptSubmitKey::CtrlEnter, true) => PromptSubmitKey::CtrlEnter,
+            (PromptSubmitKey::CtrlEnter, false) | (PromptSubmitKey::Enter, _) => {
                 PromptSubmitKey::Enter
             }
         }
@@ -746,9 +746,9 @@ impl ChatComposer {
         enhanced_keys_supported: bool,
     ) -> NewlineHint {
         match (prompt_submit_key, enhanced_keys_supported) {
-            (PromptSubmitKey::ShiftEnter, true) => NewlineHint::Enter,
+            (PromptSubmitKey::CtrlEnter, true) => NewlineHint::Enter,
             (PromptSubmitKey::Enter, true) => NewlineHint::ShiftEnter,
-            (PromptSubmitKey::Enter, false) | (PromptSubmitKey::ShiftEnter, false) => {
+            (PromptSubmitKey::Enter, false) | (PromptSubmitKey::CtrlEnter, false) => {
                 NewlineHint::CtrlJ
             }
         }
@@ -757,7 +757,7 @@ impl ChatComposer {
     fn submit_keys(prompt_submit_key: PromptSubmitKey) -> Vec<KeyBinding> {
         match prompt_submit_key {
             PromptSubmitKey::Enter => vec![key_hint::plain(KeyCode::Enter)],
-            PromptSubmitKey::ShiftEnter => vec![key_hint::shift(KeyCode::Enter)],
+            PromptSubmitKey::CtrlEnter => vec![key_hint::ctrl(KeyCode::Enter)],
         }
     }
 
@@ -859,7 +859,7 @@ impl ChatComposer {
     }
 
     fn apply_prompt_submit_key_mode(&mut self) {
-        if self.prompt_submit_key == PromptSubmitKey::ShiftEnter {
+        if self.prompt_submit_key == PromptSubmitKey::CtrlEnter {
             let plain_enter = key_hint::plain(KeyCode::Enter);
             self.submit_keys = Self::submit_keys(self.prompt_submit_key);
             if !self.editor_keymap.insert_newline.contains(&plain_enter) {
@@ -6937,7 +6937,7 @@ mod tests {
     }
 
     #[test]
-    fn shift_enter_submit_mode_swaps_submit_and_newline_when_supported() {
+    fn ctrl_enter_submit_mode_swaps_submit_and_newline_when_supported() {
         use crossterm::event::KeyCode;
         use crossterm::event::KeyEvent;
         use crossterm::event::KeyModifiers;
@@ -6951,7 +6951,7 @@ mod tests {
             "Ask Codex to do anything".to_string(),
             /*disable_paste_burst*/ false,
             ChatComposerConfig {
-                prompt_submit_key: PromptSubmitKey::ShiftEnter,
+                prompt_submit_key: PromptSubmitKey::CtrlEnter,
                 ..Default::default()
             },
         );
@@ -6963,16 +6963,16 @@ mod tests {
         assert_eq!(composer.textarea.text(), "hello\n");
 
         composer.textarea.insert_str("world");
-        let (shift_enter_result, _) =
-            composer.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::SHIFT));
+        let (ctrl_enter_result, _) =
+            composer.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL));
         assert_matches!(
-            shift_enter_result,
+            ctrl_enter_result,
             InputResult::Submitted { text, .. } if text == "hello\nworld"
         );
     }
 
     #[test]
-    fn shift_enter_submit_mode_falls_back_to_legacy_without_enhanced_keys() {
+    fn ctrl_enter_submit_mode_falls_back_to_legacy_without_enhanced_keys() {
         use crossterm::event::KeyCode;
         use crossterm::event::KeyEvent;
         use crossterm::event::KeyModifiers;
@@ -6986,7 +6986,7 @@ mod tests {
             "Ask Codex to do anything".to_string(),
             /*disable_paste_burst*/ false,
             ChatComposerConfig {
-                prompt_submit_key: PromptSubmitKey::ShiftEnter,
+                prompt_submit_key: PromptSubmitKey::CtrlEnter,
                 ..Default::default()
             },
         );
