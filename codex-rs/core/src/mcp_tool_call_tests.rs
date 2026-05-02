@@ -682,7 +682,13 @@ fn codex_apps_tool_question_uses_fallback_app_label() {
 
 #[test]
 fn trusted_codex_apps_tool_question_offers_always_allow() {
-    let metadata = approval_metadata(Some("calendar"), Some("Calendar"), None, None, None);
+    let metadata = approval_metadata(
+        Some("calendar"),
+        Some("Calendar"),
+        /*connector_description*/ None,
+        /*tool_title*/ None,
+        /*tool_description*/ None,
+    );
     let question = approval_prompt_request(
         CODEX_APPS_MCP_SERVER_NAME,
         "run_action",
@@ -730,7 +736,13 @@ fn codex_apps_tool_question_without_elicitation_omits_always_allow() {
         tool_name: "run_action".to_string(),
     };
     let persistent_key = session_key.clone();
-    let metadata = approval_metadata(Some("calendar"), Some("Calendar"), None, None, None);
+    let metadata = approval_metadata(
+        Some("calendar"),
+        Some("Calendar"),
+        /*connector_description*/ None,
+        /*tool_title*/ None,
+        /*tool_description*/ None,
+    );
     let question = approval_prompt_request(
         CODEX_APPS_MCP_SERVER_NAME,
         "run_action",

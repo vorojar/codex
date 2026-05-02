@@ -20,7 +20,6 @@ use codex_protocol::request_user_input::RequestUserInputAnswer;
 use codex_protocol::request_user_input::RequestUserInputQuestion;
 use codex_protocol::request_user_input::RequestUserInputQuestionOption;
 use codex_protocol::request_user_input::RequestUserInputResponse;
-use codex_shell_command::parse_command::shlex_join;
 use codex_utils_absolute_path::AbsolutePathBuf;
 use serde::Serialize;
 use serde_json::Value;
@@ -163,7 +162,10 @@ impl ApprovalRequest {
                 if argv.len() > 1 {
                     command.extend_from_slice(&argv[1..]);
                 }
-                Some(PermissionRequestPayload::bash(shlex_join(&command), None))
+                Some(PermissionRequestPayload::bash(
+                    codex_shell_command::parse_command::shlex_join(&command),
+                    /*description*/ None,
+                ))
             }
             Self::ApplyPatch { patch, .. } => Some(PermissionRequestPayload {
                 tool_name: HookToolName::apply_patch(),
@@ -1144,9 +1146,9 @@ mod tests {
                 "turn-1".to_string(),
                 Some("approval-1".to_string()),
                 Some("retry".to_string()),
-                None,
-                None,
-                None,
+                /*network_approval_context*/ None,
+                /*proposed_execpolicy_amendment*/ None,
+                /*proposed_network_policy_amendments*/ None,
                 Some(vec![ReviewDecision::Approved, ReviewDecision::Abort]),
                 /*fallback_cwd*/ None,
             )
@@ -1181,7 +1183,11 @@ mod tests {
         };
 
         let event = request
-            .apply_patch_approval_event("turn-1".to_string(), Some("needs write".to_string()), None)
+            .apply_patch_approval_event(
+                "turn-1".to_string(),
+                Some("needs write".to_string()),
+                /*grant_root*/ None,
+            )
             .expect("apply_patch approval event");
 
         assert_eq!(event.call_id, "call-1");
@@ -1248,12 +1254,12 @@ mod tests {
         let event = request
             .exec_approval_event(
                 "ignored-turn".to_string(),
-                None,
+                /*approval_id*/ None,
                 Some("need network".to_string()),
-                None,
-                None,
-                None,
-                None,
+                /*network_approval_context*/ None,
+                /*proposed_execpolicy_amendment*/ None,
+                /*proposed_network_policy_amendments*/ None,
+                /*available_decisions*/ None,
                 Some(test_path_buf("/tmp").abs()),
             )
             .expect("network exec approval event");
