@@ -469,7 +469,7 @@ async fn conversation_webrtc_start_posts_generated_session() -> Result<()> {
             "session": { "id": "sess_webrtc", "instructions": "backend prompt" }
         })]],
         response_headers: Vec::new(),
-        accept_delay: None,
+        accept_delay: Some(Duration::from_millis(250)),
         close_after_requests: false,
     }])
     .await;
@@ -506,6 +506,13 @@ async fn conversation_webrtc_start_posts_generated_session() -> Result<()> {
     .await
     .unwrap_or_else(|err: ErrorEvent| panic!("conversation call create failed: {err:?}"));
     assert_eq!(created.sdp, "v=answer\r\n");
+    assert!(realtime_server.handshakes().is_empty());
+
+    test.codex
+        .submit(Op::RealtimeConversationText(ConversationTextParams {
+            text: "queued before sideband".to_string(),
+        }))
+        .await?;
 
     let session_updated = wait_for_event_match(&test.codex, |msg| match msg {
         EventMsg::RealtimeConversationRealtime(RealtimeConversationRealtimeEvent {
@@ -569,6 +576,13 @@ async fn conversation_webrtc_start_posts_generated_session() -> Result<()> {
         websocket_request_instructions(&session_update)
             .context("session.update should include instructions")?
             .contains("startup context")
+    );
+    let queued_text = realtime_server
+        .wait_for_request(/*connection_index*/ 0, /*request_index*/ 1)
+        .await;
+    assert_eq!(
+        websocket_request_text(&queued_text).as_deref(),
+        Some("queued before sideband")
     );
     let handshake = realtime_server.single_handshake();
     assert_eq!(
