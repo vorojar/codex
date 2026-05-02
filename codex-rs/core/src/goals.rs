@@ -12,6 +12,11 @@ use crate::state::TurnState;
 use crate::tasks::RegularTask;
 use anyhow::Context;
 use codex_features::Feature;
+use codex_otel::GOAL_BUDGET_LIMITED_METRIC;
+use codex_otel::GOAL_COMPLETED_METRIC;
+use codex_otel::GOAL_CREATED_METRIC;
+use codex_otel::GOAL_DURATION_SECONDS_METRIC;
+use codex_otel::GOAL_TOKEN_COUNT_METRIC;
 use codex_protocol::config_types::ModeKind;
 use codex_protocol::models::ContentItem;
 use codex_protocol::models::ResponseInputItem;
@@ -454,6 +459,15 @@ impl Session {
 
         let goal_status = goal.status;
         let goal_id = goal.goal_id.clone();
+        let previous_status_for_goal = if replacing_goal {
+            None
+        } else {
+            previous_status
+        };
+        if replacing_goal {
+            self.emit_goal_created_metric();
+        }
+        self.emit_goal_terminal_metrics_if_status_changed(previous_status_for_goal, &goal);
         let goal = protocol_goal_from_state(goal);
         *self.goal_runtime.budget_limit_reported_goal_id.lock().await = None;
         let newly_active_goal = goal_status == codex_state::ThreadGoalStatus::Active
@@ -522,6 +536,7 @@ impl Session {
             })?;
 
         let goal_id = goal.goal_id.clone();
+        self.emit_goal_created_metric();
         let goal = protocol_goal_from_state(goal);
         *self.goal_runtime.budget_limit_reported_goal_id.lock().await = None;
 
@@ -636,6 +651,57 @@ impl Session {
             }
         }
         accounting.wall_clock.mark_active_goal(goal_id);
+    }
+
+    fn emit_goal_created_metric(&self) {
+        self.services
+            .session_telemetry
+            .counter(GOAL_CREATED_METRIC, /*inc*/ 1, &[]);
+    }
+
+    fn emit_goal_terminal_metrics_if_status_changed(
+        &self,
+        previous_status: Option<codex_state::ThreadGoalStatus>,
+        goal: &codex_state::ThreadGoal,
+    ) {
+        if previous_status == Some(goal.status) {
+            return;
+        }
+
+        let counter = match goal.status {
+            codex_state::ThreadGoalStatus::BudgetLimited => GOAL_BUDGET_LIMITED_METRIC,
+            codex_state::ThreadGoalStatus::Complete => GOAL_COMPLETED_METRIC,
+            codex_state::ThreadGoalStatus::Active | codex_state::ThreadGoalStatus::Paused => {
+                return;
+            }
+        };
+        let status_tag = [("status", goal.status.as_str())];
+        self.services
+            .session_telemetry
+            .counter(counter, /*inc*/ 1, &[]);
+        self.services.session_telemetry.histogram(
+            GOAL_TOKEN_COUNT_METRIC,
+            goal.tokens_used,
+            &status_tag,
+        );
+        self.services.session_telemetry.histogram(
+            GOAL_DURATION_SECONDS_METRIC,
+            goal.time_used_seconds,
+            &status_tag,
+        );
+    }
+
+    async fn current_goal_status_for_metrics(
+        &self,
+        state_db: &StateDbHandle,
+        expected_goal_id: Option<&str>,
+    ) -> anyhow::Result<Option<codex_state::ThreadGoalStatus>> {
+        let goal = state_db.get_thread_goal(self.conversation_id).await?;
+        Ok(goal.and_then(|goal| {
+            expected_goal_id
+                .is_none_or(|expected_goal_id| goal.goal_id == expected_goal_id)
+                .then_some(goal.status)
+        }))
     }
 
     async fn active_turn_context(&self) -> Option<Arc<TurnContext>> {
@@ -820,6 +886,9 @@ impl Session {
         if time_delta_seconds == 0 && token_delta <= 0 {
             return Ok(());
         }
+        let previous_status = self
+            .current_goal_status_for_metrics(&state_db, expected_goal_id.as_deref())
+            .await?;
         let outcome = state_db
             .account_thread_goal_usage(
                 self.conversation_id,
@@ -862,6 +931,7 @@ impl Session {
                         accounting.wall_clock.clear_active_goal();
                     }
                 }
+                self.emit_goal_terminal_metrics_if_status_changed(previous_status, &goal);
                 goal
             }
             codex_state::ThreadGoalAccountingOutcome::Unchanged(_) => return Ok(()),
@@ -932,6 +1002,9 @@ impl Session {
         if time_delta_seconds == 0 {
             return Ok(None);
         }
+        let previous_status = self
+            .current_goal_status_for_metrics(state_db, expected_goal_id.as_deref())
+            .await?;
 
         match state_db
             .account_thread_goal_usage(
@@ -944,6 +1017,7 @@ impl Session {
             .await?
         {
             codex_state::ThreadGoalAccountingOutcome::Updated(goal) => {
+                self.emit_goal_terminal_metrics_if_status_changed(previous_status, &goal);
                 self.goal_runtime
                     .accounting
                     .lock()
