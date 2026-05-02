@@ -2443,7 +2443,7 @@ impl Config {
                 None,
             )
         };
-        if enable_network_proxy {
+        if enable_network_proxy && permission_profile.network_sandbox_policy().is_enabled() {
             if let Some(network_proxy) = network_proxy_toml_config(cfg.features.as_ref()) {
                 apply_network_proxy_feature_config(
                     &mut configured_network_proxy_config,

@@ -783,8 +783,7 @@ async fn permissions_profiles_proxy_policy_does_not_start_managed_network_proxy_
 }
 
 #[tokio::test]
-async fn network_proxy_feature_starts_proxy_without_enabling_sandbox_network() -> std::io::Result<()>
-{
+async fn network_proxy_feature_is_no_op_without_sandbox_network() -> std::io::Result<()> {
     let codex_home = TempDir::new()?;
     let cwd = TempDir::new()?;
     let config = Config::load_from_base_config_with_overrides(
@@ -804,13 +803,10 @@ async fn network_proxy_feature_starts_proxy_without_enabling_sandbox_network() -
         config.permissions.network_sandbox_policy(),
         NetworkSandboxPolicy::Restricted
     );
-    let network = config
-        .permissions
-        .network
-        .as_ref()
-        .expect("network_proxy should start the managed network proxy");
-    assert_eq!(network.proxy_host_and_port(), "127.0.0.1:3128");
-    assert!(network.socks_enabled());
+    assert!(
+        config.permissions.network.is_none(),
+        "network_proxy should not start the managed network proxy while network access is off"
+    );
     Ok(())
 }
 
@@ -948,7 +944,7 @@ async fn network_proxy_feature_matrix_preserves_sandbox_network_semantics() -> s
         );
         assert_eq!(
             config.permissions.network.is_some(),
-            case.proxy_enabled,
+            case.network_enabled && case.proxy_enabled,
             "{}",
             case.name
         );
@@ -961,16 +957,21 @@ async fn network_proxy_feature_matrix_preserves_sandbox_network_semantics() -> s
 async fn network_proxy_cli_overrides_merge_toggle_with_proxy_config() -> std::io::Result<()> {
     let codex_home = TempDir::new()?;
     let cwd = TempDir::new()?;
+    std::fs::write(
+        codex_home.path().join(CONFIG_TOML_FILE),
+        r#"
+sandbox_mode = "workspace-write"
+
+[sandbox_workspace_write]
+network_access = true
+"#,
+    )?;
     let config = ConfigBuilder::without_managed_config_for_tests()
         .codex_home(codex_home.path().to_path_buf())
         .cli_overrides(vec![
             (
                 "features.network_proxy.enabled".to_string(),
                 toml::Value::Boolean(true),
-            ),
-            (
-                "features.network_proxy.proxy_url".to_string(),
-                toml::Value::String("http://127.0.0.1:43128".to_string()),
             ),
             (
                 "features.network_proxy.enable_socks5".to_string(),
@@ -986,14 +987,14 @@ async fn network_proxy_cli_overrides_merge_toggle_with_proxy_config() -> std::io
 
     assert_eq!(
         config.permissions.network_sandbox_policy(),
-        NetworkSandboxPolicy::Restricted
+        NetworkSandboxPolicy::Enabled
     );
     let network = config
         .permissions
         .network
         .as_ref()
         .expect("network_proxy should start the managed network proxy");
-    assert_eq!(network.proxy_host_and_port(), "127.0.0.1:43128");
+    assert_eq!(network.proxy_host_and_port(), "127.0.0.1:3128");
     assert!(!network.socks_enabled());
     Ok(())
 }

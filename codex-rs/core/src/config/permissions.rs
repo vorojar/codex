@@ -118,8 +118,8 @@ pub(crate) fn network_proxy_config_from_profile_network(
         NetworkToml::to_network_proxy_config,
     );
     // Profile `network.enabled` controls sandbox network access. Profiles may
-    // provide proxy settings for the feature gate to consume, but they do not
-    // start the managed proxy on their own.
+    // provide proxy settings for the feature gate to consume when that network
+    // access is enabled, but they do not start the managed proxy on their own.
     config.network.enabled = false;
     config
 }
