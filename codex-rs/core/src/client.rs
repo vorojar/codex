@@ -302,18 +302,29 @@ fn sideband_websocket_auth_headers(api_auth: &dyn AuthProvider) -> ApiHeaderMap 
     headers
 }
 
-/// Adapts the shared `/responses` request body for the `/responses/compact` endpoint.
+/// Adapts the shared `/responses` request for the `/responses/compact` endpoint.
 ///
-/// Remote compaction starts from the same request builder as a normal sampling turn, then clears
-/// only the fields the compact endpoint rejects. This keeps parity drift visible in integration
-/// snapshots while preserving endpoint-specific validation behavior.
-fn prepare_responses_compact_request(request: &mut ResponsesApiRequest, auth: Option<&CodexAuth>) {
+/// Remote compaction starts from the same request body and transport options as a normal sampling
+/// turn, then clears only the body fields the compact endpoint rejects. Because compact cannot
+/// carry `client_metadata` in the body, installation attribution is preserved as a header to match
+/// the previous compact path.
+fn prepare_responses_compact_request(
+    request: &mut ResponsesApiRequest,
+    options: &mut ApiResponsesOptions,
+    auth: Option<&CodexAuth>,
+    installation_id: &str,
+) {
     request.store = None;
     request.stream = None;
     request.include = None;
     request.client_metadata = None;
     if auth.is_some_and(CodexAuth::is_api_key_auth) {
         request.service_tier = None;
+    }
+    if let Ok(header_value) = HeaderValue::from_str(installation_id) {
+        options
+            .extra_headers
+            .insert(X_CODEX_INSTALLATION_ID_HEADER, header_value);
     }
 }
 
@@ -475,11 +486,16 @@ impl ModelClient {
             summary,
             service_tier,
         )?;
-        prepare_responses_compact_request(&mut request, client_setup.auth.as_ref());
-        let options = self.build_responses_options(
+        let mut options = self.build_responses_options(
             /*turn_state*/ None,
             turn_metadata_header,
             Compression::None,
+        );
+        prepare_responses_compact_request(
+            &mut request,
+            &mut options,
+            client_setup.auth.as_ref(),
+            &self.state.installation_id,
         );
         let trace_attempt = compaction_trace.start_attempt(&request);
         let client =

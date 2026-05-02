@@ -4,6 +4,7 @@ use std::fs;
 use std::path::PathBuf;
 
 use anyhow::Result;
+use codex_core::X_CODEX_INSTALLATION_ID_HEADER;
 use codex_core::X_CODEX_TURN_METADATA_HEADER;
 use codex_core::compact::SUMMARY_PREFIX;
 use codex_login::CodexAuth;
@@ -603,6 +604,13 @@ async fn assert_remote_manual_compact_matches_last_sampling_request_after_varied
             .remove(*field);
     }
     assert_eq!(compact_body_without_input, last_turn_body_without_input);
+    let last_normal_installation_id = last_turn_request
+        .body_json()
+        .get("client_metadata")
+        .and_then(|client_metadata| client_metadata.get(X_CODEX_INSTALLATION_ID_HEADER))
+        .and_then(Value::as_str)
+        .map(str::to_string)
+        .expect("normal responses request should include installation client metadata");
     assert_eq!(
         json!({
             "last_normal_has_turn_metadata_header": last_turn_request
@@ -611,10 +619,15 @@ async fn assert_remote_manual_compact_matches_last_sampling_request_after_varied
             "compact_has_turn_metadata_header": compact_request
                 .header(X_CODEX_TURN_METADATA_HEADER)
                 .is_some(),
+            "last_normal_installation_id": last_normal_installation_id,
+            "compact_installation_id": compact_request
+                .header(X_CODEX_INSTALLATION_ID_HEADER),
         }),
         json!({
             "last_normal_has_turn_metadata_header": true,
             "compact_has_turn_metadata_header": true,
+            "last_normal_installation_id": last_normal_installation_id,
+            "compact_installation_id": last_normal_installation_id,
         }),
     );
 
