@@ -432,7 +432,7 @@ impl ModelClient {
             RequestRouteTelemetry::for_endpoint(RESPONSES_COMPACT_ENDPOINT),
             self.state.auth_env_telemetry.clone(),
         );
-        let request = self.build_responses_request(
+        let mut request = self.build_responses_request(
             &client_setup.api_provider,
             prompt,
             model_info,
@@ -440,6 +440,7 @@ impl ModelClient {
             summary,
             None,
         )?;
+        request.store = None;
         let options = self.build_responses_options(
             /*turn_state*/ None,
             /*turn_metadata_header*/ None,
@@ -665,10 +666,9 @@ impl ModelClient {
             instructions: instructions.clone(),
             input,
             tools,
-            tool_choice: "auto".to_string(),
             parallel_tool_calls: prompt.parallel_tool_calls,
             reasoning,
-            store: provider.is_azure_responses_endpoint(),
+            store: Some(provider.is_azure_responses_endpoint()),
             stream: true,
             include,
             service_tier: match service_tier {

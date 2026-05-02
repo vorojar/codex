@@ -22,7 +22,7 @@ pub(crate) fn build_responses_request_body(
 ) -> Result<Value, ApiError> {
     let mut body = serde_json::to_value(request)
         .map_err(|e| ApiError::Stream(format!("failed to encode responses request: {e}")))?;
-    if request.store && provider.is_azure_responses_endpoint() {
+    if request.store == Some(true) && provider.is_azure_responses_endpoint() {
         attach_item_ids(&mut body, &request.input);
     }
     Ok(body)
