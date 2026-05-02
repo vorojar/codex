@@ -940,6 +940,7 @@ struct McpToolApprovalKey {
     tool_name: String,
 }
 
+/// Builds the user-facing MCP approval prompt from the canonical approval request.
 fn mcp_tool_approval_prompt(
     approval_request: &GuardianApprovalRequest,
     question_id: String,
@@ -998,6 +999,8 @@ fn mcp_tool_approval_prompt(
     })
 }
 
+/// Converts a guardian MCP approval decision into the legacy RequestUserInput
+/// response shape used by delegated compatibility flows.
 pub(crate) fn mcp_tool_approval_compat_response(
     approval_request: &GuardianApprovalRequest,
     question: &RequestUserInputQuestion,
