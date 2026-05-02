@@ -1,5 +1,6 @@
 use super::table_cell::TableCell;
 use std::borrow::Cow;
+use std::ops::Range;
 
 use crate::render::line_utils::line_to_static;
 use crate::wrapping::RtOptions;
@@ -35,8 +36,14 @@ pub(super) fn render_table_lines(
         return Vec::new();
     }
 
-    let available_width = width.unwrap_or(usize::MAX / 4).saturating_sub(1).max(1);
     let normalized_rows = normalize_table_rows(rows, column_count);
+    let terminal_width = width.unwrap_or(usize::MAX / 4);
+    let safety_columns = if has_width_risk_chars(&normalized_rows) {
+        2
+    } else {
+        1
+    };
+    let available_width = terminal_width.saturating_sub(safety_columns).max(1);
     let widths = desired_column_widths(&normalized_rows, column_count);
 
     match choose_table_layout(&normalized_rows, &widths, available_width, column_count) {
@@ -78,12 +85,12 @@ pub(super) fn normalize_table_boundaries(input: &str) -> Cow<'_, str> {
             && is_table_row_source(lines[index])
             && is_table_delimiter_source(lines[index + 1])
         {
-            out.push_str(lines[index]);
+            push_table_row_source(&mut out, lines[index], &mut changed);
             out.push_str(lines[index + 1]);
             index += 2;
 
             while index < lines.len() && is_table_row_source(lines[index]) {
-                out.push_str(lines[index]);
+                push_table_row_source(&mut out, lines[index], &mut changed);
                 index += 1;
             }
 
@@ -147,19 +154,159 @@ fn is_indented_code_line(line: &str) -> bool {
 
 fn is_table_row_source(line: &str) -> bool {
     let trimmed = line.trim();
-    !trimmed.is_empty() && trimmed.contains('|')
+    !trimmed.is_empty() && table_cell_sources(trimmed).len() > 1
 }
 
 fn is_table_delimiter_source(line: &str) -> bool {
-    let trimmed = line.trim().trim_matches('|').trim();
-    if trimmed.is_empty() {
+    let mut cells = table_cell_sources(line.trim());
+    if cells.first().is_some_and(|cell| cell.trim().is_empty()) {
+        cells.remove(0);
+    }
+    if cells.last().is_some_and(|cell| cell.trim().is_empty()) {
+        cells.pop();
+    }
+    if cells.is_empty() {
         return false;
     }
-    trimmed.split('|').all(|cell| {
+    cells.iter().all(|cell| {
         let cell = cell.trim();
         let dash_count = cell.chars().filter(|ch| *ch == '-').count();
         dash_count >= 3 && cell.chars().all(|ch| matches!(ch, '-' | ':' | ' '))
     })
+}
+
+fn push_table_row_source(out: &mut String, line: &str, changed: &mut bool) {
+    match escape_inline_code_pipes_in_table_row(line) {
+        Cow::Borrowed(line) => out.push_str(line),
+        Cow::Owned(line) => {
+            *changed = true;
+            out.push_str(&line);
+        }
+    }
+}
+
+fn escape_inline_code_pipes_in_table_row(line: &str) -> Cow<'_, str> {
+    if !line.contains('`') {
+        return Cow::Borrowed(line);
+    }
+
+    let code_ranges = inline_code_span_ranges(line);
+    if code_ranges.is_empty() {
+        return Cow::Borrowed(line);
+    }
+
+    let mut out: Option<String> = None;
+    let mut last = 0;
+    for (index, ch) in line.char_indices() {
+        if ch == '|'
+            && is_index_in_ranges(index, &code_ranges)
+            && !is_backslash_escaped(line.as_bytes(), index)
+        {
+            let out = out.get_or_insert_with(|| String::with_capacity(line.len() + 1));
+            out.push_str(&line[last..index]);
+            out.push('\\');
+            last = index;
+        }
+    }
+
+    match out {
+        Some(mut out) => {
+            out.push_str(&line[last..]);
+            Cow::Owned(out)
+        }
+        None => Cow::Borrowed(line),
+    }
+}
+
+fn table_cell_sources(line: &str) -> Vec<&str> {
+    let code_ranges = inline_code_span_ranges(line);
+    let mut cells = Vec::new();
+    let mut cell_start = 0;
+    for (index, ch) in line.char_indices() {
+        if ch == '|'
+            && !is_index_in_ranges(index, &code_ranges)
+            && !is_backslash_escaped(line.as_bytes(), index)
+        {
+            cells.push(&line[cell_start..index]);
+            cell_start = index + ch.len_utf8();
+        }
+    }
+    cells.push(&line[cell_start..]);
+    cells
+}
+
+fn inline_code_span_ranges(line: &str) -> Vec<Range<usize>> {
+    let bytes = line.as_bytes();
+    let mut ranges = Vec::new();
+    let mut index = 0;
+    while index < bytes.len() {
+        match bytes[index] {
+            b'\\' => {
+                index = next_char_index(line, index + 1).unwrap_or(bytes.len());
+            }
+            b'`' => {
+                let delimiter_len = repeated_ascii_len(bytes, index, /*needle*/ b'`');
+                if let Some(closing_start) =
+                    find_closing_backtick_run(line, index + delimiter_len, delimiter_len)
+                {
+                    let closing_end = closing_start + delimiter_len;
+                    ranges.push(index..closing_end);
+                    index = closing_end;
+                } else {
+                    index += delimiter_len;
+                }
+            }
+            _ => {
+                index = next_char_index(line, index).unwrap_or(bytes.len());
+            }
+        }
+    }
+    ranges
+}
+
+fn find_closing_backtick_run(line: &str, start: usize, delimiter_len: usize) -> Option<usize> {
+    let bytes = line.as_bytes();
+    let mut index = start;
+    while index < bytes.len() {
+        if bytes[index] == b'`' {
+            let run_len = repeated_ascii_len(bytes, index, /*needle*/ b'`');
+            if run_len == delimiter_len {
+                return Some(index);
+            }
+            index += run_len;
+        } else {
+            index = next_char_index(line, index).unwrap_or(bytes.len());
+        }
+    }
+    None
+}
+
+fn repeated_ascii_len(bytes: &[u8], start: usize, needle: u8) -> usize {
+    bytes[start..]
+        .iter()
+        .take_while(|byte| **byte == needle)
+        .count()
+}
+
+fn next_char_index(line: &str, index: usize) -> Option<usize> {
+    line.get(index..)?
+        .chars()
+        .next()
+        .map(|ch| index + ch.len_utf8())
+}
+
+fn is_index_in_ranges(index: usize, ranges: &[Range<usize>]) -> bool {
+    ranges.iter().any(|range| range.contains(&index))
+}
+
+fn is_backslash_escaped(bytes: &[u8], index: usize) -> bool {
+    let mut backslashes = 0;
+    let mut cursor = index;
+    while cursor > 0 && bytes[cursor - 1] == b'\\' {
+        backslashes += 1;
+        cursor -= 1;
+    }
+    backslashes % 2 == 1
 }
 
 fn normalize_table_rows(rows: &[Vec<TableCell>], column_count: usize) -> Vec<Vec<TableCell>> {
@@ -757,4 +904,44 @@ fn truncate_to_width(input: &str, max_width: usize) -> String {
     }
     out.push('…');
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use pretty_assertions::assert_eq;
+
+    #[test]
+    fn table_cell_sources_ignore_escaped_and_inline_code_pipes() {
+        let cells = table_cell_sources("| a | `b | c` | d \\| e |");
+
+        assert_eq!(
+            cells.iter().map(|cell| cell.trim()).collect::<Vec<_>>(),
+            vec!["", "a", "`b | c`", "d \\| e", ""]
+        );
+    }
+
+    #[test]
+    fn table_row_normalization_escapes_raw_pipes_inside_inline_code() {
+        assert_eq!(
+            escape_inline_code_pipes_in_table_row("| A | `a | b` | ``x ` | y`` |\n").as_ref(),
+            "| A | `a \\| b` | ``x ` \\| y`` |\n"
+        );
+    }
+
+    #[test]
+    fn table_row_normalization_preserves_existing_escaped_pipes() {
+        assert_eq!(
+            escape_inline_code_pipes_in_table_row("| A | `a \\| b` |\n").as_ref(),
+            "| A | `a \\| b` |\n"
+        );
+    }
+
+    #[test]
+    fn table_row_normalization_ignores_unclosed_inline_code() {
+        assert_eq!(
+            escape_inline_code_pipes_in_table_row("| A | `a | b |\n").as_ref(),
+            "| A | `a | b |\n"
+        );
+    }
 }

@@ -333,6 +333,23 @@ fn table_readability_fallback_keeps_emoji_near_fit_boxed() {
 }
 
 #[test]
+fn table_emoji_rows_reserve_extra_wrap_safety_column() {
+    let width = 84;
+    let markdown = "| Scenario | ✅ Pass Case | ⚠️ Edge Case | ❌ Fail Case |\n|---|---|---|---|\n| Links | [short](https://example.com) | [query params](https://example.com?q=a&b=c) | `[broken](missing` |\n| Code | `let x = 1;` | `Vec<Result<T, E>>` | unclosed backtick |\n| Emoji | 😀 | 🧑‍💻 combined glyph | mojibake |\n| Pipes | `a \\| b` | escaped pipe inside code | raw `a | b` can split |\n";
+    let rendered =
+        render_markdown_text_with_width_and_cwd(markdown, /*width*/ Some(width), /*cwd*/ None);
+    let lines = plain_lines(&rendered);
+
+    assert!(
+        lines
+            .iter()
+            .filter(|line| line.contains('│') || line.contains('─'))
+            .all(|line| line.width() <= width - 2),
+        "emoji-heavy tables should leave two wrap-safety columns at width {width}: {lines:?}"
+    );
+}
+
+#[test]
 fn table_readability_fallback_uses_vertical_when_boxed_is_impossible() {
     let markdown = "| A | B | C | D | E |\n| --- | --- | --- | --- | --- |\n| one | two | three | four | five |\n| six | seven | eight | nine | ten |\n";
     let rendered =
@@ -384,6 +401,27 @@ fn table_inline_links_and_html_breaks_stay_inside_table() {
             && lines.iter().all(|line| !line.contains("<br>")),
         "HTML breaks should render as table cell line breaks: {lines:?}"
     );
+}
+
+#[test]
+fn table_raw_pipes_inside_inline_code_stay_inside_cell() {
+    let markdown = "| Scenario | ✅ Pass Case | ⚠️ Edge Case | ❌ Fail Case |\n|---|---|---|---|\n| Pipes | `a \\| b` | escaped pipe inside code | raw `a | b` can split |\n";
+    let rendered =
+        render_markdown_text_with_width_and_cwd(markdown, /*width*/ Some(160), /*cwd*/ None);
+    let lines = plain_lines(&rendered);
+
+    assert!(
+        lines.iter().any(|line| line.contains("raw a | b can split")),
+        "raw pipe inside inline code should remain in the final cell: {lines:?}"
+    );
+    assert!(
+        lines
+            .iter()
+            .filter(|line| line.contains('│'))
+            .all(|line| line.matches('│').count() == 5),
+        "table should remain four columns wide: {lines:?}"
+    );
+    assert_snapshot!("table_raw_pipes_inside_inline_code", lines.join("\n"));
 }
 
 #[test]

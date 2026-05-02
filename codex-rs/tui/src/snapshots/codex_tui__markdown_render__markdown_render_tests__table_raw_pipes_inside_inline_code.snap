@@ -1,0 +1,9 @@
+---
+source: tui/src/markdown_render_tests.rs
+expression: "lines.join(\"\\n\")"
+---
+┌──────────┬──────────────┬──────────────────────────┬─────────────────────┐
+│ Scenario │ ✅ Pass Case │ ⚠️ Edge Case             │ ❌ Fail Case        │
+├──────────┼──────────────┼──────────────────────────┼─────────────────────┤
+│ Pipes    │ a | b        │ escaped pipe inside code │ raw a | b can split │
+└──────────┴──────────────┴──────────────────────────┴─────────────────────┘
