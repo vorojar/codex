@@ -8,13 +8,17 @@ use ctor::ctor;
 use std::sync::OnceLock;
 use tempfile::TempDir;
 
+use codex_config::CloudRequirementsLoader;
+use codex_config::ConfigRequirementsToml;
+use codex_config::NetworkRequirementsToml;
 use codex_core::CodexThread;
 use codex_core::config::Config;
 use codex_core::config::ConfigBuilder;
 use codex_core::config::ConfigOverrides;
 use codex_utils_absolute_path::AbsolutePathBuf;
+pub use codex_utils_absolute_path::test_support::PathBufExt;
+pub use codex_utils_absolute_path::test_support::PathExt;
 use regex_lite::Regex;
-use std::path::Path;
 use std::path::PathBuf;
 
 pub mod apps_test_server;
@@ -105,26 +109,6 @@ pub fn test_absolute_path(unix_path: &str) -> AbsolutePathBuf {
     test_absolute_path_with_windows(unix_path, /*windows_path*/ None)
 }
 
-pub trait PathExt {
-    fn abs(&self) -> AbsolutePathBuf;
-}
-
-impl PathExt for Path {
-    fn abs(&self) -> AbsolutePathBuf {
-        AbsolutePathBuf::try_from(self.to_path_buf()).expect("path should already be absolute")
-    }
-}
-
-pub trait PathBufExt {
-    fn abs(&self) -> AbsolutePathBuf;
-}
-
-impl PathBufExt for PathBuf {
-    fn abs(&self) -> AbsolutePathBuf {
-        self.as_path().abs()
-    }
-}
-
 pub trait TempDirExt {
     fn abs(&self) -> AbsolutePathBuf;
 }
@@ -183,12 +167,39 @@ pub fn fetch_dotslash_file(
 /// temporary directory. Using a per-test directory keeps tests hermetic and
 /// avoids clobbering a developer’s real `~/.codex`.
 pub async fn load_default_config_for_test(codex_home: &TempDir) -> Config {
+    load_default_config_for_test_with_cloud_requirements(
+        codex_home,
+        CloudRequirementsLoader::default(),
+    )
+    .await
+}
+
+/// Returns a default `Config` with test-provided cloud requirements applied
+/// during config construction.
+pub async fn load_default_config_for_test_with_cloud_requirements(
+    codex_home: &TempDir,
+    cloud_requirements: CloudRequirementsLoader,
+) -> Config {
     ConfigBuilder::default()
         .codex_home(codex_home.path().to_path_buf())
         .harness_overrides(default_test_overrides())
+        .cloud_requirements(cloud_requirements)
         .build()
         .await
         .expect("defaults for test should always succeed")
+}
+
+pub fn managed_network_requirements_loader() -> CloudRequirementsLoader {
+    CloudRequirementsLoader::new(async {
+        Ok(Some(ConfigRequirementsToml {
+            network: Some(NetworkRequirementsToml {
+                enabled: Some(true),
+                allow_local_binding: Some(true),
+                ..Default::default()
+            }),
+            ..Default::default()
+        }))
+    })
 }
 
 #[cfg(target_os = "linux")]
@@ -321,6 +332,10 @@ pub fn sandbox_network_env_var() -> &'static str {
 }
 
 const REMOTE_ENV_ENV_VAR: &str = "CODEX_TEST_REMOTE_ENV";
+
+pub fn remote_env_env_var() -> &'static str {
+    REMOTE_ENV_ENV_VAR
+}
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct RemoteEnvConfig {
@@ -550,6 +565,30 @@ macro_rules! skip_if_no_network {
         if ::std::env::var($crate::sandbox_network_env_var()).is_ok() {
             println!(
                 "Skipping test because it cannot execute when network is disabled in a Codex sandbox."
+            );
+            return $return_value;
+        }
+    }};
+}
+
+#[macro_export]
+macro_rules! skip_if_remote {
+    ($reason:expr $(,)?) => {{
+        if ::std::env::var_os($crate::remote_env_env_var()).is_some() {
+            eprintln!(
+                "Skipping test under {}: {}",
+                $crate::remote_env_env_var(),
+                $reason
+            );
+            return;
+        }
+    }};
+    ($return_value:expr, $reason:expr $(,)?) => {{
+        if ::std::env::var_os($crate::remote_env_env_var()).is_some() {
+            eprintln!(
+                "Skipping test under {}: {}",
+                $crate::remote_env_env_var(),
+                $reason
             );
             return $return_value;
         }

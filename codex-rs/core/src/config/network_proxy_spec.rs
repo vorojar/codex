@@ -1,5 +1,5 @@
-use crate::config_loader::NetworkConstraints;
 use async_trait::async_trait;
+use codex_config::NetworkConstraints;
 use codex_execpolicy::Policy;
 use codex_network_proxy::BlockedRequestObserver;
 use codex_network_proxy::ConfigReloader;
@@ -16,14 +16,14 @@ use codex_network_proxy::build_config_state;
 use codex_network_proxy::host_and_port_from_network_addr;
 use codex_network_proxy::normalize_host;
 use codex_network_proxy::validate_policy_against_constraints;
-use codex_protocol::protocol::SandboxPolicy;
+use codex_protocol::models::PermissionProfile;
 use std::collections::HashSet;
 use std::sync::Arc;
 
-const GLOBAL_ALLOWLIST_PATTERN: &str = "*";
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NetworkProxySpec {
+    base_config: NetworkProxyConfig,
+    requirements: Option<NetworkConstraints>,
     config: NetworkProxyConfig,
     constraints: NetworkProxyConstraints,
     hard_deny_allowlist_misses: bool,
@@ -89,16 +89,17 @@ impl NetworkProxySpec {
     pub(crate) fn from_config_and_constraints(
         config: NetworkProxyConfig,
         requirements: Option<NetworkConstraints>,
-        sandbox_policy: &SandboxPolicy,
+        permission_profile: &PermissionProfile,
     ) -> std::io::Result<Self> {
+        let base_config = config.clone();
         let hard_deny_allowlist_misses = requirements
             .as_ref()
             .is_some_and(Self::managed_allowed_domains_only);
-        let (config, constraints) = if let Some(requirements) = requirements {
+        let (config, constraints) = if let Some(requirements) = requirements.as_ref() {
             Self::apply_requirements(
                 config,
-                &requirements,
-                sandbox_policy,
+                requirements,
+                permission_profile,
                 hard_deny_allowlist_misses,
             )
         } else {
@@ -111,6 +112,8 @@ impl NetworkProxySpec {
             )
         })?;
         Ok(Self {
+            base_config,
+            requirements,
             config,
             constraints,
             hard_deny_allowlist_misses,
@@ -119,7 +122,7 @@ impl NetworkProxySpec {
 
     pub async fn start_proxy(
         &self,
-        sandbox_policy: &SandboxPolicy,
+        permission_profile: &PermissionProfile,
         policy_decider: Option<Arc<dyn NetworkPolicyDecider>>,
         blocked_request_observer: Option<Arc<dyn BlockedRequestObserver>>,
         enable_network_approval_flow: bool,
@@ -127,21 +130,13 @@ impl NetworkProxySpec {
     ) -> std::io::Result<StartedNetworkProxy> {
         let state = self.build_state_with_audit_metadata(audit_metadata)?;
         let mut builder = NetworkProxy::builder().state(Arc::new(state));
-        if enable_network_approval_flow
-            && !self.hard_deny_allowlist_misses
-            && matches!(
-                sandbox_policy,
-                SandboxPolicy::ReadOnly { .. } | SandboxPolicy::WorkspaceWrite { .. }
-            )
-        {
-            builder = match policy_decider {
-                Some(policy_decider) => builder.policy_decider_arc(policy_decider),
-                None => builder.policy_decider(|_request| async {
-                    // In restricted sandbox modes, allowlist misses should ask for
-                    // explicit network approval instead of hard-denying.
-                    NetworkDecision::ask("not_allowed")
-                }),
-            };
+        if enable_network_approval_flow && !self.hard_deny_allowlist_misses {
+            if let Some(policy_decider) = policy_decider {
+                builder = builder.policy_decider_arc(policy_decider);
+            } else if Self::managed_sandbox_active(permission_profile) {
+                builder = builder
+                    .policy_decider(|_request| async { NetworkDecision::ask("not_allowed") });
+            }
         }
         if let Some(blocked_request_observer) = blocked_request_observer {
             builder = builder.blocked_request_observer_arc(blocked_request_observer);
@@ -154,6 +149,17 @@ impl NetworkProxySpec {
             .await
             .map_err(|err| std::io::Error::other(format!("failed to run network proxy: {err}")))?;
         Ok(StartedNetworkProxy::new(proxy, handle))
+    }
+
+    pub(crate) fn recompute_for_permission_profile(
+        &self,
+        permission_profile: &PermissionProfile,
+    ) -> std::io::Result<Self> {
+        Self::from_config_and_constraints(
+            self.base_config.clone(),
+            self.requirements.clone(),
+            permission_profile,
+        )
     }
 
     pub(crate) fn with_exec_policy_network_rules(
@@ -171,14 +177,25 @@ impl NetworkProxySpec {
         Ok(spec)
     }
 
+    pub(crate) async fn apply_to_started_proxy(
+        &self,
+        started_proxy: &StartedNetworkProxy,
+    ) -> std::io::Result<()> {
+        let state = self.build_config_state_for_spec()?;
+        started_proxy
+            .proxy()
+            .replace_config_state(state)
+            .await
+            .map_err(|err| {
+                std::io::Error::other(format!("failed to update network proxy state: {err}"))
+            })
+    }
+
     fn build_state_with_audit_metadata(
         &self,
         audit_metadata: NetworkProxyAuditMetadata,
     ) -> std::io::Result<NetworkProxyState> {
-        let state =
-            build_config_state(self.config.clone(), self.constraints.clone()).map_err(|err| {
-                std::io::Error::other(format!("failed to build network proxy state: {err}"))
-            })?;
+        let state = self.build_config_state_for_spec()?;
         let reloader = Arc::new(StaticNetworkProxyReloader::new(state.clone()));
         Ok(NetworkProxyState::with_reloader_and_audit_metadata(
             state,
@@ -187,18 +204,22 @@ impl NetworkProxySpec {
         ))
     }
 
+    fn build_config_state_for_spec(&self) -> std::io::Result<ConfigState> {
+        build_config_state(self.config.clone(), self.constraints.clone()).map_err(|err| {
+            std::io::Error::other(format!("failed to build network proxy state: {err}"))
+        })
+    }
+
     fn apply_requirements(
         mut config: NetworkProxyConfig,
         requirements: &NetworkConstraints,
-        sandbox_policy: &SandboxPolicy,
+        permission_profile: &PermissionProfile,
         hard_deny_allowlist_misses: bool,
     ) -> (NetworkProxyConfig, NetworkProxyConstraints) {
         let mut constraints = NetworkProxyConstraints::default();
         let allowlist_expansion_enabled =
-            Self::allowlist_expansion_enabled(sandbox_policy, hard_deny_allowlist_misses);
-        let denylist_expansion_enabled = Self::denylist_expansion_enabled(sandbox_policy);
-        let danger_full_access_denylist_only =
-            Self::danger_full_access_denylist_only_enabled(requirements, sandbox_policy);
+            Self::allowlist_expansion_enabled(permission_profile, hard_deny_allowlist_misses);
+        let denylist_expansion_enabled = Self::denylist_expansion_enabled(permission_profile);
 
         if let Some(enabled) = requirements.enabled {
             config.network.enabled = enabled;
@@ -229,43 +250,37 @@ impl NetworkProxySpec {
             constraints.dangerously_allow_all_unix_sockets =
                 Some(dangerously_allow_all_unix_sockets);
         }
-        if danger_full_access_denylist_only {
-            config
-                .network
-                .set_allowed_domains(vec![GLOBAL_ALLOWLIST_PATTERN.to_string()]);
-        } else {
-            let managed_allowed_domains = if hard_deny_allowlist_misses {
-                Some(
-                    requirements
-                        .domains
-                        .as_ref()
-                        .and_then(codex_config::NetworkDomainPermissionsToml::allowed_domains)
-                        .unwrap_or_default(),
-                )
-            } else {
+        let managed_allowed_domains = if hard_deny_allowlist_misses {
+            Some(
                 requirements
                     .domains
                     .as_ref()
                     .and_then(codex_config::NetworkDomainPermissionsToml::allowed_domains)
+                    .unwrap_or_default(),
+            )
+        } else {
+            requirements
+                .domains
+                .as_ref()
+                .and_then(codex_config::NetworkDomainPermissionsToml::allowed_domains)
+        };
+        if let Some(managed_allowed_domains) = managed_allowed_domains {
+            // Managed requirements seed the baseline allowlist. User additions
+            // can extend that baseline unless managed-only mode pins the
+            // effective allowlist to the managed set.
+            let effective_allowed_domains = if allowlist_expansion_enabled {
+                Self::merge_domain_lists(
+                    managed_allowed_domains.clone(),
+                    config.network.allowed_domains().as_deref().unwrap_or(&[]),
+                )
+            } else {
+                managed_allowed_domains.clone()
             };
-            if let Some(managed_allowed_domains) = managed_allowed_domains {
-                // Managed requirements seed the baseline allowlist. User additions
-                // can extend that baseline unless managed-only mode pins the
-                // effective allowlist to the managed set.
-                let effective_allowed_domains = if allowlist_expansion_enabled {
-                    Self::merge_domain_lists(
-                        managed_allowed_domains.clone(),
-                        config.network.allowed_domains().as_deref().unwrap_or(&[]),
-                    )
-                } else {
-                    managed_allowed_domains.clone()
-                };
-                config
-                    .network
-                    .set_allowed_domains(effective_allowed_domains);
-                constraints.allowed_domains = Some(managed_allowed_domains);
-                constraints.allowlist_expansion_enabled = Some(allowlist_expansion_enabled);
-            }
+            config
+                .network
+                .set_allowed_domains(effective_allowed_domains);
+            constraints.allowed_domains = Some(managed_allowed_domains);
+            constraints.allowlist_expansion_enabled = Some(allowlist_expansion_enabled);
         }
         let managed_denied_domains = requirements
             .domains
@@ -284,7 +299,7 @@ impl NetworkProxySpec {
             constraints.denied_domains = Some(managed_denied_domains);
             constraints.denylist_expansion_enabled = Some(denylist_expansion_enabled);
         }
-        if requirements.unix_sockets.is_some() && !danger_full_access_denylist_only {
+        if requirements.unix_sockets.is_some() {
             let allow_unix_sockets = requirements
                 .unix_sockets
                 .as_ref()
@@ -299,47 +314,27 @@ impl NetworkProxySpec {
             config.network.allow_local_binding = allow_local_binding;
             constraints.allow_local_binding = Some(allow_local_binding);
         }
-        if danger_full_access_denylist_only {
-            config.network.allow_upstream_proxy = true;
-            constraints.allow_upstream_proxy = Some(true);
-            config.network.dangerously_allow_all_unix_sockets = true;
-            constraints.dangerously_allow_all_unix_sockets = Some(true);
-            config.network.allow_local_binding = true;
-            constraints.allow_local_binding = Some(true);
-        }
 
         (config, constraints)
     }
 
     fn allowlist_expansion_enabled(
-        sandbox_policy: &SandboxPolicy,
+        permission_profile: &PermissionProfile,
         hard_deny_allowlist_misses: bool,
     ) -> bool {
-        matches!(
-            sandbox_policy,
-            SandboxPolicy::ReadOnly { .. } | SandboxPolicy::WorkspaceWrite { .. }
-        ) && !hard_deny_allowlist_misses
+        Self::managed_sandbox_active(permission_profile) && !hard_deny_allowlist_misses
     }
 
     fn managed_allowed_domains_only(requirements: &NetworkConstraints) -> bool {
         requirements.managed_allowed_domains_only.unwrap_or(false)
     }
 
-    fn danger_full_access_denylist_only_enabled(
-        requirements: &NetworkConstraints,
-        sandbox_policy: &SandboxPolicy,
-    ) -> bool {
-        matches!(sandbox_policy, SandboxPolicy::DangerFullAccess)
-            && requirements
-                .danger_full_access_denylist_only
-                .unwrap_or(false)
+    fn denylist_expansion_enabled(permission_profile: &PermissionProfile) -> bool {
+        Self::managed_sandbox_active(permission_profile)
     }
 
-    fn denylist_expansion_enabled(sandbox_policy: &SandboxPolicy) -> bool {
-        matches!(
-            sandbox_policy,
-            SandboxPolicy::ReadOnly { .. } | SandboxPolicy::WorkspaceWrite { .. }
-        )
+    fn managed_sandbox_active(permission_profile: &PermissionProfile) -> bool {
+        matches!(permission_profile, PermissionProfile::Managed { .. })
     }
 
     fn merge_domain_lists(mut managed: Vec<String>, user_entries: &[String]) -> Vec<String> {

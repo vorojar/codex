@@ -5,26 +5,34 @@ use crate::DiscoverablePluginInfo;
 use crate::DiscoverableTool;
 use crate::FreeformTool;
 use crate::JsonSchema;
+use crate::JsonSchemaPrimitiveType;
+use crate::JsonSchemaType;
+use crate::ResponsesApiNamespaceTool;
 use crate::ResponsesApiTool;
 use crate::ResponsesApiWebSearchFilters;
 use crate::ResponsesApiWebSearchUserLocation;
 use crate::ToolHandlerSpec;
-use crate::ToolRegistryPlanAppTool;
+use crate::ToolName;
+use crate::ToolNamespace;
+use crate::ToolRegistryPlanDeferredTool;
+use crate::ToolRegistryPlanMcpTool;
 use crate::ToolsConfigParams;
 use crate::WaitAgentTimeoutOptions;
 use crate::mcp_call_tool_result_output_schema;
+use crate::request_user_input_available_modes;
 use codex_app_server_protocol::AppInfo;
 use codex_features::Feature;
 use codex_features::Features;
+use codex_protocol::config_types::ModeKind;
 use codex_protocol::config_types::WebSearchConfig;
 use codex_protocol::config_types::WebSearchMode;
 use codex_protocol::config_types::WindowsSandboxLevel;
 use codex_protocol::dynamic_tools::DynamicToolSpec;
+use codex_protocol::models::PermissionProfile;
 use codex_protocol::models::VIEW_IMAGE_TOOL_NAME;
 use codex_protocol::openai_models::InputModality;
 use codex_protocol::openai_models::ModelInfo;
 use codex_protocol::openai_models::WebSearchToolType;
-use codex_protocol::protocol::SandboxPolicy;
 use codex_protocol::protocol::SessionSource;
 use codex_protocol::protocol::SubAgentSource;
 use pretty_assertions::assert_eq;
@@ -48,15 +56,16 @@ fn test_full_toolset_specs_for_gpt5_codex_unified_exec_web_search() {
         model_info: &model_info,
         available_models: &available_models,
         features: &features,
+        image_generation_tool_auth_allowed: true,
         web_search_mode: Some(WebSearchMode::Live),
         session_source: SessionSource::Cli,
-        sandbox_policy: &SandboxPolicy::DangerFullAccess,
+        permission_profile: &PermissionProfile::Disabled,
         windows_sandbox_level: WindowsSandboxLevel::Disabled,
     });
     let (tools, _) = build_specs(
         &config,
         /*mcp_tools*/ None,
-        /*app_tools*/ None,
+        /*deferred_mcp_tools*/ None,
         &[],
     );
 
@@ -81,7 +90,7 @@ fn test_full_toolset_specs_for_gpt5_codex_unified_exec_web_search() {
         }),
         create_write_stdin_tool(),
         create_update_plan_tool(),
-        request_user_input_tool_spec(/*default_mode_request_user_input*/ false),
+        request_user_input_tool_spec(&request_user_input_available_modes(&features)),
         create_apply_patch_freeform_tool(),
         ToolSpec::WebSearch {
             external_web_access: Some(true),
@@ -90,11 +99,21 @@ fn test_full_toolset_specs_for_gpt5_codex_unified_exec_web_search() {
             search_context_size: None,
             search_content_types: None,
         },
+        create_image_generation_tool("png"),
         create_view_image_tool(ViewImageToolOptions {
             can_request_original_image_detail: config.can_request_original_image_detail,
         }),
     ] {
         expected.insert(spec.name().to_string(), spec);
+    }
+    if config.goal_tools {
+        for spec in [
+            create_get_goal_tool(),
+            create_create_goal_tool(),
+            create_update_goal_tool(),
+        ] {
+            expected.insert(spec.name().to_string(), spec);
+        }
     }
     let collab_specs = if config.multi_agent_v2 {
         vec![
@@ -149,15 +168,16 @@ fn test_build_specs_collab_tools_enabled() {
         model_info: &model_info,
         available_models: &available_models,
         features: &features,
+        image_generation_tool_auth_allowed: true,
         web_search_mode: Some(WebSearchMode::Cached),
         session_source: SessionSource::Cli,
-        sandbox_policy: &SandboxPolicy::DangerFullAccess,
+        permission_profile: &PermissionProfile::Disabled,
         windows_sandbox_level: WindowsSandboxLevel::Disabled,
     });
     let (tools, _) = build_specs(
         &tools_config,
         /*mcp_tools*/ None,
-        /*app_tools*/ None,
+        /*deferred_mcp_tools*/ None,
         &[],
     );
 
@@ -172,11 +192,54 @@ fn test_build_specs_collab_tools_enabled() {
     let ToolSpec::Function(ResponsesApiTool { parameters, .. }) = &spawn_agent.spec else {
         panic!("spawn_agent should be a function tool");
     };
-    let JsonSchema::Object { properties, .. } = parameters else {
-        panic!("spawn_agent should use object params");
-    };
+    let (properties, _) = expect_object_schema(parameters);
     assert!(properties.contains_key("fork_context"));
     assert!(!properties.contains_key("fork_turns"));
+}
+
+#[test]
+fn goal_tools_require_goals_feature() {
+    let model_info = model_info();
+    let available_models = Vec::new();
+    let mut features = Features::with_defaults();
+    let tools_config = ToolsConfig::new(&ToolsConfigParams {
+        model_info: &model_info,
+        available_models: &available_models,
+        features: &features,
+        image_generation_tool_auth_allowed: true,
+        web_search_mode: Some(WebSearchMode::Cached),
+        session_source: SessionSource::Cli,
+        permission_profile: &PermissionProfile::Disabled,
+        windows_sandbox_level: WindowsSandboxLevel::Disabled,
+    });
+    let (tools, _) = build_specs(
+        &tools_config,
+        /*mcp_tools*/ None,
+        /*deferred_mcp_tools*/ None,
+        &[],
+    );
+    assert_lacks_tool_name(&tools, "get_goal");
+    assert_lacks_tool_name(&tools, "create_goal");
+    assert_lacks_tool_name(&tools, "update_goal");
+
+    features.enable(Feature::Goals);
+    let tools_config = ToolsConfig::new(&ToolsConfigParams {
+        model_info: &model_info,
+        available_models: &available_models,
+        features: &features,
+        image_generation_tool_auth_allowed: true,
+        web_search_mode: Some(WebSearchMode::Cached),
+        session_source: SessionSource::Cli,
+        permission_profile: &PermissionProfile::Disabled,
+        windows_sandbox_level: WindowsSandboxLevel::Disabled,
+    });
+    let (tools, _) = build_specs(
+        &tools_config,
+        /*mcp_tools*/ None,
+        /*deferred_mcp_tools*/ None,
+        &[],
+    );
+    assert_contains_tool_names(&tools, &["get_goal", "create_goal", "update_goal"]);
 }
 
 #[test]
@@ -190,15 +253,16 @@ fn test_build_specs_multi_agent_v2_uses_task_names_and_hides_resume() {
         model_info: &model_info,
         available_models: &available_models,
         features: &features,
+        image_generation_tool_auth_allowed: true,
         web_search_mode: Some(WebSearchMode::Cached),
         session_source: SessionSource::Cli,
-        sandbox_policy: &SandboxPolicy::DangerFullAccess,
+        permission_profile: &PermissionProfile::Disabled,
         windows_sandbox_level: WindowsSandboxLevel::Disabled,
     });
     let (tools, _) = build_specs(
         &tools_config,
         /*mcp_tools*/ None,
-        /*app_tools*/ None,
+        /*deferred_mcp_tools*/ None,
         &[],
     );
 
@@ -223,21 +287,14 @@ fn test_build_specs_multi_agent_v2_uses_task_names_and_hides_resume() {
     else {
         panic!("spawn_agent should be a function tool");
     };
-    let JsonSchema::Object {
-        properties,
-        required,
-        ..
-    } = parameters
-    else {
-        panic!("spawn_agent should use object params");
-    };
+    let (properties, required) = expect_object_schema(parameters);
     assert!(properties.contains_key("task_name"));
     assert!(properties.contains_key("message"));
     assert!(properties.contains_key("fork_turns"));
     assert!(!properties.contains_key("items"));
     assert!(!properties.contains_key("fork_context"));
     assert_eq!(
-        required.as_ref(),
+        required,
         Some(&vec!["task_name".to_string(), "message".to_string()])
     );
     let output_schema = output_schema
@@ -255,20 +312,13 @@ fn test_build_specs_multi_agent_v2_uses_task_names_and_hides_resume() {
         panic!("send_message should be a function tool");
     };
     assert_eq!(output_schema, &None);
-    let JsonSchema::Object {
-        properties,
-        required,
-        ..
-    } = parameters
-    else {
-        panic!("send_message should use object params");
-    };
+    let (properties, required) = expect_object_schema(parameters);
     assert!(properties.contains_key("target"));
     assert!(!properties.contains_key("interrupt"));
     assert!(properties.contains_key("message"));
     assert!(!properties.contains_key("items"));
     assert_eq!(
-        required.as_ref(),
+        required,
         Some(&vec!["target".to_string(), "message".to_string()])
     );
 
@@ -282,19 +332,12 @@ fn test_build_specs_multi_agent_v2_uses_task_names_and_hides_resume() {
         panic!("followup_task should be a function tool");
     };
     assert_eq!(output_schema, &None);
-    let JsonSchema::Object {
-        properties,
-        required,
-        ..
-    } = parameters
-    else {
-        panic!("followup_task should use object params");
-    };
+    let (properties, required) = expect_object_schema(parameters);
     assert!(properties.contains_key("target"));
     assert!(properties.contains_key("message"));
     assert!(!properties.contains_key("items"));
     assert_eq!(
-        required.as_ref(),
+        required,
         Some(&vec!["target".to_string(), "message".to_string()])
     );
 
@@ -307,17 +350,10 @@ fn test_build_specs_multi_agent_v2_uses_task_names_and_hides_resume() {
     else {
         panic!("wait_agent should be a function tool");
     };
-    let JsonSchema::Object {
-        properties,
-        required,
-        ..
-    } = parameters
-    else {
-        panic!("wait_agent should use object params");
-    };
+    let (properties, required) = expect_object_schema(parameters);
     assert!(!properties.contains_key("targets"));
     assert!(properties.contains_key("timeout_ms"));
-    assert_eq!(required, &None);
+    assert_eq!(required, None);
     let output_schema = output_schema
         .as_ref()
         .expect("wait_agent should define output schema");
@@ -335,22 +371,55 @@ fn test_build_specs_multi_agent_v2_uses_task_names_and_hides_resume() {
     else {
         panic!("list_agents should be a function tool");
     };
-    let JsonSchema::Object {
-        properties,
-        required,
-        ..
-    } = parameters
-    else {
-        panic!("list_agents should use object params");
-    };
+    let (properties, required) = expect_object_schema(parameters);
     assert!(properties.contains_key("path_prefix"));
-    assert_eq!(required.as_ref(), None);
+    assert_eq!(required, None);
     let output_schema = output_schema
         .as_ref()
         .expect("list_agents should define output schema");
     assert_eq!(
         output_schema["properties"]["agents"]["items"]["required"],
         json!(["agent_name", "agent_status", "last_task_message"])
+    );
+    assert_lacks_tool_name(&tools, "send_input");
+    assert_lacks_tool_name(&tools, "resume_agent");
+}
+
+#[test]
+fn test_build_specs_multi_agent_v2_does_not_require_collab_feature() {
+    let model_info = model_info();
+    let mut features = Features::with_defaults();
+    features.disable(Feature::Collab);
+    features.enable(Feature::MultiAgentV2);
+    assert!(!features.enabled(Feature::Collab));
+    let available_models = Vec::new();
+    let tools_config = ToolsConfig::new(&ToolsConfigParams {
+        model_info: &model_info,
+        available_models: &available_models,
+        features: &features,
+        image_generation_tool_auth_allowed: true,
+        web_search_mode: Some(WebSearchMode::Cached),
+        session_source: SessionSource::Cli,
+        permission_profile: &PermissionProfile::Disabled,
+        windows_sandbox_level: WindowsSandboxLevel::Disabled,
+    });
+    let (tools, _) = build_specs(
+        &tools_config,
+        /*mcp_tools*/ None,
+        /*deferred_mcp_tools*/ None,
+        &[],
+    );
+
+    assert_contains_tool_names(
+        &tools,
+        &[
+            "spawn_agent",
+            "send_message",
+            "followup_task",
+            "wait_agent",
+            "close_agent",
+            "list_agents",
+        ],
     );
     assert_lacks_tool_name(&tools, "send_input");
     assert_lacks_tool_name(&tools, "resume_agent");
@@ -367,15 +436,16 @@ fn test_build_specs_enable_fanout_enables_agent_jobs_and_collab_tools() {
         model_info: &model_info,
         available_models: &available_models,
         features: &features,
+        image_generation_tool_auth_allowed: true,
         web_search_mode: Some(WebSearchMode::Cached),
         session_source: SessionSource::Cli,
-        sandbox_policy: &SandboxPolicy::DangerFullAccess,
+        permission_profile: &PermissionProfile::Disabled,
         windows_sandbox_level: WindowsSandboxLevel::Disabled,
     });
     let (tools, _) = build_specs(
         &tools_config,
         /*mcp_tools*/ None,
-        /*app_tools*/ None,
+        /*deferred_mcp_tools*/ None,
         &[],
     );
 
@@ -392,7 +462,37 @@ fn test_build_specs_enable_fanout_enables_agent_jobs_and_collab_tools() {
 }
 
 #[test]
-fn view_image_tool_omits_detail_without_original_detail_feature() {
+fn view_image_tool_omits_detail_without_original_detail_support() {
+    let mut model_info = model_info();
+    model_info.supports_image_detail_original = false;
+    let features = Features::with_defaults();
+    let available_models = Vec::new();
+    let tools_config = ToolsConfig::new(&ToolsConfigParams {
+        model_info: &model_info,
+        available_models: &available_models,
+        features: &features,
+        image_generation_tool_auth_allowed: true,
+        web_search_mode: Some(WebSearchMode::Cached),
+        session_source: SessionSource::Cli,
+        permission_profile: &PermissionProfile::Disabled,
+        windows_sandbox_level: WindowsSandboxLevel::Disabled,
+    });
+    let (tools, _) = build_specs(
+        &tools_config,
+        /*mcp_tools*/ None,
+        /*deferred_mcp_tools*/ None,
+        &[],
+    );
+    let view_image = find_tool(&tools, VIEW_IMAGE_TOOL_NAME);
+    let ToolSpec::Function(ResponsesApiTool { parameters, .. }) = &view_image.spec else {
+        panic!("view_image should be a function tool");
+    };
+    let (properties, _) = expect_object_schema(parameters);
+    assert!(!properties.contains_key("detail"));
+}
+
+#[test]
+fn view_image_tool_includes_detail_with_original_detail_support() {
     let mut model_info = model_info();
     model_info.supports_image_detail_original = true;
     let features = Features::with_defaults();
@@ -401,63 +501,29 @@ fn view_image_tool_omits_detail_without_original_detail_feature() {
         model_info: &model_info,
         available_models: &available_models,
         features: &features,
+        image_generation_tool_auth_allowed: true,
         web_search_mode: Some(WebSearchMode::Cached),
         session_source: SessionSource::Cli,
-        sandbox_policy: &SandboxPolicy::DangerFullAccess,
+        permission_profile: &PermissionProfile::Disabled,
         windows_sandbox_level: WindowsSandboxLevel::Disabled,
     });
     let (tools, _) = build_specs(
         &tools_config,
         /*mcp_tools*/ None,
-        /*app_tools*/ None,
+        /*deferred_mcp_tools*/ None,
         &[],
     );
     let view_image = find_tool(&tools, VIEW_IMAGE_TOOL_NAME);
     let ToolSpec::Function(ResponsesApiTool { parameters, .. }) = &view_image.spec else {
         panic!("view_image should be a function tool");
     };
-    let JsonSchema::Object { properties, .. } = parameters else {
-        panic!("view_image should use an object schema");
-    };
-    assert!(!properties.contains_key("detail"));
-}
-
-#[test]
-fn view_image_tool_includes_detail_with_original_detail_feature() {
-    let mut model_info = model_info();
-    model_info.supports_image_detail_original = true;
-    let mut features = Features::with_defaults();
-    features.enable(Feature::ImageDetailOriginal);
-    let available_models = Vec::new();
-    let tools_config = ToolsConfig::new(&ToolsConfigParams {
-        model_info: &model_info,
-        available_models: &available_models,
-        features: &features,
-        web_search_mode: Some(WebSearchMode::Cached),
-        session_source: SessionSource::Cli,
-        sandbox_policy: &SandboxPolicy::DangerFullAccess,
-        windows_sandbox_level: WindowsSandboxLevel::Disabled,
-    });
-    let (tools, _) = build_specs(
-        &tools_config,
-        /*mcp_tools*/ None,
-        /*app_tools*/ None,
-        &[],
-    );
-    let view_image = find_tool(&tools, VIEW_IMAGE_TOOL_NAME);
-    let ToolSpec::Function(ResponsesApiTool { parameters, .. }) = &view_image.spec else {
-        panic!("view_image should be a function tool");
-    };
-    let JsonSchema::Object { properties, .. } = parameters else {
-        panic!("view_image should use an object schema");
-    };
+    let (properties, _) = expect_object_schema(parameters);
     assert!(properties.contains_key("detail"));
-    let Some(JsonSchema::String {
-        description: Some(description),
-    }) = properties.get("detail")
-    else {
-        panic!("view_image detail should include a description");
-    };
+    let description = expect_string_description(
+        properties
+            .get("detail")
+            .expect("view_image detail should include a description"),
+    );
     assert!(description.contains("only supported value is `original`"));
     assert!(description.contains("omit this field for default resized behavior"));
 }
@@ -467,15 +533,15 @@ fn disabled_environment_omits_environment_backed_tools() {
     let model_info = model_info();
     let mut features = Features::with_defaults();
     features.enable(Feature::UnifiedExec);
-    features.enable(Feature::JsRepl);
     let available_models = Vec::new();
     let mut tools_config = ToolsConfig::new(&ToolsConfigParams {
         model_info: &model_info,
         available_models: &available_models,
         features: &features,
+        image_generation_tool_auth_allowed: true,
         web_search_mode: Some(WebSearchMode::Cached),
         session_source: SessionSource::Cli,
-        sandbox_policy: &SandboxPolicy::DangerFullAccess,
+        permission_profile: &PermissionProfile::Disabled,
         windows_sandbox_level: WindowsSandboxLevel::Disabled,
     })
     .with_has_environment(/*has_environment*/ false);
@@ -485,14 +551,12 @@ fn disabled_environment_omits_environment_backed_tools() {
     let (tools, _) = build_specs(
         &tools_config,
         /*mcp_tools*/ None,
-        /*app_tools*/ None,
+        /*deferred_mcp_tools*/ None,
         &[],
     );
 
     assert_lacks_tool_name(&tools, "exec_command");
     assert_lacks_tool_name(&tools, "write_stdin");
-    assert_lacks_tool_name(&tools, "js_repl");
-    assert_lacks_tool_name(&tools, "js_repl_reset");
     assert_lacks_tool_name(&tools, "apply_patch");
     assert_lacks_tool_name(&tools, "list_dir");
     assert_lacks_tool_name(&tools, VIEW_IMAGE_TOOL_NAME);
@@ -510,17 +574,18 @@ fn test_build_specs_agent_job_worker_tools_enabled() {
         model_info: &model_info,
         available_models: &available_models,
         features: &features,
+        image_generation_tool_auth_allowed: true,
         web_search_mode: Some(WebSearchMode::Cached),
         session_source: SessionSource::SubAgent(SubAgentSource::Other(
             "agent_job:test".to_string(),
         )),
-        sandbox_policy: &SandboxPolicy::DangerFullAccess,
+        permission_profile: &PermissionProfile::Disabled,
         windows_sandbox_level: WindowsSandboxLevel::Disabled,
     });
     let (tools, _) = build_specs(
         &tools_config,
         /*mcp_tools*/ None,
-        /*app_tools*/ None,
+        /*deferred_mcp_tools*/ None,
         &[],
     );
 
@@ -548,21 +613,22 @@ fn request_user_input_description_reflects_default_mode_feature_flag() {
         model_info: &model_info,
         available_models: &available_models,
         features: &features,
+        image_generation_tool_auth_allowed: true,
         web_search_mode: Some(WebSearchMode::Cached),
         session_source: SessionSource::Cli,
-        sandbox_policy: &SandboxPolicy::DangerFullAccess,
+        permission_profile: &PermissionProfile::Disabled,
         windows_sandbox_level: WindowsSandboxLevel::Disabled,
     });
     let (tools, _) = build_specs(
         &tools_config,
         /*mcp_tools*/ None,
-        /*app_tools*/ None,
+        /*deferred_mcp_tools*/ None,
         &[],
     );
     let request_user_input_tool = find_tool(&tools, REQUEST_USER_INPUT_TOOL_NAME);
     assert_eq!(
         request_user_input_tool.spec,
-        request_user_input_tool_spec(/*default_mode_request_user_input*/ false)
+        request_user_input_tool_spec(&request_user_input_available_modes(&features))
     );
 
     features.enable(Feature::DefaultModeRequestUserInput);
@@ -570,21 +636,22 @@ fn request_user_input_description_reflects_default_mode_feature_flag() {
         model_info: &model_info,
         available_models: &available_models,
         features: &features,
+        image_generation_tool_auth_allowed: true,
         web_search_mode: Some(WebSearchMode::Cached),
         session_source: SessionSource::Cli,
-        sandbox_policy: &SandboxPolicy::DangerFullAccess,
+        permission_profile: &PermissionProfile::Disabled,
         windows_sandbox_level: WindowsSandboxLevel::Disabled,
     });
     let (tools, _) = build_specs(
         &tools_config,
         /*mcp_tools*/ None,
-        /*app_tools*/ None,
+        /*deferred_mcp_tools*/ None,
         &[],
     );
     let request_user_input_tool = find_tool(&tools, REQUEST_USER_INPUT_TOOL_NAME);
     assert_eq!(
         request_user_input_tool.spec,
-        request_user_input_tool_spec(/*default_mode_request_user_input*/ true)
+        request_user_input_tool_spec(&request_user_input_available_modes(&features))
     );
 }
 
@@ -597,15 +664,16 @@ fn request_permissions_requires_feature_flag() {
         model_info: &model_info,
         available_models: &available_models,
         features: &features,
+        image_generation_tool_auth_allowed: true,
         web_search_mode: Some(WebSearchMode::Cached),
         session_source: SessionSource::Cli,
-        sandbox_policy: &SandboxPolicy::DangerFullAccess,
+        permission_profile: &PermissionProfile::Disabled,
         windows_sandbox_level: WindowsSandboxLevel::Disabled,
     });
     let (tools, _) = build_specs(
         &tools_config,
         /*mcp_tools*/ None,
-        /*app_tools*/ None,
+        /*deferred_mcp_tools*/ None,
         &[],
     );
     assert_lacks_tool_name(&tools, "request_permissions");
@@ -616,15 +684,16 @@ fn request_permissions_requires_feature_flag() {
         model_info: &model_info,
         available_models: &available_models,
         features: &features,
+        image_generation_tool_auth_allowed: true,
         web_search_mode: Some(WebSearchMode::Cached),
         session_source: SessionSource::Cli,
-        sandbox_policy: &SandboxPolicy::DangerFullAccess,
+        permission_profile: &PermissionProfile::Disabled,
         windows_sandbox_level: WindowsSandboxLevel::Disabled,
     });
     let (tools, _) = build_specs(
         &tools_config,
         /*mcp_tools*/ None,
-        /*app_tools*/ None,
+        /*deferred_mcp_tools*/ None,
         &[],
     );
     let request_permissions_tool = find_tool(&tools, "request_permissions");
@@ -644,15 +713,16 @@ fn request_permissions_tool_is_independent_from_additional_permissions() {
         model_info: &model_info,
         available_models: &available_models,
         features: &features,
+        image_generation_tool_auth_allowed: true,
         web_search_mode: Some(WebSearchMode::Cached),
         session_source: SessionSource::Cli,
-        sandbox_policy: &SandboxPolicy::DangerFullAccess,
+        permission_profile: &PermissionProfile::Disabled,
         windows_sandbox_level: WindowsSandboxLevel::Disabled,
     });
     let (tools, _) = build_specs(
         &tools_config,
         /*mcp_tools*/ None,
-        /*app_tools*/ None,
+        /*deferred_mcp_tools*/ None,
         &[],
     );
 
@@ -660,108 +730,53 @@ fn request_permissions_tool_is_independent_from_additional_permissions() {
 }
 
 #[test]
-fn js_repl_requires_feature_flag() {
-    let model_info = model_info();
-    let features = Features::with_defaults();
-
-    let available_models = Vec::new();
-    let tools_config = ToolsConfig::new(&ToolsConfigParams {
-        model_info: &model_info,
-        available_models: &available_models,
-        features: &features,
-        web_search_mode: Some(WebSearchMode::Cached),
-        session_source: SessionSource::Cli,
-        sandbox_policy: &SandboxPolicy::DangerFullAccess,
-        windows_sandbox_level: WindowsSandboxLevel::Disabled,
-    });
-    let (tools, _) = build_specs(
-        &tools_config,
-        /*mcp_tools*/ None,
-        /*app_tools*/ None,
-        &[],
-    );
-
-    assert!(
-        !tools.iter().any(|tool| tool.spec.name() == "js_repl"),
-        "js_repl should be disabled when the feature is off"
-    );
-    assert!(
-        !tools.iter().any(|tool| tool.spec.name() == "js_repl_reset"),
-        "js_repl_reset should be disabled when the feature is off"
-    );
-}
-
-#[test]
-fn js_repl_enabled_adds_tools() {
-    let model_info = model_info();
-    let mut features = Features::with_defaults();
-    features.enable(Feature::JsRepl);
-
-    let available_models = Vec::new();
-    let tools_config = ToolsConfig::new(&ToolsConfigParams {
-        model_info: &model_info,
-        available_models: &available_models,
-        features: &features,
-        web_search_mode: Some(WebSearchMode::Cached),
-        session_source: SessionSource::Cli,
-        sandbox_policy: &SandboxPolicy::DangerFullAccess,
-        windows_sandbox_level: WindowsSandboxLevel::Disabled,
-    });
-    let (tools, _) = build_specs(
-        &tools_config,
-        /*mcp_tools*/ None,
-        /*app_tools*/ None,
-        &[],
-    );
-
-    assert_contains_tool_names(&tools, &["js_repl", "js_repl_reset"]);
-}
-
-#[test]
 fn image_generation_tools_require_feature_and_supported_model() {
     let supported_model_info = model_info();
     let mut unsupported_model_info = supported_model_info.clone();
     unsupported_model_info.input_modalities = vec![InputModality::Text];
-    let default_features = Features::with_defaults();
-    let mut image_generation_features = default_features.clone();
+    let mut image_generation_disabled_features = Features::with_defaults();
+    image_generation_disabled_features.disable(Feature::ImageGeneration);
+    let mut image_generation_features = Features::with_defaults();
     image_generation_features.enable(Feature::ImageGeneration);
 
     let available_models = Vec::new();
     let default_tools_config = ToolsConfig::new(&ToolsConfigParams {
         model_info: &supported_model_info,
         available_models: &available_models,
-        features: &default_features,
+        features: &image_generation_disabled_features,
+        image_generation_tool_auth_allowed: true,
         web_search_mode: Some(WebSearchMode::Cached),
         session_source: SessionSource::Cli,
-        sandbox_policy: &SandboxPolicy::DangerFullAccess,
+        permission_profile: &PermissionProfile::Disabled,
         windows_sandbox_level: WindowsSandboxLevel::Disabled,
     });
     let (default_tools, _) = build_specs(
         &default_tools_config,
         /*mcp_tools*/ None,
-        /*app_tools*/ None,
+        /*deferred_mcp_tools*/ None,
         &[],
     );
     assert!(
         !default_tools
             .iter()
             .any(|tool| tool.spec.name() == "image_generation"),
-        "image_generation should be disabled by default"
+        "image_generation should be disabled when the feature is disabled"
     );
 
     let supported_tools_config = ToolsConfig::new(&ToolsConfigParams {
         model_info: &supported_model_info,
         available_models: &available_models,
         features: &image_generation_features,
+        image_generation_tool_auth_allowed: true,
         web_search_mode: Some(WebSearchMode::Cached),
         session_source: SessionSource::Cli,
-        sandbox_policy: &SandboxPolicy::DangerFullAccess,
+        permission_profile: &PermissionProfile::Disabled,
         windows_sandbox_level: WindowsSandboxLevel::Disabled,
     });
     let (supported_tools, _) = build_specs(
         &supported_tools_config,
         /*mcp_tools*/ None,
-        /*app_tools*/ None,
+        /*deferred_mcp_tools*/ None,
         &[],
     );
     assert_contains_tool_names(&supported_tools, &["image_generation"]);
@@ -778,15 +793,16 @@ fn image_generation_tools_require_feature_and_supported_model() {
         model_info: &unsupported_model_info,
         available_models: &available_models,
         features: &image_generation_features,
+        image_generation_tool_auth_allowed: true,
         web_search_mode: Some(WebSearchMode::Cached),
         session_source: SessionSource::Cli,
-        sandbox_policy: &SandboxPolicy::DangerFullAccess,
+        permission_profile: &PermissionProfile::Disabled,
         windows_sandbox_level: WindowsSandboxLevel::Disabled,
     });
     let (tools, _) = build_specs(
         &tools_config,
         /*mcp_tools*/ None,
-        /*app_tools*/ None,
+        /*deferred_mcp_tools*/ None,
         &[],
     );
     assert!(
@@ -807,15 +823,16 @@ fn web_search_mode_cached_sets_external_web_access_false() {
         model_info: &model_info,
         available_models: &available_models,
         features: &features,
+        image_generation_tool_auth_allowed: true,
         web_search_mode: Some(WebSearchMode::Cached),
         session_source: SessionSource::Cli,
-        sandbox_policy: &SandboxPolicy::DangerFullAccess,
+        permission_profile: &PermissionProfile::Disabled,
         windows_sandbox_level: WindowsSandboxLevel::Disabled,
     });
     let (tools, _) = build_specs(
         &tools_config,
         /*mcp_tools*/ None,
-        /*app_tools*/ None,
+        /*deferred_mcp_tools*/ None,
         &[],
     );
 
@@ -842,15 +859,16 @@ fn web_search_mode_live_sets_external_web_access_true() {
         model_info: &model_info,
         available_models: &available_models,
         features: &features,
+        image_generation_tool_auth_allowed: true,
         web_search_mode: Some(WebSearchMode::Live),
         session_source: SessionSource::Cli,
-        sandbox_policy: &SandboxPolicy::DangerFullAccess,
+        permission_profile: &PermissionProfile::Disabled,
         windows_sandbox_level: WindowsSandboxLevel::Disabled,
     });
     let (tools, _) = build_specs(
         &tools_config,
         /*mcp_tools*/ None,
-        /*app_tools*/ None,
+        /*deferred_mcp_tools*/ None,
         &[],
     );
 
@@ -890,16 +908,17 @@ fn web_search_config_is_forwarded_to_tool_spec() {
         model_info: &model_info,
         available_models: &available_models,
         features: &features,
+        image_generation_tool_auth_allowed: true,
         web_search_mode: Some(WebSearchMode::Live),
         session_source: SessionSource::Cli,
-        sandbox_policy: &SandboxPolicy::DangerFullAccess,
+        permission_profile: &PermissionProfile::Disabled,
         windows_sandbox_level: WindowsSandboxLevel::Disabled,
     })
     .with_web_search_config(Some(web_search_config.clone()));
     let (tools, _) = build_specs(
         &tools_config,
         /*mcp_tools*/ None,
-        /*app_tools*/ None,
+        /*deferred_mcp_tools*/ None,
         &[],
     );
 
@@ -931,15 +950,16 @@ fn web_search_tool_type_text_and_image_sets_search_content_types() {
         model_info: &model_info,
         available_models: &available_models,
         features: &features,
+        image_generation_tool_auth_allowed: true,
         web_search_mode: Some(WebSearchMode::Live),
         session_source: SessionSource::Cli,
-        sandbox_policy: &SandboxPolicy::DangerFullAccess,
+        permission_profile: &PermissionProfile::Disabled,
         windows_sandbox_level: WindowsSandboxLevel::Disabled,
     });
     let (tools, _) = build_specs(
         &tools_config,
         /*mcp_tools*/ None,
-        /*app_tools*/ None,
+        /*deferred_mcp_tools*/ None,
         &[],
     );
 
@@ -965,15 +985,16 @@ fn mcp_resource_tools_are_hidden_without_mcp_servers() {
         model_info: &model_info,
         available_models: &available_models,
         features: &features,
+        image_generation_tool_auth_allowed: true,
         web_search_mode: Some(WebSearchMode::Cached),
         session_source: SessionSource::Cli,
-        sandbox_policy: &SandboxPolicy::DangerFullAccess,
+        permission_profile: &PermissionProfile::Disabled,
         windows_sandbox_level: WindowsSandboxLevel::Disabled,
     });
     let (tools, _) = build_specs(
         &tools_config,
         /*mcp_tools*/ None,
-        /*app_tools*/ None,
+        /*deferred_mcp_tools*/ None,
         &[],
     );
 
@@ -995,15 +1016,16 @@ fn mcp_resource_tools_are_included_when_mcp_servers_are_present() {
         model_info: &model_info,
         available_models: &available_models,
         features: &features,
+        image_generation_tool_auth_allowed: true,
         web_search_mode: Some(WebSearchMode::Cached),
         session_source: SessionSource::Cli,
-        sandbox_policy: &SandboxPolicy::DangerFullAccess,
+        permission_profile: &PermissionProfile::Disabled,
         windows_sandbox_level: WindowsSandboxLevel::Disabled,
     });
     let (tools, _) = build_specs(
         &tools_config,
         Some(HashMap::new()),
-        /*app_tools*/ None,
+        /*deferred_mcp_tools*/ None,
         &[],
     );
 
@@ -1028,15 +1050,16 @@ fn test_parallel_support_flags() {
         model_info: &model_info,
         available_models: &available_models,
         features: &features,
+        image_generation_tool_auth_allowed: true,
         web_search_mode: Some(WebSearchMode::Cached),
         session_source: SessionSource::Cli,
-        sandbox_policy: &SandboxPolicy::DangerFullAccess,
+        permission_profile: &PermissionProfile::Disabled,
         windows_sandbox_level: WindowsSandboxLevel::Disabled,
     });
     let (tools, _) = build_specs(
         &tools_config,
         /*mcp_tools*/ None,
-        /*app_tools*/ None,
+        /*deferred_mcp_tools*/ None,
         &[],
     );
 
@@ -1054,15 +1077,16 @@ fn test_test_model_info_includes_sync_tool() {
         model_info: &model_info,
         available_models: &available_models,
         features: &features,
+        image_generation_tool_auth_allowed: true,
         web_search_mode: Some(WebSearchMode::Cached),
         session_source: SessionSource::Cli,
-        sandbox_policy: &SandboxPolicy::DangerFullAccess,
+        permission_profile: &PermissionProfile::Disabled,
         windows_sandbox_level: WindowsSandboxLevel::Disabled,
     });
     let (tools, _) = build_specs(
         &tools_config,
         /*mcp_tools*/ None,
-        /*app_tools*/ None,
+        /*deferred_mcp_tools*/ None,
         &[],
     );
 
@@ -1079,15 +1103,16 @@ fn test_build_specs_mcp_tools_converted() {
         model_info: &model_info,
         available_models: &available_models,
         features: &features,
+        image_generation_tool_auth_allowed: true,
         web_search_mode: Some(WebSearchMode::Live),
         session_source: SessionSource::Cli,
-        sandbox_policy: &SandboxPolicy::DangerFullAccess,
+        permission_profile: &PermissionProfile::Disabled,
         windows_sandbox_level: WindowsSandboxLevel::Disabled,
     });
     let (tools, _) = build_specs(
         &tools_config,
         Some(HashMap::from([(
-            "test_server/do_something_cool".to_string(),
+            ToolName::namespaced("test_server/", "do_something_cool"),
             mcp_tool(
                 "do_something_cool",
                 "Do something cool",
@@ -1109,54 +1134,172 @@ fn test_build_specs_mcp_tools_converted() {
                 }),
             ),
         )])),
-        /*app_tools*/ None,
+        /*deferred_mcp_tools*/ None,
         &[],
     );
 
-    let tool = find_tool(&tools, "test_server/do_something_cool");
+    let tool = find_namespace_function_tool(&tools, "test_server/", "do_something_cool");
     assert_eq!(
-        &tool.spec,
-        &ToolSpec::Function(ResponsesApiTool {
-            name: "test_server/do_something_cool".to_string(),
-            parameters: JsonSchema::Object {
-                properties: BTreeMap::from([
+        tool,
+        &ResponsesApiTool {
+            name: "do_something_cool".to_string(),
+            parameters: JsonSchema::object(
+                BTreeMap::from([
                     (
                         "string_argument".to_string(),
-                        JsonSchema::String { description: None }
+                        JsonSchema::string(/*description*/ None),
                     ),
                     (
                         "number_argument".to_string(),
-                        JsonSchema::Number { description: None }
+                        JsonSchema::number(/*description*/ None),
                     ),
                     (
                         "object_argument".to_string(),
-                        JsonSchema::Object {
-                            properties: BTreeMap::from([
+                        JsonSchema::object(
+                            BTreeMap::from([
                                 (
                                     "string_property".to_string(),
-                                    JsonSchema::String { description: None }
+                                    JsonSchema::string(/*description*/ None),
                                 ),
                                 (
                                     "number_property".to_string(),
-                                    JsonSchema::Number { description: None }
+                                    JsonSchema::number(/*description*/ None),
                                 ),
                             ]),
-                            required: Some(vec![
+                            Some(vec![
                                 "string_property".to_string(),
                                 "number_property".to_string(),
                             ]),
-                            additional_properties: Some(false.into()),
-                        },
+                            Some(false.into()),
+                        ),
                     ),
                 ]),
-                required: None,
-                additional_properties: None,
-            },
+                /*required*/ None,
+                /*additional_properties*/ None
+            ),
             description: "Do something cool".to_string(),
             strict: false,
             output_schema: Some(mcp_call_tool_result_output_schema(serde_json::json!({}))),
             defer_loading: None,
-        })
+        }
+    );
+}
+
+#[test]
+fn namespace_specs_are_hidden_when_namespace_tools_are_disabled() {
+    let model_info = model_info();
+    let features = Features::with_defaults();
+    let available_models = Vec::new();
+    let mut tools_config = ToolsConfig::new(&ToolsConfigParams {
+        model_info: &model_info,
+        available_models: &available_models,
+        features: &features,
+        image_generation_tool_auth_allowed: true,
+        web_search_mode: Some(WebSearchMode::Cached),
+        session_source: SessionSource::Cli,
+        permission_profile: &PermissionProfile::Disabled,
+        windows_sandbox_level: WindowsSandboxLevel::Disabled,
+    });
+    tools_config.namespace_tools = false;
+
+    let (tools, handlers) = build_specs(
+        &tools_config,
+        Some(HashMap::from([(
+            ToolName::namespaced("mcp__sample__", "echo"),
+            mcp_tool("echo", "Echo", serde_json::json!({"type": "object"})),
+        )])),
+        /*deferred_mcp_tools*/ None,
+        &[],
+    );
+
+    assert_lacks_tool_name(&tools, "mcp__sample__");
+    assert!(handlers.contains(&ToolHandlerSpec {
+        name: ToolName::namespaced("mcp__sample__", "echo"),
+        kind: ToolHandlerKind::Mcp,
+    }));
+}
+
+#[test]
+fn namespaced_dynamic_specs_are_hidden_when_namespace_tools_are_disabled() {
+    let model_info = model_info();
+    let features = Features::with_defaults();
+    let available_models = Vec::new();
+    let mut tools_config = ToolsConfig::new(&ToolsConfigParams {
+        model_info: &model_info,
+        available_models: &available_models,
+        features: &features,
+        image_generation_tool_auth_allowed: true,
+        web_search_mode: Some(WebSearchMode::Cached),
+        session_source: SessionSource::Cli,
+        permission_profile: &PermissionProfile::Disabled,
+        windows_sandbox_level: WindowsSandboxLevel::Disabled,
+    });
+    tools_config.namespace_tools = false;
+    let dynamic_tools = vec![
+        DynamicToolSpec {
+            namespace: Some("codex_app".to_string()),
+            name: "automation_update".to_string(),
+            description: "Create or update automations.".to_string(),
+            input_schema: json!({"type": "object", "properties": {}}),
+            defer_loading: false,
+        },
+        DynamicToolSpec {
+            namespace: None,
+            name: "plain_dynamic".to_string(),
+            description: "Plain dynamic tool.".to_string(),
+            input_schema: json!({"type": "object", "properties": {}}),
+            defer_loading: false,
+        },
+    ];
+
+    let (tools, _) = build_specs(
+        &tools_config,
+        /*mcp_tools*/ None,
+        /*deferred_mcp_tools*/ None,
+        &dynamic_tools,
+    );
+
+    assert_lacks_tool_name(&tools, "codex_app");
+    assert_contains_tool_names(&tools, &["plain_dynamic"]);
+}
+
+#[test]
+fn test_build_specs_mcp_namespace_description_falls_back_when_missing() {
+    let model_info = model_info();
+    let mut features = Features::with_defaults();
+    features.enable(Feature::UnifiedExec);
+    let available_models = Vec::new();
+    let tools_config = ToolsConfig::new(&ToolsConfigParams {
+        model_info: &model_info,
+        available_models: &available_models,
+        features: &features,
+        image_generation_tool_auth_allowed: true,
+        web_search_mode: Some(WebSearchMode::Cached),
+        session_source: SessionSource::Cli,
+        permission_profile: &PermissionProfile::Disabled,
+        windows_sandbox_level: WindowsSandboxLevel::Disabled,
+    });
+    let (tools, _) = build_specs(
+        &tools_config,
+        Some(HashMap::from([(
+            ToolName::namespaced("test_server/", "do_something_cool"),
+            mcp_tool(
+                "do_something_cool",
+                "Do something cool",
+                serde_json::json!({"type": "object"}),
+            ),
+        )])),
+        /*deferred_mcp_tools*/ None,
+        &[],
+    );
+
+    let namespace_tool = find_tool(&tools, "test_server/");
+    let ToolSpec::Namespace(namespace) = &namespace_tool.spec else {
+        panic!("expected namespace tool");
+    };
+    assert_eq!(
+        namespace.description,
+        "Tools in the test_server/ namespace."
     );
 }
 
@@ -1170,44 +1313,47 @@ fn test_build_specs_mcp_tools_sorted_by_name() {
         model_info: &model_info,
         available_models: &available_models,
         features: &features,
+        image_generation_tool_auth_allowed: true,
         web_search_mode: Some(WebSearchMode::Cached),
         session_source: SessionSource::Cli,
-        sandbox_policy: &SandboxPolicy::DangerFullAccess,
+        permission_profile: &PermissionProfile::Disabled,
         windows_sandbox_level: WindowsSandboxLevel::Disabled,
     });
 
     let tools_map = HashMap::from([
         (
-            "test_server/do".to_string(),
-            mcp_tool("a", "a", serde_json::json!({"type": "object"})),
+            ToolName::namespaced("test_server/", "do"),
+            mcp_tool("do", "a", serde_json::json!({"type": "object"})),
         ),
         (
-            "test_server/something".to_string(),
-            mcp_tool("b", "b", serde_json::json!({"type": "object"})),
+            ToolName::namespaced("test_server/", "something"),
+            mcp_tool("something", "b", serde_json::json!({"type": "object"})),
         ),
         (
-            "test_server/cool".to_string(),
-            mcp_tool("c", "c", serde_json::json!({"type": "object"})),
+            ToolName::namespaced("test_server/", "cool"),
+            mcp_tool("cool", "c", serde_json::json!({"type": "object"})),
         ),
     ]);
 
-    let (tools, _) = build_specs(&tools_config, Some(tools_map), /*app_tools*/ None, &[]);
+    let (tools, _) = build_specs(
+        &tools_config,
+        Some(tools_map),
+        /*deferred_mcp_tools*/ None,
+        &[],
+    );
 
-    let mcp_names: Vec<_> = tools
-        .iter()
-        .map(|tool| tool.name().to_string())
-        .filter(|name| name.starts_with("test_server/"))
-        .collect();
-    let expected = vec![
-        "test_server/cool".to_string(),
-        "test_server/do".to_string(),
-        "test_server/something".to_string(),
-    ];
-    assert_eq!(mcp_names, expected);
+    assert_eq!(
+        namespace_function_names(&tools, "test_server/"),
+        vec![
+            "cool".to_string(),
+            "do".to_string(),
+            "something".to_string(),
+        ]
+    );
 }
 
 #[test]
-fn search_tool_description_lists_each_codex_apps_connector_once() {
+fn search_tool_description_lists_each_mcp_source_once() {
     let model_info = search_capable_model_info();
     let mut features = Features::with_defaults();
     features.enable(Feature::Apps);
@@ -1217,17 +1363,18 @@ fn search_tool_description_lists_each_codex_apps_connector_once() {
         model_info: &model_info,
         available_models: &available_models,
         features: &features,
+        image_generation_tool_auth_allowed: true,
         web_search_mode: Some(WebSearchMode::Cached),
         session_source: SessionSource::Cli,
-        sandbox_policy: &SandboxPolicy::DangerFullAccess,
+        permission_profile: &PermissionProfile::Disabled,
         windows_sandbox_level: WindowsSandboxLevel::Disabled,
     });
 
-    let (tools, _) = build_specs(
+    let (tools, handlers) = build_specs(
         &tools_config,
         Some(HashMap::from([
             (
-                "mcp__codex_apps__calendar_create_event".to_string(),
+                ToolName::namespaced("mcp__codex_apps__calendar", "_create_event"),
                 mcp_tool(
                     "calendar_create_event",
                     "Create calendar event",
@@ -1235,34 +1382,37 @@ fn search_tool_description_lists_each_codex_apps_connector_once() {
                 ),
             ),
             (
-                "mcp__rmcp__echo".to_string(),
+                ToolName::namespaced("mcp__rmcp__", "echo"),
                 mcp_tool("echo", "Echo", serde_json::json!({"type": "object"})),
             ),
         ])),
         Some(vec![
-            app_tool(
+            deferred_mcp_tool(
                 "_create_event",
                 "mcp__codex_apps__calendar",
                 CODEX_APPS_MCP_SERVER_NAME,
                 Some("Calendar"),
                 Some("Plan events and manage your calendar."),
             ),
-            app_tool(
+            deferred_mcp_tool(
                 "_list_events",
                 "mcp__codex_apps__calendar",
                 CODEX_APPS_MCP_SERVER_NAME,
                 Some("Calendar"),
                 Some("Plan events and manage your calendar."),
             ),
-            app_tool(
+            deferred_mcp_tool(
                 "_search_threads",
                 "mcp__codex_apps__gmail",
                 CODEX_APPS_MCP_SERVER_NAME,
                 Some("Gmail"),
                 Some("Find and summarize email threads."),
             ),
-            app_tool(
-                "echo", "rmcp", "rmcp", /*connector_name*/ None,
+            deferred_mcp_tool(
+                "echo",
+                "mcp__rmcp__",
+                "rmcp",
+                /*connector_name*/ None,
                 /*connector_description*/ None,
             ),
         ]),
@@ -1282,14 +1432,24 @@ fn search_tool_description_lists_each_codex_apps_connector_once() {
             .count(),
         1
     );
+    assert!(description.contains("- rmcp"));
     assert!(!description.contains("mcp__rmcp__echo"));
+
+    assert!(handlers.contains(&ToolHandlerSpec {
+        name: ToolName::namespaced("mcp__codex_apps__calendar", "_create_event"),
+        kind: ToolHandlerKind::Mcp,
+    }));
+    assert!(handlers.contains(&ToolHandlerSpec {
+        name: ToolName::namespaced("mcp__rmcp__", "echo"),
+        kind: ToolHandlerKind::Mcp,
+    }));
 }
 
 #[test]
-fn search_tool_requires_model_capability_and_feature_flag() {
+fn search_tool_requires_model_capability_and_enabled_feature() {
     let model_info = search_capable_model_info();
-    let app_tools = Some(vec![app_tool(
-        "calendar_create_event",
+    let deferred_mcp_tools = Some(vec![deferred_mcp_tool(
+        "_create_event",
         "mcp__codex_apps__calendar",
         CODEX_APPS_MCP_SERVER_NAME,
         Some("Calendar"),
@@ -1305,15 +1465,36 @@ fn search_tool_requires_model_capability_and_feature_flag() {
         },
         available_models: &available_models,
         features: &features,
+        image_generation_tool_auth_allowed: true,
         web_search_mode: Some(WebSearchMode::Cached),
         session_source: SessionSource::Cli,
-        sandbox_policy: &SandboxPolicy::DangerFullAccess,
+        permission_profile: &PermissionProfile::Disabled,
         windows_sandbox_level: WindowsSandboxLevel::Disabled,
     });
     let (tools, _) = build_specs(
         &tools_config,
         /*mcp_tools*/ None,
-        app_tools.clone(),
+        deferred_mcp_tools.clone(),
+        &[],
+    );
+    assert_lacks_tool_name(&tools, TOOL_SEARCH_TOOL_NAME);
+
+    let mut features_without_tool_search = Features::with_defaults();
+    features_without_tool_search.disable(Feature::ToolSearch);
+    let tools_config = ToolsConfig::new(&ToolsConfigParams {
+        model_info: &model_info,
+        available_models: &available_models,
+        features: &features_without_tool_search,
+        image_generation_tool_auth_allowed: true,
+        web_search_mode: Some(WebSearchMode::Cached),
+        session_source: SessionSource::Cli,
+        permission_profile: &PermissionProfile::Disabled,
+        windows_sandbox_level: WindowsSandboxLevel::Disabled,
+    });
+    let (tools, _) = build_specs(
+        &tools_config,
+        /*mcp_tools*/ None,
+        deferred_mcp_tools.clone(),
         &[],
     );
     assert_lacks_tool_name(&tools, TOOL_SEARCH_TOOL_NAME);
@@ -1322,32 +1503,192 @@ fn search_tool_requires_model_capability_and_feature_flag() {
         model_info: &model_info,
         available_models: &available_models,
         features: &features,
+        image_generation_tool_auth_allowed: true,
         web_search_mode: Some(WebSearchMode::Cached),
         session_source: SessionSource::Cli,
-        sandbox_policy: &SandboxPolicy::DangerFullAccess,
+        permission_profile: &PermissionProfile::Disabled,
         windows_sandbox_level: WindowsSandboxLevel::Disabled,
     });
     let (tools, _) = build_specs(
         &tools_config,
         /*mcp_tools*/ None,
-        app_tools.clone(),
+        deferred_mcp_tools,
         &[],
     );
-    assert_lacks_tool_name(&tools, TOOL_SEARCH_TOOL_NAME);
+    assert_contains_tool_names(&tools, &[TOOL_SEARCH_TOOL_NAME]);
+}
 
+#[test]
+fn search_tool_is_hidden_when_only_deferred_namespace_tools_are_available() {
+    let model_info = search_capable_model_info();
     let mut features = Features::with_defaults();
     features.enable(Feature::ToolSearch);
+    let available_models = Vec::new();
+    let mut tools_config = ToolsConfig::new(&ToolsConfigParams {
+        model_info: &model_info,
+        available_models: &available_models,
+        features: &features,
+        image_generation_tool_auth_allowed: true,
+        web_search_mode: Some(WebSearchMode::Cached),
+        session_source: SessionSource::Cli,
+        permission_profile: &PermissionProfile::Disabled,
+        windows_sandbox_level: WindowsSandboxLevel::Disabled,
+    });
+    tools_config.namespace_tools = false;
+
+    let (tools, handlers) = build_specs(
+        &tools_config,
+        /*mcp_tools*/ None,
+        Some(vec![deferred_mcp_tool(
+            "_create_event",
+            "mcp__codex_apps__calendar",
+            CODEX_APPS_MCP_SERVER_NAME,
+            Some("Calendar"),
+            Some("Plan events and manage your calendar."),
+        )]),
+        &[],
+    );
+
+    assert_lacks_tool_name(&tools, TOOL_SEARCH_TOOL_NAME);
+    assert!(!handlers.contains(&ToolHandlerSpec {
+        name: ToolName::plain(TOOL_SEARCH_TOOL_NAME),
+        kind: ToolHandlerKind::ToolSearch,
+    }));
+}
+
+#[test]
+fn search_tool_registers_for_deferred_dynamic_tools() {
+    let model_info = search_capable_model_info();
+    let mut features = Features::with_defaults();
+    features.enable(Feature::ToolSearch);
+    let available_models = Vec::new();
     let tools_config = ToolsConfig::new(&ToolsConfigParams {
         model_info: &model_info,
         available_models: &available_models,
         features: &features,
+        image_generation_tool_auth_allowed: true,
         web_search_mode: Some(WebSearchMode::Cached),
         session_source: SessionSource::Cli,
-        sandbox_policy: &SandboxPolicy::DangerFullAccess,
+        permission_profile: &PermissionProfile::Disabled,
         windows_sandbox_level: WindowsSandboxLevel::Disabled,
     });
-    let (tools, _) = build_specs(&tools_config, /*mcp_tools*/ None, app_tools, &[]);
-    assert_contains_tool_names(&tools, &[TOOL_SEARCH_TOOL_NAME]);
+    let dynamic_tools = vec![
+        DynamicToolSpec {
+            namespace: Some("codex_app".to_string()),
+            name: "automation_update".to_string(),
+            description: "Create, update, view, or delete recurring automations.".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "mode": { "type": "string" },
+                },
+            }),
+            defer_loading: true,
+        },
+        DynamicToolSpec {
+            namespace: Some("codex_app".to_string()),
+            name: "automation_list".to_string(),
+            description: "List recurring automations.".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {},
+            }),
+            defer_loading: true,
+        },
+    ];
+
+    let (tools, handlers) = build_specs(
+        &tools_config,
+        /*mcp_tools*/ None,
+        /*deferred_mcp_tools*/ None,
+        &dynamic_tools,
+    );
+
+    let search_tool = find_tool(&tools, TOOL_SEARCH_TOOL_NAME);
+    let ToolSpec::ToolSearch { description, .. } = &search_tool.spec else {
+        panic!("expected tool_search tool");
+    };
+    assert!(description.contains("- Dynamic tools: Tools provided by the current Codex thread."));
+    assert_contains_tool_names(&tools, &[TOOL_SEARCH_TOOL_NAME, "codex_app"]);
+    assert_eq!(
+        tools
+            .iter()
+            .filter(|tool| tool.name() == "codex_app")
+            .count(),
+        1
+    );
+    assert_eq!(
+        namespace_function_names(&tools, "codex_app"),
+        vec![
+            "automation_update".to_string(),
+            "automation_list".to_string()
+        ]
+    );
+    for tool_name in ["automation_update", "automation_list"] {
+        let dynamic_tool = find_namespace_function_tool(&tools, "codex_app", tool_name);
+        assert_eq!(dynamic_tool.defer_loading, Some(true));
+    }
+    assert!(handlers.contains(&ToolHandlerSpec {
+        name: ToolName::plain(TOOL_SEARCH_TOOL_NAME),
+        kind: ToolHandlerKind::ToolSearch,
+    }));
+    assert!(handlers.contains(&ToolHandlerSpec {
+        name: ToolName::namespaced("codex_app", "automation_update"),
+        kind: ToolHandlerKind::DynamicTool,
+    }));
+    assert!(handlers.contains(&ToolHandlerSpec {
+        name: ToolName::namespaced("codex_app", "automation_list"),
+        kind: ToolHandlerKind::DynamicTool,
+    }));
+}
+
+#[test]
+fn search_tool_keeps_plain_deferred_dynamic_tools_when_namespace_tools_are_disabled() {
+    let model_info = search_capable_model_info();
+    let mut features = Features::with_defaults();
+    features.enable(Feature::ToolSearch);
+    let available_models = Vec::new();
+    let mut tools_config = ToolsConfig::new(&ToolsConfigParams {
+        model_info: &model_info,
+        available_models: &available_models,
+        features: &features,
+        image_generation_tool_auth_allowed: true,
+        web_search_mode: Some(WebSearchMode::Cached),
+        session_source: SessionSource::Cli,
+        permission_profile: &PermissionProfile::Disabled,
+        windows_sandbox_level: WindowsSandboxLevel::Disabled,
+    });
+    tools_config.namespace_tools = false;
+    let dynamic_tools = vec![
+        DynamicToolSpec {
+            namespace: Some("codex_app".to_string()),
+            name: "automation_update".to_string(),
+            description: "Create or update automations.".to_string(),
+            input_schema: json!({"type": "object", "properties": {}}),
+            defer_loading: true,
+        },
+        DynamicToolSpec {
+            namespace: None,
+            name: "plain_dynamic".to_string(),
+            description: "Plain dynamic tool.".to_string(),
+            input_schema: json!({"type": "object", "properties": {}}),
+            defer_loading: true,
+        },
+    ];
+
+    let (tools, handlers) = build_specs(
+        &tools_config,
+        /*mcp_tools*/ None,
+        /*deferred_mcp_tools*/ None,
+        &dynamic_tools,
+    );
+
+    assert_contains_tool_names(&tools, &[TOOL_SEARCH_TOOL_NAME, "plain_dynamic"]);
+    assert_lacks_tool_name(&tools, "codex_app");
+    assert!(handlers.contains(&ToolHandlerSpec {
+        name: ToolName::plain(TOOL_SEARCH_TOOL_NAME),
+        kind: ToolHandlerKind::ToolSearch,
+    }));
 }
 
 #[test]
@@ -1363,15 +1704,16 @@ fn tool_suggest_is_not_registered_without_feature_flag() {
         model_info: &model_info,
         available_models: &available_models,
         features: &features,
+        image_generation_tool_auth_allowed: true,
         web_search_mode: Some(WebSearchMode::Cached),
         session_source: SessionSource::Cli,
-        sandbox_policy: &SandboxPolicy::DangerFullAccess,
+        permission_profile: &PermissionProfile::Disabled,
         windows_sandbox_level: WindowsSandboxLevel::Disabled,
     });
     let (tools, _) = build_specs_with_discoverable_tools(
         &tools_config,
         /*mcp_tools*/ None,
-        /*app_tools*/ None,
+        /*deferred_mcp_tools*/ None,
         Some(vec![discoverable_connector(
             "connector_2128aebfecb84f64a069897515042a44",
             "Google Calendar",
@@ -1402,15 +1744,16 @@ fn tool_suggest_can_be_registered_without_search_tool() {
         model_info: &model_info,
         available_models: &available_models,
         features: &features,
+        image_generation_tool_auth_allowed: true,
         web_search_mode: Some(WebSearchMode::Cached),
         session_source: SessionSource::Cli,
-        sandbox_policy: &SandboxPolicy::DangerFullAccess,
+        permission_profile: &PermissionProfile::Disabled,
         windows_sandbox_level: WindowsSandboxLevel::Disabled,
     });
     let (tools, _) = build_specs_with_discoverable_tools(
         &tools_config,
         /*mcp_tools*/ None,
-        /*app_tools*/ None,
+        /*deferred_mcp_tools*/ None,
         Some(vec![discoverable_connector(
             "connector_2128aebfecb84f64a069897515042a44",
             "Google Calendar",
@@ -1420,17 +1763,18 @@ fn tool_suggest_can_be_registered_without_search_tool() {
     );
 
     assert_contains_tool_names(&tools, &[TOOL_SUGGEST_TOOL_NAME]);
+    let tool_suggest = find_tool(&tools, TOOL_SUGGEST_TOOL_NAME);
+    assert!(tool_suggest.supports_parallel_tool_calls);
     assert_lacks_tool_name(&tools, TOOL_SEARCH_TOOL_NAME);
 
-    let tool_suggest = find_tool(&tools, TOOL_SUGGEST_TOOL_NAME);
     let ToolSpec::Function(ResponsesApiTool { description, .. }) = &tool_suggest.spec else {
         panic!("expected function tool");
     };
     assert!(description.contains(
-        "Suggests a missing connector in an installed plugin, or in narrower cases a not installed but discoverable plugin"
+        "Use this tool only to ask the user to install one known plugin or connector from the list below. The list contains known candidates that are not currently installed."
     ));
     assert!(description.contains(
-        "You've already tried to find a matching available tool for the user's request but couldn't find a good match. This includes `tool_search` (if available) and other means."
+        "`tool_search` is not available, or it has already been called and did not find or make the requested tool callable."
     ));
 }
 
@@ -1447,9 +1791,10 @@ fn tool_suggest_description_lists_discoverable_tools() {
         model_info: &model_info,
         available_models: &available_models,
         features: &features,
+        image_generation_tool_auth_allowed: true,
         web_search_mode: Some(WebSearchMode::Cached),
         session_source: SessionSource::Cli,
-        sandbox_policy: &SandboxPolicy::DangerFullAccess,
+        permission_profile: &PermissionProfile::Disabled,
         windows_sandbox_level: WindowsSandboxLevel::Disabled,
     });
 
@@ -1474,13 +1819,17 @@ fn tool_suggest_description_lists_discoverable_tools() {
         })),
     ];
 
-    let (tools, _) = build_specs_with_discoverable_tools(
+    let (tools, handlers) = build_specs_with_discoverable_tools(
         &tools_config,
         /*mcp_tools*/ None,
-        /*app_tools*/ None,
+        /*deferred_mcp_tools*/ None,
         Some(discoverable_tools),
         &[],
     );
+    assert!(handlers.contains(&ToolHandlerSpec {
+        name: ToolName::plain(TOOL_SUGGEST_TOOL_NAME),
+        kind: ToolHandlerKind::ToolSuggest,
+    }));
 
     let tool_suggest = find_tool(&tools, TOOL_SUGGEST_TOOL_NAME);
     let ToolSpec::Function(ResponsesApiTool {
@@ -1492,7 +1841,7 @@ fn tool_suggest_description_lists_discoverable_tools() {
         panic!("expected function tool");
     };
     assert!(description.contains(
-        "Suggests a missing connector in an installed plugin, or in narrower cases a not installed but discoverable plugin"
+        "Use this tool only to ask the user to install one known plugin or connector from the list below. The list contains known candidates that are not currently installed."
     ));
     assert!(description.contains("Google Calendar"));
     assert!(description.contains("Gmail"));
@@ -1500,35 +1849,42 @@ fn tool_suggest_description_lists_discoverable_tools() {
     assert!(description.contains("Plan events and schedules."));
     assert!(description.contains("Find and summarize email threads."));
     assert!(description.contains("id: `sample@test`, type: plugin, action: install"));
-    assert!(description.contains("`action_type`: `install` or `enable`"));
+    assert!(description.contains("`action_type`: `install`"));
     assert!(
         description.contains("skills; MCP servers: sample-docs; app connectors: connector_sample")
     );
     assert!(
         description.contains(
-            "You've already tried to find a matching available tool for the user's request but couldn't find a good match. This includes `tool_search` (if available) and other means."
+            "The user explicitly wants a specific plugin or connector that is not already available in the current context or active `tools` list."
         )
     );
     assert!(description.contains(
-        "For connectors/apps that are not installed but needed for an installed plugin, suggest to install them if the task requirements match precisely."
+        "`tool_search` is not available, or it has already been called and did not find or make the requested tool callable."
     ));
     assert!(description.contains(
-        "For plugins that are not installed but discoverable, only suggest discoverable and installable plugins when the user's intent very explicitly and unambiguously matches that plugin itself."
+        "The tool is one of the known installable plugins or connectors listed below. Only ask to install tools from this list."
     ));
     assert!(description.contains(
-        "Do not suggest a plugin just because one of its connectors or capabilities seems relevant."
+        "Do not use tool suggestion for adjacent capabilities, broad recommendations, or tools that merely seem useful."
+    ));
+    assert!(description.contains("IMPORTANT: DO NOT call this tool in parallel with other tools."));
+    assert!(description.contains(
+        "Do not use tool suggestion if the needed tool is already available, found through `tool_search`, or callable after discovery."
     ));
     assert!(description.contains(
-        "Apply the stricter explicit-and-unambiguous rule for *discoverable tools* like plugin install suggestions; *missing tools* like connector install suggestions continue to use the normal clear-fit standard."
+        "If `tool_search` is available, call `tool_search` before calling `tool_suggest`."
     ));
-    assert!(description.contains("DO NOT explore or recommend tools that are not on this list."));
+    assert!(!description.contains("targeted lookup"));
+    assert!(!description.contains("broad or speculative searches"));
+    assert!(description.contains("Only proceed when one listed plugin or connector exactly fits."));
+    assert!(description.contains(
+        "If we found both connectors and plugins to suggest, use plugins first, only use connectors if the corresponding plugin is installed but the connector is not."
+    ));
     assert!(!description.contains("{{discoverable_tools}}"));
     assert!(!description.contains("tool_search fails to find a good match"));
-    let JsonSchema::Object { required, .. } = parameters else {
-        panic!("expected object parameters");
-    };
+    let (_, required) = expect_object_schema(parameters);
     assert_eq!(
-        required.as_ref(),
+        required,
         Some(&vec![
             "tool_type".to_string(),
             "action_type".to_string(),
@@ -1543,22 +1899,24 @@ fn code_mode_augments_mcp_tool_descriptions_with_namespaced_sample() {
     let model_info = model_info();
     let mut features = Features::with_defaults();
     features.enable(Feature::CodeMode);
+    features.enable(Feature::CodeModeOnly);
     features.enable(Feature::UnifiedExec);
     let available_models = Vec::new();
     let tools_config = ToolsConfig::new(&ToolsConfigParams {
         model_info: &model_info,
         available_models: &available_models,
         features: &features,
+        image_generation_tool_auth_allowed: true,
         web_search_mode: Some(WebSearchMode::Cached),
         session_source: SessionSource::Cli,
-        sandbox_policy: &SandboxPolicy::DangerFullAccess,
+        permission_profile: &PermissionProfile::Disabled,
         windows_sandbox_level: WindowsSandboxLevel::Disabled,
     });
 
     let (tools, _) = build_specs(
         &tools_config,
         Some(HashMap::from([(
-            "mcp__sample__echo".to_string(),
+            ToolName::namespaced("mcp__sample__", "echo"),
             mcp_tool(
                 "echo",
                 "Echo text",
@@ -1572,20 +1930,105 @@ fn code_mode_augments_mcp_tool_descriptions_with_namespaced_sample() {
                 }),
             ),
         )])),
-        /*app_tools*/ None,
+        /*deferred_mcp_tools*/ None,
         &[],
     );
 
-    let ToolSpec::Function(ResponsesApiTool { description, .. }) =
-        &find_tool(&tools, "mcp__sample__echo").spec
-    else {
-        panic!("expected function tool");
-    };
+    let ResponsesApiTool { description, .. } =
+        find_namespace_function_tool(&tools, "mcp__sample__", "echo");
 
     assert_eq!(
         description,
-        "Echo text\n\nexec tool declaration:\n```ts\ndeclare const tools: { mcp__sample__echo(args: { message: string; }): Promise<{ _meta?: unknown; content: Array<unknown>; isError?: boolean; structuredContent?: unknown; }>; };\n```"
+        r#"Echo text
+
+exec tool declaration:
+```ts
+declare const tools: { mcp__sample__echo(args: { message: string; }): Promise<CallToolResult>; };
+```"#
     );
+}
+
+#[test]
+fn code_mode_preserves_nullable_and_literal_mcp_input_shapes() {
+    let model_info = model_info();
+    let mut features = Features::with_defaults();
+    features.enable(Feature::CodeMode);
+    features.enable(Feature::UnifiedExec);
+    let available_models = Vec::new();
+    let tools_config = ToolsConfig::new(&ToolsConfigParams {
+        model_info: &model_info,
+        available_models: &available_models,
+        features: &features,
+        image_generation_tool_auth_allowed: true,
+        web_search_mode: Some(WebSearchMode::Cached),
+        session_source: SessionSource::Cli,
+        permission_profile: &PermissionProfile::Disabled,
+        windows_sandbox_level: WindowsSandboxLevel::Disabled,
+    });
+
+    let (tools, _) = build_specs(
+        &tools_config,
+        Some(HashMap::from([(
+            ToolName::namespaced("mcp__sample__", "fn"),
+            mcp_tool(
+                "fn",
+                "Sample fn",
+                serde_json::json!({
+                    "type": "object",
+                    "properties": {
+                        "open": {
+                            "anyOf": [
+                                {
+                                    "type": "array",
+                                    "items": {
+                                        "type": "object",
+                                        "properties": {
+                                            "ref_id": {"type": "string"},
+                                            "lineno": {"anyOf": [{"type": "integer"}, {"type": "null"}]}
+                                        },
+                                        "required": ["ref_id"],
+                                        "additionalProperties": false
+                                    }
+                                },
+                                {"type": "null"}
+                            ]
+                        },
+                        "tagged_list": {
+                            "anyOf": [
+                                {
+                                    "type": "array",
+                                    "items": {
+                                        "type": "object",
+                                        "properties": {
+                                            "kind": {"type": "const", "const": "tagged"},
+                                            "variant": {"type": "enum", "enum": ["alpha", "beta"]},
+                                            "scope": {"type": "enum", "enum": ["one", "two"]}
+                                        },
+                                        "required": ["kind", "variant", "scope"]
+                                    }
+                                },
+                                {"type": "null"}
+                            ]
+                        },
+                        "response_length": {"type": "enum", "enum": ["short", "medium", "long"]}
+                    },
+                    "additionalProperties": false
+                }),
+            ),
+        )])),
+        /*deferred_mcp_tools*/ None,
+        &[],
+    );
+
+    let ResponsesApiTool { description, .. } =
+        find_namespace_function_tool(&tools, "mcp__sample__", "fn");
+
+    assert!(description.contains(
+        r#"exec tool declaration:
+```ts
+declare const tools: { mcp__sample__fn(args: { open?: Array<{ lineno?: number | null; ref_id: string; }> | null; response_length?: "short" | "medium" | "long"; tagged_list?: Array<{ kind: "tagged"; scope: "one" | "two"; variant: "alpha" | "beta"; }> | null; }): Promise<CallToolResult>; };
+```"#
+    ));
 }
 
 #[test]
@@ -1599,16 +2042,17 @@ fn code_mode_augments_builtin_tool_descriptions_with_typed_sample() {
         model_info: &model_info,
         available_models: &available_models,
         features: &features,
+        image_generation_tool_auth_allowed: true,
         web_search_mode: Some(WebSearchMode::Cached),
         session_source: SessionSource::Cli,
-        sandbox_policy: &SandboxPolicy::DangerFullAccess,
+        permission_profile: &PermissionProfile::Disabled,
         windows_sandbox_level: WindowsSandboxLevel::Disabled,
     });
 
     let (tools, _) = build_specs(
         &tools_config,
         /*mcp_tools*/ None,
-        /*app_tools*/ None,
+        /*deferred_mcp_tools*/ None,
         &[],
     );
     let ToolSpec::Function(ResponsesApiTool { description, .. }) =
@@ -1619,7 +2063,7 @@ fn code_mode_augments_builtin_tool_descriptions_with_typed_sample() {
 
     assert_eq!(
         description,
-        "View a local image from the filesystem (only use if given a full filepath by the user, and the image isn't already attached to the thread context within <image ...> tags).\n\nexec tool declaration:\n```ts\ndeclare const tools: { view_image(args: { path: string; }): Promise<{ detail: string | null; image_url: string; }>; };\n```"
+        "View a local image from the filesystem (only use if given a full filepath by the user, and the image isn't already attached to the thread context within <image ...> tags).\n\nexec tool declaration:\n```ts\ndeclare const tools: { view_image(args: {\n  // Local filesystem path to an image file\n  path: string;\n}): Promise<{\n  // Image detail hint returned by view_image. Returns `original` when original resolution is preserved, otherwise `null`.\n  detail: string | null;\n  // Data URL for the loaded image.\n  image_url: string;\n}>; };\n```"
     );
 }
 
@@ -1634,16 +2078,17 @@ fn code_mode_only_exec_description_includes_full_nested_tool_details() {
         model_info: &model_info,
         available_models: &available_models,
         features: &features,
+        image_generation_tool_auth_allowed: true,
         web_search_mode: Some(WebSearchMode::Cached),
         session_source: SessionSource::Cli,
-        sandbox_policy: &SandboxPolicy::DangerFullAccess,
+        permission_profile: &PermissionProfile::Disabled,
         windows_sandbox_level: WindowsSandboxLevel::Disabled,
     });
 
     let (tools, _) = build_specs(
         &tools_config,
         /*mcp_tools*/ None,
-        /*app_tools*/ None,
+        /*deferred_mcp_tools*/ None,
         &[],
     );
     let ToolSpec::Freeform(FreeformTool { description, .. }) = &find_tool(&tools, "exec").spec
@@ -1656,8 +2101,8 @@ fn code_mode_only_exec_description_includes_full_nested_tool_details() {
     assert!(description.starts_with(
         "Use `exec/wait` tool to run all other tools, do not attempt to use any other tools directly"
     ));
-    assert!(description.contains("### `update_plan` (`update_plan`)"));
-    assert!(description.contains("### `view_image` (`view_image`)"));
+    assert!(description.contains("### `update_plan`"));
+    assert!(description.contains("### `view_image`"));
 }
 
 #[test]
@@ -1670,16 +2115,17 @@ fn code_mode_exec_description_omits_nested_tool_details_when_not_code_mode_only(
         model_info: &model_info,
         available_models: &available_models,
         features: &features,
+        image_generation_tool_auth_allowed: true,
         web_search_mode: Some(WebSearchMode::Cached),
         session_source: SessionSource::Cli,
-        sandbox_policy: &SandboxPolicy::DangerFullAccess,
+        permission_profile: &PermissionProfile::Disabled,
         windows_sandbox_level: WindowsSandboxLevel::Disabled,
     });
 
     let (tools, _) = build_specs(
         &tools_config,
         /*mcp_tools*/ None,
-        /*app_tools*/ None,
+        /*deferred_mcp_tools*/ None,
         &[],
     );
     let ToolSpec::Freeform(FreeformTool { description, .. }) = &find_tool(&tools, "exec").spec
@@ -1690,8 +2136,8 @@ fn code_mode_exec_description_omits_nested_tool_details_when_not_code_mode_only(
     assert!(!description.starts_with(
         "Use `exec/wait` tool to run all other tools, do not attempt to use any other tools directly"
     ));
-    assert!(!description.contains("### `update_plan` (`update_plan`)"));
-    assert!(!description.contains("### `view_image` (`view_image`)"));
+    assert!(!description.contains("### `update_plan`"));
+    assert!(!description.contains("### `view_image`"));
 }
 
 fn model_info() -> ModelInfo {
@@ -1738,14 +2184,14 @@ fn search_capable_model_info() -> ModelInfo {
 
 fn build_specs<'a>(
     config: &ToolsConfig,
-    mcp_tools: Option<HashMap<String, rmcp::model::Tool>>,
-    app_tools: Option<Vec<ToolRegistryPlanAppTool<'a>>>,
+    mcp_tools: Option<HashMap<ToolName, rmcp::model::Tool>>,
+    deferred_mcp_tools: Option<Vec<ToolRegistryPlanDeferredTool<'a>>>,
     dynamic_tools: &[DynamicToolSpec],
 ) -> (Vec<ConfiguredToolSpec>, Vec<ToolHandlerSpec>) {
     build_specs_with_discoverable_tools(
         config,
         mcp_tools,
-        app_tools,
+        deferred_mcp_tools,
         /*discoverable_tools*/ None,
         dynamic_tools,
     )
@@ -1753,21 +2199,48 @@ fn build_specs<'a>(
 
 fn build_specs_with_discoverable_tools<'a>(
     config: &ToolsConfig,
-    mcp_tools: Option<HashMap<String, rmcp::model::Tool>>,
-    app_tools: Option<Vec<ToolRegistryPlanAppTool<'a>>>,
+    mcp_tools: Option<HashMap<ToolName, rmcp::model::Tool>>,
+    deferred_mcp_tools: Option<Vec<ToolRegistryPlanDeferredTool<'a>>>,
     discoverable_tools: Option<Vec<DiscoverableTool>>,
     dynamic_tools: &[DynamicToolSpec],
 ) -> (Vec<ConfiguredToolSpec>, Vec<ToolHandlerSpec>) {
+    build_specs_with_optional_tool_namespaces(
+        config,
+        mcp_tools,
+        deferred_mcp_tools,
+        /*tool_namespaces*/ None,
+        discoverable_tools,
+        dynamic_tools,
+    )
+}
+
+fn build_specs_with_optional_tool_namespaces<'a>(
+    config: &ToolsConfig,
+    mcp_tools: Option<HashMap<ToolName, rmcp::model::Tool>>,
+    deferred_mcp_tools: Option<Vec<ToolRegistryPlanDeferredTool<'a>>>,
+    tool_namespaces: Option<HashMap<String, ToolNamespace>>,
+    discoverable_tools: Option<Vec<DiscoverableTool>>,
+    dynamic_tools: &[DynamicToolSpec],
+) -> (Vec<ConfiguredToolSpec>, Vec<ToolHandlerSpec>) {
+    let mcp_tool_inputs = mcp_tools.as_ref().map(|mcp_tools| {
+        mcp_tools
+            .iter()
+            .map(|(name, tool)| ToolRegistryPlanMcpTool {
+                name: name.clone(),
+                tool,
+            })
+            .collect::<Vec<_>>()
+    });
     let plan = build_tool_registry_plan(
         config,
         ToolRegistryPlanParams {
-            mcp_tools: mcp_tools.as_ref(),
-            app_tools: app_tools.as_deref(),
+            mcp_tools: mcp_tool_inputs.as_deref(),
+            deferred_mcp_tools: deferred_mcp_tools.as_deref(),
+            tool_namespaces: tool_namespaces.as_ref(),
             discoverable_tools: discoverable_tools.as_deref(),
             dynamic_tools,
             default_agent_type_description: DEFAULT_AGENT_TYPE_DESCRIPTION,
             wait_agent_timeouts: wait_agent_timeout_options(),
-            codex_apps_mcp_server_name: CODEX_APPS_MCP_SERVER_NAME,
         },
     );
     (plan.specs, plan.handlers)
@@ -1785,6 +2258,78 @@ fn mcp_tool(name: &str, description: &str, input_schema: serde_json::Value) -> r
         icons: None,
         meta: None,
     }
+}
+
+#[test]
+fn code_mode_augments_mcp_tool_descriptions_with_structured_output_sample() {
+    let model_info = model_info();
+    let mut features = Features::with_defaults();
+    features.enable(Feature::CodeMode);
+    features.enable(Feature::CodeModeOnly);
+    features.enable(Feature::UnifiedExec);
+    let available_models = Vec::new();
+    let tools_config = ToolsConfig::new(&ToolsConfigParams {
+        model_info: &model_info,
+        available_models: &available_models,
+        features: &features,
+        image_generation_tool_auth_allowed: true,
+        web_search_mode: Some(WebSearchMode::Cached),
+        session_source: SessionSource::Cli,
+        permission_profile: &PermissionProfile::Disabled,
+        windows_sandbox_level: WindowsSandboxLevel::Disabled,
+    });
+
+    let mut tool = mcp_tool(
+        "echo",
+        "Echo text",
+        serde_json::json!({
+            "type": "object",
+            "properties": {
+                "message": {"type": "string"}
+            },
+            "required": ["message"],
+            "additionalProperties": false
+        }),
+    );
+    tool.output_schema = Some(std::sync::Arc::new(rmcp::model::object(
+        serde_json::json!({
+            "type": "object",
+            "properties": {
+                "echo": {"type": "string"},
+                "env": {
+                    "anyOf": [
+                        {"type": "string"},
+                        {"type": "null"}
+                    ]
+                }
+            },
+            "required": ["echo", "env"],
+            "additionalProperties": false
+        }),
+    )));
+
+    let (tools, _) = build_specs(
+        &tools_config,
+        Some(HashMap::from([(
+            ToolName::namespaced("mcp__sample__", "echo"),
+            tool,
+        )])),
+        /*deferred_mcp_tools*/ None,
+        &[],
+    );
+
+    let ResponsesApiTool { description, .. } =
+        find_namespace_function_tool(&tools, "mcp__sample__", "echo");
+
+    assert_eq!(
+        description,
+        r#"Echo text
+
+exec tool declaration:
+```ts
+declare const tools: { mcp__sample__echo(args: { message: string; }): Promise<CallToolResult<{ echo: string; env: string | null; }>>; };
+```"#
+    );
 }
 
 fn discoverable_connector(id: &str, name: &str, description: &str) -> DiscoverableTool {
@@ -1806,16 +2351,15 @@ fn discoverable_connector(id: &str, name: &str, description: &str) -> Discoverab
     }))
 }
 
-fn app_tool<'a>(
+fn deferred_mcp_tool<'a>(
     tool_name: &'a str,
     tool_namespace: &'a str,
     server_name: &'a str,
     connector_name: Option<&'a str>,
     connector_description: Option<&'a str>,
-) -> ToolRegistryPlanAppTool<'a> {
-    ToolRegistryPlanAppTool {
-        tool_name,
-        tool_namespace,
+) -> ToolRegistryPlanDeferredTool<'a> {
+    ToolRegistryPlanDeferredTool {
+        name: ToolName::namespaced(tool_namespace, tool_name),
         server_name,
         connector_name,
         connector_description,
@@ -1855,10 +2399,8 @@ fn assert_lacks_tool_name(tools: &[ConfiguredToolSpec], expected_absent: &str) {
     );
 }
 
-fn request_user_input_tool_spec(default_mode_request_user_input: bool) -> ToolSpec {
-    create_request_user_input_tool(request_user_input_tool_description(
-        default_mode_request_user_input,
-    ))
+fn request_user_input_tool_spec(available_modes: &[ModeKind]) -> ToolSpec {
+    create_request_user_input_tool(request_user_input_tool_description(available_modes))
 }
 
 fn spawn_agent_tool_options(config: &ToolsConfig) -> SpawnAgentToolOptions<'_> {
@@ -1866,6 +2408,9 @@ fn spawn_agent_tool_options(config: &ToolsConfig) -> SpawnAgentToolOptions<'_> {
         available_models: &config.available_models,
         agent_type_description: agent_type_description(config, DEFAULT_AGENT_TYPE_DESCRIPTION),
         hide_agent_type_model_reasoning: config.hide_spawn_agent_metadata,
+        include_usage_hint: config.spawn_agent_usage_hint,
+        usage_hint_text: config.spawn_agent_usage_hint_text.clone(),
+        max_concurrent_threads_per_session: config.max_concurrent_threads_per_session,
     }
 }
 
@@ -1884,30 +2429,79 @@ fn find_tool<'a>(tools: &'a [ConfiguredToolSpec], expected_name: &str) -> &'a Co
         .unwrap_or_else(|| panic!("expected tool {expected_name}"))
 }
 
+fn find_namespace_function_tool<'a>(
+    tools: &'a [ConfiguredToolSpec],
+    expected_namespace: &str,
+    expected_name: &str,
+) -> &'a ResponsesApiTool {
+    let namespace_tool = find_tool(tools, expected_namespace);
+    let ToolSpec::Namespace(namespace) = &namespace_tool.spec else {
+        panic!("expected namespace tool {expected_namespace}");
+    };
+    namespace
+        .tools
+        .iter()
+        .find_map(|tool| match tool {
+            ResponsesApiNamespaceTool::Function(tool) if tool.name == expected_name => Some(tool),
+            _ => None,
+        })
+        .unwrap_or_else(|| panic!("expected tool {expected_namespace}{expected_name} in namespace"))
+}
+
+fn namespace_function_names(tools: &[ConfiguredToolSpec], expected_namespace: &str) -> Vec<String> {
+    let namespace_tool = find_tool(tools, expected_namespace);
+    let ToolSpec::Namespace(namespace) = &namespace_tool.spec else {
+        panic!("expected namespace tool {expected_namespace}");
+    };
+    namespace
+        .tools
+        .iter()
+        .map(|tool| match tool {
+            ResponsesApiNamespaceTool::Function(tool) => tool.name.clone(),
+        })
+        .collect()
+}
+
+fn expect_object_schema(
+    schema: &JsonSchema,
+) -> (&BTreeMap<String, JsonSchema>, Option<&Vec<String>>) {
+    assert_eq!(
+        schema.schema_type,
+        Some(JsonSchemaType::Single(JsonSchemaPrimitiveType::Object))
+    );
+    let properties = schema
+        .properties
+        .as_ref()
+        .expect("expected object properties");
+    (properties, schema.required.as_ref())
+}
+
+fn expect_string_description(schema: &JsonSchema) -> &str {
+    assert_eq!(
+        schema.schema_type,
+        Some(JsonSchemaType::Single(JsonSchemaPrimitiveType::String))
+    );
+    schema.description.as_deref().expect("expected description")
+}
+
 fn strip_descriptions_schema(schema: &mut JsonSchema) {
-    match schema {
-        JsonSchema::Boolean { description }
-        | JsonSchema::String { description }
-        | JsonSchema::Number { description } => {
-            *description = None;
-        }
-        JsonSchema::Array { items, description } => {
-            strip_descriptions_schema(items);
-            *description = None;
-        }
-        JsonSchema::Object {
-            properties,
-            required: _,
-            additional_properties,
-        } => {
-            for value in properties.values_mut() {
-                strip_descriptions_schema(value);
-            }
-            if let Some(AdditionalProperties::Schema(schema)) = additional_properties {
-                strip_descriptions_schema(schema);
-            }
+    if let Some(variants) = &mut schema.any_of {
+        for variant in variants {
+            strip_descriptions_schema(variant);
         }
     }
+    if let Some(items) = &mut schema.items {
+        strip_descriptions_schema(items);
+    }
+    if let Some(properties) = &mut schema.properties {
+        for value in properties.values_mut() {
+            strip_descriptions_schema(value);
+        }
+    }
+    if let Some(AdditionalProperties::Schema(schema)) = &mut schema.additional_properties {
+        strip_descriptions_schema(schema);
+    }
+    schema.description = None;
 }
 
 fn strip_descriptions_tool(spec: &mut ToolSpec) {
@@ -1915,6 +2509,17 @@ fn strip_descriptions_tool(spec: &mut ToolSpec) {
         ToolSpec::ToolSearch { parameters, .. } => strip_descriptions_schema(parameters),
         ToolSpec::Function(ResponsesApiTool { parameters, .. }) => {
             strip_descriptions_schema(parameters);
+        }
+        ToolSpec::Namespace(namespace) => {
+            for tool in &mut namespace.tools {
+                match tool {
+                    ResponsesApiNamespaceTool::Function(ResponsesApiTool {
+                        parameters, ..
+                    }) => {
+                        strip_descriptions_schema(parameters);
+                    }
+                }
+            }
         }
         ToolSpec::Freeform(FreeformTool { .. })
         | ToolSpec::LocalShell {}

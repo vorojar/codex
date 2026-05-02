@@ -1,8 +1,10 @@
 use crate::agent::AgentStatus;
-use crate::codex::Session;
-use crate::codex::TurnContext;
 use crate::config::Config;
+use crate::config::DEFAULT_MULTI_AGENT_V2_MIN_WAIT_TIMEOUT_MS;
+use crate::config::MAX_MULTI_AGENT_V2_WAIT_TIMEOUT_MS;
 use crate::function_tool::FunctionCallError;
+use crate::session::session::Session;
+use crate::session::turn_context::TurnContext;
 use crate::tools::context::FunctionToolOutput;
 use crate::tools::context::ToolOutput;
 use crate::tools::context::ToolPayload;
@@ -26,9 +28,9 @@ use serde_json::Value as JsonValue;
 use std::collections::HashMap;
 
 /// Minimum wait timeout to prevent tight polling loops from burning CPU.
-pub(crate) const MIN_WAIT_TIMEOUT_MS: i64 = 10_000;
+pub(crate) const MIN_WAIT_TIMEOUT_MS: i64 = DEFAULT_MULTI_AGENT_V2_MIN_WAIT_TIMEOUT_MS;
 pub(crate) const DEFAULT_WAIT_TIMEOUT_MS: i64 = 30_000;
-pub(crate) const MAX_WAIT_TIMEOUT_MS: i64 = 3600 * 1000;
+pub(crate) const MAX_WAIT_TIMEOUT_MS: i64 = MAX_MULTI_AGENT_V2_WAIT_TIMEOUT_MS;
 
 pub(crate) fn function_arguments(payload: ToolPayload) -> Result<String, FunctionCallError> {
     match payload {
@@ -201,12 +203,11 @@ pub(crate) fn parse_collab_input(
 /// skipping this helper and cloning stale config state directly can send the child agent out with
 /// the wrong provider or runtime policy.
 pub(crate) fn build_agent_spawn_config(
-    base_instructions: Option<&BaseInstructions>,
+    base_instructions: &BaseInstructions,
     turn: &TurnContext,
 ) -> Result<Config, FunctionCallError> {
     let mut config = build_agent_shared_config(turn)?;
-    config.base_instructions =
-        Some(base_instructions.map(|base_instructions| base_instructions.text.clone()));
+    config.base_instructions = Some(base_instructions.text.clone());
     Ok(config)
 }
 
@@ -225,14 +226,29 @@ fn build_agent_shared_config(turn: &TurnContext) -> Result<Config, FunctionCallE
     let base_config = turn.config.clone();
     let mut config = (*base_config).clone();
     config.model = Some(turn.model_info.slug.clone());
-    config.model_provider = turn.provider.clone();
-    config.model_reasoning_effort = turn.reasoning_effort;
+    config.model_provider = turn.provider.info().clone();
+    config.model_reasoning_effort = turn
+        .reasoning_effort
+        .or(turn.model_info.default_reasoning_level);
     config.model_reasoning_summary = Some(turn.reasoning_summary);
     config.developer_instructions = turn.developer_instructions.clone();
     config.compact_prompt = turn.compact_prompt.clone();
     apply_spawn_agent_runtime_overrides(&mut config, turn)?;
 
     Ok(config)
+}
+
+pub(crate) fn reject_full_fork_spawn_overrides(
+    agent_type: Option<&str>,
+    model: Option<&str>,
+    reasoning_effort: Option<ReasoningEffort>,
+) -> Result<(), FunctionCallError> {
+    if agent_type.is_some() || model.is_some() || reasoning_effort.is_some() {
+        return Err(FunctionCallError::RespondToModel(
+            "Full-history forked agents inherit the parent agent type, model, and reasoning effort; omit agent_type, model, and reasoning_effort, or spawn without a full-history fork.".to_string(),
+        ));
+    }
+    Ok(())
 }
 
 /// Copies runtime-only turn state onto a child config before it is handed to `AgentControl`.
@@ -255,13 +271,10 @@ pub(crate) fn apply_spawn_agent_runtime_overrides(
     config.cwd = turn.cwd.clone();
     config
         .permissions
-        .sandbox_policy
-        .set(turn.sandbox_policy.get().clone())
+        .set_permission_profile(turn.permission_profile())
         .map_err(|err| {
-            FunctionCallError::RespondToModel(format!("sandbox_policy is invalid: {err}"))
+            FunctionCallError::RespondToModel(format!("permission_profile is invalid: {err}"))
         })?;
-    config.permissions.file_system_sandbox_policy = turn.file_system_sandbox_policy.clone();
-    config.permissions.network_sandbox_policy = turn.network_sandbox_policy;
     Ok(())
 }
 

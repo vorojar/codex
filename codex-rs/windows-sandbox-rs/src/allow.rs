@@ -165,7 +165,6 @@ mod tests {
 
         let policy = SandboxPolicy::WorkspaceWrite {
             writable_roots: vec![AbsolutePathBuf::try_from(extra_root.as_path()).unwrap()],
-            read_only_access: Default::default(),
             network_access: false,
             allow_limited_git_writes: false,
             exclude_tmpdir_env_var: false,
@@ -193,7 +192,6 @@ mod tests {
 
         let policy = SandboxPolicy::WorkspaceWrite {
             writable_roots: vec![],
-            read_only_access: Default::default(),
             network_access: false,
             allow_limited_git_writes: false,
             exclude_tmpdir_env_var: true,
@@ -222,7 +220,6 @@ mod tests {
 
         let policy = SandboxPolicy::WorkspaceWrite {
             writable_roots: vec![],
-            read_only_access: Default::default(),
             network_access: false,
             allow_limited_git_writes: false,
             exclude_tmpdir_env_var: true,
@@ -251,7 +248,6 @@ mod tests {
 
         let policy = SandboxPolicy::WorkspaceWrite {
             writable_roots: vec![],
-            read_only_access: Default::default(),
             network_access: false,
             allow_limited_git_writes: false,
             exclude_tmpdir_env_var: true,
@@ -351,7 +347,6 @@ mod tests {
 
         let policy = SandboxPolicy::WorkspaceWrite {
             writable_roots: vec![],
-            read_only_access: Default::default(),
             network_access: false,
             allow_limited_git_writes: false,
             exclude_tmpdir_env_var: true,
@@ -381,7 +376,6 @@ mod tests {
 
         let policy = SandboxPolicy::WorkspaceWrite {
             writable_roots: vec![],
-            read_only_access: Default::default(),
             network_access: false,
             allow_limited_git_writes: false,
             exclude_tmpdir_env_var: true,

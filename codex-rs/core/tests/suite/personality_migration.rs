@@ -71,7 +71,6 @@ async fn write_rollout_with_user_event(dir: &Path, thread_id: ThreadId) -> io::R
             agent_role: None,
             model_provider: None,
             base_instructions: None,
-            developer_instructions: None,
             dynamic_tools: None,
             memory_mode: None,
         },
@@ -117,7 +116,6 @@ async fn write_rollout_with_meta_only(dir: &Path, thread_id: ThreadId) -> io::Re
             agent_role: None,
             model_provider: None,
             base_instructions: None,
-            developer_instructions: None,
             dynamic_tools: None,
             memory_mode: None,
         },
@@ -193,14 +191,14 @@ async fn no_marker_sessions_sets_personality() -> io::Result<()> {
 async fn no_marker_sessions_preserves_existing_config_fields() -> io::Result<()> {
     let temp = TempDir::new()?;
     write_session_with_user_event(temp.path()).await?;
-    tokio::fs::write(temp.path().join("config.toml"), "model = \"gpt-5-codex\"\n").await?;
+    tokio::fs::write(temp.path().join("config.toml"), "model = \"gpt-5.4\"\n").await?;
     let config_toml = read_config_toml(temp.path()).await?;
 
     let status = maybe_migrate_personality(temp.path(), &config_toml).await?;
 
     assert_eq!(status, PersonalityMigrationStatus::Applied);
     let persisted = read_config_toml(temp.path()).await?;
-    assert_eq!(persisted.model, Some("gpt-5-codex".to_string()));
+    assert_eq!(persisted.model, Some("gpt-5.4".to_string()));
     assert_eq!(persisted.personality, Some(Personality::Pragmatic));
     Ok(())
 }
