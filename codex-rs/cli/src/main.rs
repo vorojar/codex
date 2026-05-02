@@ -126,6 +126,9 @@ enum Subcommand {
     /// [experimental] Run the app server or related tooling.
     AppServer(AppServerCommand),
 
+    /// Serve Codex in a browser-backed terminal.
+    Web(codex_web_server::WebCommand),
+
     /// Launch the Codex desktop app (opens the app installer if missing).
     #[cfg(any(target_os = "macos", target_os = "windows"))]
     App(app_cmd::AppCommand),
@@ -887,6 +890,14 @@ async fn cli_main(arg0_paths: Arg0DispatchPaths) -> anyhow::Result<()> {
                     codex_app_server_protocol::generate_internal_json_schema(&gen_cli.out_dir)?;
                 }
             }
+        }
+        Some(Subcommand::Web(web_cli)) => {
+            reject_remote_mode_for_subcommand(
+                root_remote.as_deref(),
+                root_remote_auth_token_env.as_deref(),
+                "web",
+            )?;
+            codex_web_server::run(web_cli, root_config_overrides.raw_overrides.clone()).await?;
         }
         #[cfg(any(target_os = "macos", target_os = "windows"))]
         Some(Subcommand::App(app_cli)) => {
@@ -2447,6 +2458,30 @@ mod tests {
                     .expect("relative path should resolve")
             )
         );
+    }
+
+    #[test]
+    fn web_command_parses_forwarded_args() {
+        let cli = MultitoolCli::try_parse_from([
+            "codex",
+            "web",
+            "--listen",
+            "127.0.0.1:4321",
+            "--",
+            "--model",
+            "gpt-test",
+        ])
+        .expect("parse");
+        let Some(Subcommand::Web(web)) = cli.subcommand else {
+            panic!("expected web subcommand");
+        };
+        assert_eq!(
+            web.listen,
+            "127.0.0.1:4321"
+                .parse::<std::net::SocketAddr>()
+                .expect("socket address should parse")
+        );
+        assert_eq!(web.codex_args, vec!["--model", "gpt-test"]);
     }
 
     #[test]

@@ -1,0 +1,19 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Codex Web Terminal</title>
+  </head>
+  <body>
+    <main id="app" class="h-dvh bg-neutral-950 text-neutral-100">
+      <div id="terminal" class="h-full min-h-0"></div>
+      <div
+        id="status"
+        class="pointer-events-none fixed bottom-3 left-3 z-10 hidden max-w-[calc(100vw-1.5rem)] rounded border border-red-500/40 bg-neutral-950 px-3 py-2 text-sm text-red-200 shadow"
+        role="status"
+      ></div>
+    </main>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

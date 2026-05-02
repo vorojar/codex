@@ -1,0 +1,7 @@
+load("//:defs.bzl", "codex_rust_crate")
+
+codex_rust_crate(
+    name = "web-server",
+    crate_name = "codex_web_server",
+    compile_data = glob(["assets/**"]),
+)

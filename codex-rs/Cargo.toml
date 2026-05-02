@@ -104,6 +104,7 @@ members = [
     "thread-store",
     "uds",
     "codex-experimental-api-macros",
+    "web-server",
     "plugin",
     "model-provider",
 ]
@@ -223,6 +224,7 @@ codex-utils-stream-parser = { path = "utils/stream-parser" }
 codex-utils-string = { path = "utils/string" }
 codex-utils-template = { path = "utils/template" }
 codex-v8-poc = { path = "v8-poc" }
+codex-web-server = { path = "web-server" }
 codex-windows-sandbox = { path = "windows-sandbox-rs" }
 core_test_support = { path = "core/tests/common" }
 mcp_test_support = { path = "mcp-server/tests/common" }

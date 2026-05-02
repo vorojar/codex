@@ -2188,6 +2188,7 @@ dependencies = [
  "codex-utils-cargo-bin",
  "codex-utils-cli",
  "codex-utils-path",
+ "codex-web-server",
  "codex-windows-sandbox",
  "libc",
  "owo-colors",
@@ -3934,6 +3935,24 @@ version = "0.0.0"
 dependencies = [
  "pretty_assertions",
  "v8",
+]
+
+[[package]]
+name = "codex-web-server"
+version = "0.0.0"
+dependencies = [
+ "anyhow",
+ "axum",
+ "clap",
+ "codex-utils-pty",
+ "futures",
+ "include_dir",
+ "pretty_assertions",
+ "tokio",
+ "tokio-tungstenite",
+ "tracing",
+ "url",
+ "webbrowser",
 ]
 
 [[package]]

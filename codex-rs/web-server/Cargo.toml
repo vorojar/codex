@@ -1,0 +1,36 @@
+[package]
+name = "codex-web-server"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lib]
+name = "codex_web_server"
+path = "src/lib.rs"
+
+[lints]
+workspace = true
+
+[dependencies]
+anyhow = { workspace = true }
+axum = { workspace = true, default-features = false, features = [
+    "http1",
+    "tokio",
+    "ws",
+] }
+clap = { workspace = true, features = ["derive"] }
+codex-utils-pty = { workspace = true }
+futures = { workspace = true }
+include_dir = { workspace = true }
+tokio = { workspace = true, features = [
+    "macros",
+    "net",
+    "rt-multi-thread",
+] }
+tracing = { workspace = true, features = ["log"] }
+url = { workspace = true }
+webbrowser = { workspace = true }
+
+[dev-dependencies]
+pretty_assertions = { workspace = true }
+tokio-tungstenite = { workspace = true }
