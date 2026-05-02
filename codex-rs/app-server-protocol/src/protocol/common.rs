@@ -1846,6 +1846,7 @@ mod tests {
                 },
                 capabilities: Some(v1::InitializeCapabilities {
                     experimental_api: true,
+                    request_attestation: true,
                     opt_out_notification_methods: Some(vec![
                         "thread/started".to_string(),
                         "item/agentMessage/delta".to_string(),
@@ -1866,6 +1867,7 @@ mod tests {
                     },
                     "capabilities": {
                         "experimentalApi": true,
+                        "requestAttestation": true,
                         "optOutNotificationMethods": [
                             "thread/started",
                             "item/agentMessage/delta"
@@ -1891,6 +1893,7 @@ mod tests {
                 },
                 "capabilities": {
                     "experimentalApi": true,
+                    "requestAttestation": true,
                     "optOutNotificationMethods": [
                         "thread/started",
                         "item/agentMessage/delta"
@@ -1911,6 +1914,7 @@ mod tests {
                     },
                     capabilities: Some(v1::InitializeCapabilities {
                         experimental_api: true,
+                        request_attestation: true,
                         opt_out_notification_methods: Some(vec![
                             "thread/started".to_string(),
                             "item/agentMessage/delta".to_string(),

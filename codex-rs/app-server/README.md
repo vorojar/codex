@@ -1241,7 +1241,7 @@ When the client responds to `item/tool/requestUserInput`, the server emits `serv
 
 ### Attestation generation
 
-Desktop hosts that provide upstream attestation should handle the server-initiated `attestation/generate` request. App-server issues it just in time before ChatGPT Codex requests that forward `x-oai-attestation`; the client responds with either `{ "type": "token", "token": "...", "latencyMs": 12.5 }` or `{ "type": "failure", "failureReason": "...", "failureDetail": "...", "latencyMs": 12.5 }`. App-server converts that typed result into the legacy upstream header JSON shape, and desktop-hosted sessions synthesize a failure payload when the client is unavailable, times out, or returns invalid data so the backend still receives `x-oai-attestation`.
+Desktop hosts that provide upstream attestation should set `capabilities.requestAttestation` during `initialize` and handle the server-initiated `attestation/generate` request. App-server issues it just in time before ChatGPT Codex requests that forward `x-oai-attestation`; the client responds with `{ "headerValue": "v1.<opaque>" }`, where `headerValue` is the complete upstream header value. App-server treats that value as opaque and forwards it unchanged. If no initialized client opted into attestation, or if the opted-in client is unavailable, times out, or returns invalid data, app-server omits `x-oai-attestation` for that upstream request.
 
 ### MCP server elicitations
 
