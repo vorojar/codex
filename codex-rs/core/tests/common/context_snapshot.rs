@@ -1,6 +1,5 @@
 use regex_lite::Regex;
 use serde_json::Value;
-use similar::TextDiff;
 use std::sync::OnceLock;
 
 use crate::responses::ResponsesRequest;
@@ -243,12 +242,11 @@ pub fn format_labeled_items_snapshot(
     format!("Scenario: {scenario}\n\n{sections}")
 }
 
-/// Render a full unified diff between two captured `/responses` request inputs.
+/// Render a full unified diff between two captured `/responses` request bodies.
 ///
-/// Request-parity tests use this instead of comparing raw JSON so the snapshot explains exactly
-/// which model-visible history items changed while still applying the same redactions as the other
-/// context snapshots.
-pub fn format_request_input_diff_snapshot(
+/// Request-parity tests use this to review the entire JSON payload while still applying the same
+/// redactions as the other context snapshots.
+pub fn format_request_body_diff_snapshot(
     scenario: &str,
     before_title: &str,
     before_request: &ResponsesRequest,
@@ -256,18 +254,144 @@ pub fn format_request_input_diff_snapshot(
     after_request: &ResponsesRequest,
     options: &ContextSnapshotOptions,
 ) -> String {
-    let before = format_request_input_snapshot(before_request, options);
-    let after = format_request_input_snapshot(after_request, options);
-    let context_radius = before.lines().count().max(after.lines().count());
-    let mut diff = TextDiff::from_lines(&before, &after)
-        .unified_diff()
-        .context_radius(context_radius)
-        .header(before_title, after_title)
-        .to_string();
-    if !diff.ends_with('\n') {
+    let before = format_request_body_snapshot(before_request, options);
+    let after = format_request_body_snapshot(after_request, options);
+    let diff = format_full_unified_diff(before_title, &before, after_title, &after);
+    format!("Scenario: {scenario}\n\n{diff}")
+}
+
+fn format_request_body_snapshot(
+    request: &ResponsesRequest,
+    options: &ContextSnapshotOptions,
+) -> String {
+    let mut body = request.body_json();
+    canonicalize_json_snapshot_value(&mut body, options);
+    serde_json::to_string_pretty(&body).expect("request body should serialize")
+}
+
+fn canonicalize_json_snapshot_value(value: &mut Value, options: &ContextSnapshotOptions) {
+    match value {
+        Value::Array(values) => {
+            for value in values {
+                canonicalize_json_snapshot_value(value, options);
+            }
+        }
+        Value::Object(map) => {
+            for value in map.values_mut() {
+                canonicalize_json_snapshot_value(value, options);
+            }
+        }
+        Value::String(text) => {
+            *text = format_snapshot_json_string(text, options);
+        }
+        Value::Null | Value::Bool(_) | Value::Number(_) => {}
+    }
+}
+
+fn format_snapshot_json_string(text: &str, options: &ContextSnapshotOptions) -> String {
+    let normalized = match options.render_mode {
+        ContextSnapshotRenderMode::RedactedText
+        | ContextSnapshotRenderMode::KindWithTextPrefix { .. } => {
+            normalize_snapshot_line_endings(&canonicalize_snapshot_text(text))
+        }
+        ContextSnapshotRenderMode::FullText => normalize_snapshot_line_endings(text),
+        ContextSnapshotRenderMode::KindOnly => unreachable!(),
+    };
+    match options.render_mode {
+        ContextSnapshotRenderMode::KindWithTextPrefix { max_chars }
+            if normalized.chars().count() > max_chars =>
+        {
+            let prefix = normalized.chars().take(max_chars).collect::<String>();
+            format!("{prefix}...")
+        }
+        ContextSnapshotRenderMode::RedactedText
+        | ContextSnapshotRenderMode::FullText
+        | ContextSnapshotRenderMode::KindWithTextPrefix { .. } => normalized,
+        ContextSnapshotRenderMode::KindOnly => unreachable!(),
+    }
+}
+
+fn format_full_unified_diff(
+    before_title: &str,
+    before: &str,
+    after_title: &str,
+    after: &str,
+) -> String {
+    let before_lines = before.lines().collect::<Vec<&str>>();
+    let after_lines = after.lines().collect::<Vec<&str>>();
+    let mut diff = format!(
+        "--- {before_title}\n+++ {after_title}\n@@ -1,{} +1,{} @@\n",
+        before_lines.len(),
+        after_lines.len()
+    );
+    for line in diff_lines(before_lines.as_slice(), after_lines.as_slice()) {
+        match line {
+            DiffLine::Equal(text) => {
+                diff.push(' ');
+                diff.push_str(text);
+            }
+            DiffLine::Remove(text) => {
+                diff.push('-');
+                diff.push_str(text);
+            }
+            DiffLine::Add(text) => {
+                diff.push('+');
+                diff.push_str(text);
+            }
+        }
         diff.push('\n');
     }
-    format!("Scenario: {scenario}\n\n{diff}")
+    diff
+}
+
+enum DiffLine<'a> {
+    Equal(&'a str),
+    Remove(&'a str),
+    Add(&'a str),
+}
+
+fn diff_lines<'a>(before: &[&'a str], after: &[&'a str]) -> Vec<DiffLine<'a>> {
+    let after_len = after.len();
+    let mut lengths = vec![0usize; (before.len() + 1) * (after_len + 1)];
+    for before_index in (0..before.len()).rev() {
+        for after_index in (0..after.len()).rev() {
+            let offset = before_index * (after_len + 1) + after_index;
+            lengths[offset] = if before[before_index] == after[after_index] {
+                lengths[(before_index + 1) * (after_len + 1) + after_index + 1] + 1
+            } else {
+                lengths[(before_index + 1) * (after_len + 1) + after_index]
+                    .max(lengths[before_index * (after_len + 1) + after_index + 1])
+            };
+        }
+    }
+
+    let mut lines = Vec::new();
+    let mut before_index = 0usize;
+    let mut after_index = 0usize;
+    while before_index < before.len() && after_index < after.len() {
+        if before[before_index] == after[after_index] {
+            lines.push(DiffLine::Equal(before[before_index]));
+            before_index += 1;
+            after_index += 1;
+        } else if lengths[(before_index + 1) * (after_len + 1) + after_index]
+            >= lengths[before_index * (after_len + 1) + after_index + 1]
+        {
+            lines.push(DiffLine::Remove(before[before_index]));
+            before_index += 1;
+        } else {
+            lines.push(DiffLine::Add(after[after_index]));
+            after_index += 1;
+        }
+    }
+    while before_index < before.len() {
+        lines.push(DiffLine::Remove(before[before_index]));
+        before_index += 1;
+    }
+    while after_index < after.len() {
+        lines.push(DiffLine::Add(after[after_index]));
+        after_index += 1;
+    }
+    lines
 }
 
 fn format_snapshot_text(text: &str, options: &ContextSnapshotOptions) -> String {
@@ -350,7 +474,7 @@ fn canonicalize_snapshot_text(text: &str) -> String {
     {
         return format!("<COMPACTION_SUMMARY>\n{summary}");
     }
-    normalize_dynamic_snapshot_paths(text)
+    normalize_dynamic_snapshot_text(text)
 }
 
 fn is_capability_instruction_text(text: &str) -> bool {
@@ -359,14 +483,24 @@ fn is_capability_instruction_text(text: &str) -> bool {
         || text.starts_with(PLUGINS_INSTRUCTIONS_OPEN_TAG)
 }
 
-fn normalize_dynamic_snapshot_paths(text: &str) -> String {
+fn normalize_dynamic_snapshot_text(text: &str) -> String {
     static SYSTEM_SKILL_PATH_RE: OnceLock<Regex> = OnceLock::new();
+    static UUID_RE: OnceLock<Regex> = OnceLock::new();
     let system_skill_path_re = SYSTEM_SKILL_PATH_RE.get_or_init(|| {
         Regex::new(r"/[^)\n]*/skills/\.system/([^/\n]+)/SKILL\.md")
             .expect("system skill path regex should compile")
     });
-    system_skill_path_re
+    let uuid_re = UUID_RE.get_or_init(|| {
+        Regex::new(
+            r"\b[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\b",
+        )
+        .expect("uuid regex should compile")
+    });
+    let normalized_paths = system_skill_path_re
         .replace_all(text, "<SYSTEM_SKILLS_ROOT>/$1/SKILL.md")
+        .into_owned();
+    uuid_re
+        .replace_all(&normalized_paths, "<UUID>")
         .into_owned()
 }
 

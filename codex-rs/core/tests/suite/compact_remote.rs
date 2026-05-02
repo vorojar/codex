@@ -619,18 +619,18 @@ async fn remote_manual_compact_matches_last_sampling_request_after_varied_histor
         }),
     );
 
-    // Phase 5: then snapshot the model-visible input delta. The expected diff is append-only:
-    // final-turn reasoning and assistant output appear in compact because the normal request was
-    // captured before those outputs existed.
+    // Phase 5: then snapshot the whole JSON request-body delta. The expected model-visible input
+    // change is append-only: final-turn reasoning and assistant output appear in compact because
+    // the normal request was captured before those outputs existed.
     insta::assert_snapshot!(
         "remote_manual_compact_varied_history_request_diff",
-        context_snapshot::format_request_input_diff_snapshot(
+        context_snapshot::format_request_body_diff_snapshot(
             "After five varied turns, remote manual compaction reuses the last sampling request input and only appends the completed final-turn outputs.",
             "Last Normal /responses Request",
             &last_turn_request,
             "Remote /responses/compact Request",
             &compact_request,
-            &context_snapshot_options(),
+            &ContextSnapshotOptions::default(),
         )
     );
 
