@@ -135,7 +135,7 @@
           "type": "string"
         },
         "id": {
-          "$ref": "#/definitions/ServiceTierId"
+          "$ref": "#/definitions/ServiceTier"
         },
         "name": {
           "type": "string"
@@ -204,7 +204,8 @@
       ],
       "type": "object"
     },
-    "ServiceTierId": {
+    "ServiceTier": {
+      "description": "String-backed service tier identifier. Known values include `priority` and `flex`, but other backend-provided ids are allowed.",
       "type": "string"
     }
   },

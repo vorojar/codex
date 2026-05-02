@@ -340,7 +340,6 @@ use codex_protocol::ThreadId;
 use codex_protocol::config_types::CollaborationMode;
 use codex_protocol::config_types::ForcedLoginMethod;
 use codex_protocol::config_types::Personality;
-use codex_protocol::config_types::ServiceTier as CoreServiceTier;
 use codex_protocol::config_types::TrustLevel;
 use codex_protocol::config_types::WindowsSandboxLevel;
 use codex_protocol::dynamic_tools::DynamicToolSpec as CoreDynamicToolSpec;
@@ -2921,10 +2920,7 @@ impl CodexMessageProcessor {
                 thread: thread.clone(),
                 model: config_snapshot.model,
                 model_provider: config_snapshot.model_provider_id,
-                service_tier: config_snapshot
-                    .service_tier
-                    .as_ref()
-                    .and_then(|service_tier| ServiceTier::try_from(service_tier).ok()),
+                service_tier: config_snapshot.service_tier,
                 cwd: config_snapshot.cwd,
                 instruction_sources,
                 approval_policy: config_snapshot.approval_policy.into(),
@@ -2972,7 +2968,7 @@ impl CodexMessageProcessor {
         &self,
         model: Option<String>,
         model_provider: Option<String>,
-        service_tier: Option<Option<codex_protocol::config_types::ServiceTier>>,
+        service_tier: Option<Option<ServiceTier>>,
         cwd: Option<String>,
         approval_policy: Option<codex_app_server_protocol::AskForApproval>,
         approvals_reviewer: Option<codex_app_server_protocol::ApprovalsReviewer>,
@@ -3026,8 +3022,8 @@ impl CodexMessageProcessor {
 
     fn resolve_service_tier_override(
         service_tier: Option<Option<ServiceTier>>,
-    ) -> Option<Option<CoreServiceTier>> {
-        service_tier.map(|service_tier| service_tier.map(Into::into))
+    ) -> Option<Option<ServiceTier>> {
+        service_tier
     }
 
     async fn thread_archive(&self, request_id: ConnectionRequestId, params: ThreadArchiveParams) {
@@ -4510,10 +4506,7 @@ impl CodexMessageProcessor {
                     thread,
                     model: session_configured.model,
                     model_provider: session_configured.model_provider_id,
-                    service_tier: session_configured
-                        .service_tier
-                        .as_ref()
-                        .and_then(|service_tier| ServiceTier::try_from(service_tier).ok()),
+                    service_tier: session_configured.service_tier,
                     cwd: session_configured.cwd,
                     instruction_sources,
                     approval_policy: session_configured.approval_policy.into(),
@@ -5148,10 +5141,7 @@ impl CodexMessageProcessor {
                 thread: thread.clone(),
                 model: session_configured.model,
                 model_provider: session_configured.model_provider_id,
-                service_tier: session_configured
-                    .service_tier
-                    .as_ref()
-                    .and_then(|service_tier| ServiceTier::try_from(service_tier).ok()),
+                service_tier: session_configured.service_tier,
                 cwd: session_configured.cwd,
                 instruction_sources,
                 approval_policy: session_configured.approval_policy.into(),
@@ -8509,9 +8499,7 @@ async fn handle_pending_thread_resume_request(
         thread,
         model,
         model_provider: model_provider_id,
-        service_tier: service_tier
-            .as_ref()
-            .and_then(|service_tier| ServiceTier::try_from(service_tier).ok()),
+        service_tier,
         cwd,
         instruction_sources,
         approval_policy: approval_policy.into(),
@@ -8681,15 +8669,11 @@ fn collect_resume_override_mismatches(
         ));
     }
     if let Some(requested_service_tier) = request.service_tier.as_ref()
-        && requested_service_tier.map(CoreServiceTier::from).as_ref()
-            != config_snapshot.service_tier.as_ref()
+        && requested_service_tier != &config_snapshot.service_tier
     {
-        let active_service_tier = config_snapshot
-            .service_tier
-            .as_ref()
-            .and_then(|service_tier| ServiceTier::try_from(service_tier).ok());
         mismatch_details.push(format!(
-            "service_tier requested={requested_service_tier:?} active={active_service_tier:?}"
+            "service_tier requested={requested_service_tier:?} active={:?}",
+            config_snapshot.service_tier
         ));
     }
     if let Some(requested_cwd) = request.cwd.as_deref() {
@@ -10545,6 +10529,8 @@ mod tests {
 
     #[test]
     fn collect_resume_override_mismatches_includes_service_tier() {
+        use codex_protocol::config_types::SERVICE_TIER_PRIORITY;
+
         let cwd = test_path_buf("/tmp").abs();
         let request = ThreadResumeParams {
             thread_id: "thread-1".to_string(),
@@ -10552,7 +10538,7 @@ mod tests {
             path: None,
             model: None,
             model_provider: None,
-            service_tier: Some(Some(ServiceTier::Fast)),
+            service_tier: Some(Some(SERVICE_TIER_PRIORITY.into())),
             cwd: None,
             approval_policy: None,
             approvals_reviewer: None,

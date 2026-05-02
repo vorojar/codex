@@ -11323,7 +11323,7 @@
             "type": "string"
           },
           "id": {
-            "$ref": "#/definitions/v2/ServiceTierId"
+            "$ref": "#/definitions/v2/ServiceTier"
           },
           "name": {
             "type": "string"
@@ -14258,13 +14258,7 @@
         "type": "object"
       },
       "ServiceTier": {
-        "enum": [
-          "fast",
-          "flex"
-        ],
-        "type": "string"
-      },
-      "ServiceTierId": {
+        "description": "String-backed service tier identifier. Known values include `priority` and `flex`, but other backend-provided ids are allowed.",
         "type": "string"
       },
       "SessionMigration": {

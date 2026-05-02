@@ -3519,16 +3519,16 @@ class ServerRequestResolvedNotification(BaseModel):
     thread_id: Annotated[str, Field(alias="threadId")]
 
 
-class ServiceTier(Enum):
-    fast = "fast"
-    flex = "flex"
-
-
-class ServiceTierId(RootModel[str]):
+class ServiceTier(RootModel[str]):
     model_config = ConfigDict(
         populate_by_name=True,
     )
-    root: str
+    root: Annotated[
+        str,
+        Field(
+            description="String-backed service tier identifier. Known values include `priority` and `flex`, but other backend-provided ids are allowed."
+        ),
+    ]
 
 
 class SessionMigration(BaseModel):
@@ -6326,7 +6326,7 @@ class ModelServiceTier(BaseModel):
         populate_by_name=True,
     )
     description: str
-    id: ServiceTierId
+    id: ServiceTier
     name: str
 
 

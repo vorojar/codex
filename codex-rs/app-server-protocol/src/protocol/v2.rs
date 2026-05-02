@@ -25,10 +25,8 @@ use codex_protocol::config_types::ForcedLoginMethod;
 use codex_protocol::config_types::ModeKind;
 use codex_protocol::config_types::Personality;
 use codex_protocol::config_types::ReasoningSummary;
-use codex_protocol::config_types::SERVICE_TIER_FLEX;
-use codex_protocol::config_types::SERVICE_TIER_PRIORITY;
 use codex_protocol::config_types::SandboxMode as CoreSandboxMode;
-use codex_protocol::config_types::ServiceTier as CoreServiceTier;
+pub use codex_protocol::config_types::ServiceTier;
 use codex_protocol::config_types::Verbosity;
 use codex_protocol::config_types::WebSearchMode;
 use codex_protocol::config_types::WebSearchToolConfig;
@@ -123,60 +121,6 @@ use serde_json::Value as JsonValue;
 use serde_with::serde_as;
 use thiserror::Error;
 use ts_rs::TS;
-
-#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, JsonSchema, TS)]
-#[serde(rename_all = "lowercase")]
-#[ts(export)]
-pub enum ServiceTier {
-    Fast,
-    Flex,
-}
-
-impl From<ServiceTier> for CoreServiceTier {
-    fn from(value: ServiceTier) -> Self {
-        match value {
-            ServiceTier::Fast => SERVICE_TIER_PRIORITY.into(),
-            ServiceTier::Flex => SERVICE_TIER_FLEX.into(),
-        }
-    }
-}
-
-impl TryFrom<&CoreServiceTier> for ServiceTier {
-    type Error = ();
-
-    fn try_from(value: &CoreServiceTier) -> Result<Self, Self::Error> {
-        if value.as_ref() == SERVICE_TIER_PRIORITY {
-            Ok(ServiceTier::Fast)
-        } else if value.as_ref() == SERVICE_TIER_FLEX {
-            Ok(ServiceTier::Flex)
-        } else {
-            Err(())
-        }
-    }
-}
-
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, JsonSchema, TS)]
-#[serde(transparent)]
-#[ts(type = "string", export_to = "v2/")]
-pub struct ServiceTierId(pub String);
-
-impl From<ServiceTierId> for CoreServiceTier {
-    fn from(value: ServiceTierId) -> Self {
-        Self::from(value.0)
-    }
-}
-
-impl From<CoreServiceTier> for ServiceTierId {
-    fn from(value: CoreServiceTier) -> Self {
-        Self(value.to_string())
-    }
-}
-
-impl From<&CoreServiceTier> for ServiceTierId {
-    fn from(value: &CoreServiceTier) -> Self {
-        Self(value.to_string())
-    }
-}
 
 // Macro to declare a camelCased API v2 enum mirroring a core enum which
 // tends to use either snake_case or kebab-case.
@@ -2570,7 +2514,7 @@ impl From<CoreModelAvailabilityNux> for ModelAvailabilityNux {
 #[serde(rename_all = "camelCase")]
 #[ts(export_to = "v2/")]
 pub struct ModelServiceTier {
-    pub id: ServiceTierId,
+    pub id: ServiceTier,
     pub name: String,
     pub description: String,
 }
@@ -2578,7 +2522,7 @@ pub struct ModelServiceTier {
 impl From<CoreModelServiceTier> for ModelServiceTier {
     fn from(value: CoreModelServiceTier) -> Self {
         Self {
-            id: value.id.into(),
+            id: value.id,
             name: value.name,
             description: value.description,
         }
@@ -2588,7 +2532,7 @@ impl From<CoreModelServiceTier> for ModelServiceTier {
 impl From<ModelServiceTier> for CoreModelServiceTier {
     fn from(value: ModelServiceTier) -> Self {
         Self {
-            id: value.id.into(),
+            id: value.id,
             name: value.name,
             description: value.description,
         }

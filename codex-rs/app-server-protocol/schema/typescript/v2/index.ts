@@ -242,7 +242,6 @@ export type { ModelAvailabilityNux } from "./ModelAvailabilityNux";
 export type { ModelListParams } from "./ModelListParams";
 export type { ModelListResponse } from "./ModelListResponse";
 export type { ModelServiceTier } from "./ModelServiceTier";
-export type { ServiceTierId } from "./ServiceTierId";
 export type { ModelProviderCapabilitiesReadParams } from "./ModelProviderCapabilitiesReadParams";
 export type { ModelProviderCapabilitiesReadResponse } from "./ModelProviderCapabilitiesReadResponse";
 export type { ModelRerouteReason } from "./ModelRerouteReason";
