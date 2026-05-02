@@ -1171,7 +1171,7 @@ async fn reload_user_config_layer_refreshes_hooks() -> anyhow::Result<()> {
     .await?;
     let codex_home = session.codex_home().await;
     std::fs::create_dir_all(&codex_home)?;
-    let config_toml_path = AbsolutePathBuf::try_from(codex_home.join(CONFIG_TOML_FILE))?;
+    let config_toml_path = codex_home.join(CONFIG_TOML_FILE);
     let user_config: codex_config::TomlValue = serde_json::from_value(serde_json::json!({
         "hooks": {
             "SessionStart": [{

@@ -371,13 +371,10 @@ async fn execve_permission_request_hook_short_circuits_prompt() -> anyhow::Resul
         .to_string(),
     )
     .context("write hooks.json")?;
-    let config_toml_path = AbsolutePathBuf::try_from(
-        turn_context
-            .config
-            .codex_home
-            .join(codex_config::CONFIG_TOML_FILE),
-    )
-    .context("build config.toml path")?;
+    let config_toml_path = turn_context
+        .config
+        .codex_home
+        .join(codex_config::CONFIG_TOML_FILE);
     let hook_list = codex_hooks::list_hooks(HooksConfig {
         feature_enabled: true,
         config_layer_stack: Some(turn_context.config.config_layer_stack.clone()),
