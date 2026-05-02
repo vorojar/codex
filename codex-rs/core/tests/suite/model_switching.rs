@@ -295,7 +295,10 @@ async fn service_tier_change_is_applied_on_next_http_turn() -> Result<()> {
     )
     .await;
 
-    let test = test_codex().build(&server).await?;
+    let test = test_codex()
+        .with_auth(CodexAuth::create_dummy_chatgpt_auth_for_testing())
+        .build(&server)
+        .await?;
 
     test.submit_turn_with_service_tier("fast turn", Some(ServiceTier::Fast))
         .await?;
@@ -321,7 +324,10 @@ async fn flex_service_tier_is_applied_to_http_turn() -> Result<()> {
     let server = start_mock_server().await;
     let resp_mock = mount_sse_once(&server, sse_completed("resp-1")).await;
 
-    let test = test_codex().build(&server).await?;
+    let test = test_codex()
+        .with_auth(CodexAuth::create_dummy_chatgpt_auth_for_testing())
+        .build(&server)
+        .await?;
 
     test.submit_turn_with_service_tier("flex turn", Some(ServiceTier::Flex))
         .await?;

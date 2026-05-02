@@ -637,6 +637,81 @@ async fn remote_manual_compact_matches_last_sampling_request_after_varied_histor
     Ok(())
 }
 
+async fn assert_remote_compact_service_tier_for_auth(
+    auth: CodexAuth,
+    expected_service_tier: Option<&str>,
+) -> Result<()> {
+    // Configure fast mode in both cases so auth mode is the only reason for the wire shape to
+    // include or omit `service_tier`.
+    let harness =
+        TestCodexHarness::with_builder(test_codex().with_auth(auth).with_config(|config| {
+            config.service_tier = Some(ServiceTier::Fast);
+        }))
+        .await?;
+    let codex = harness.test().codex.clone();
+    let responses_mock = responses::mount_sse_once(
+        harness.server(),
+        responses::sse(vec![
+            responses::ev_assistant_message("service-tier-assistant", "SERVICE_TIER_REPLY"),
+            responses::ev_completed("service-tier-response"),
+        ]),
+    )
+    .await;
+    let compact_mock =
+        responses::mount_compact_user_history_with_summary_once(harness.server(), "SUMMARY").await;
+
+    codex
+        .submit(Op::UserInput {
+            environments: None,
+            items: vec![UserInput::Text {
+                text: "SERVICE_TIER_USER".to_string(),
+                text_elements: Vec::new(),
+            }],
+            final_output_json_schema: None,
+            responsesapi_client_metadata: None,
+        })
+        .await?;
+    wait_for_turn_complete(&codex).await;
+
+    codex.submit(Op::Compact).await?;
+    wait_for_turn_complete(&codex).await;
+
+    let normal_body = responses_mock.single_request().body_json();
+    let compact_body = compact_mock.single_request().body_json();
+
+    // Assert the normal sampling and remote compact requests together so parity drift is obvious.
+    assert_eq!(
+        json!({
+            "normal_responses_service_tier": normal_body
+                .get("service_tier")
+                .and_then(Value::as_str),
+            "remote_compact_service_tier": compact_body
+                .get("service_tier")
+                .and_then(Value::as_str),
+        }),
+        json!({
+            "normal_responses_service_tier": expected_service_tier,
+            "remote_compact_service_tier": expected_service_tier,
+        }),
+    );
+
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn remote_compact_service_tier_matches_auth_mode() -> Result<()> {
+    skip_if_no_network!(Ok(()));
+
+    assert_remote_compact_service_tier_for_auth(CodexAuth::from_api_key("dummy"), None).await?;
+    assert_remote_compact_service_tier_for_auth(
+        CodexAuth::create_dummy_chatgpt_auth_for_testing(),
+        Some("priority"),
+    )
+    .await?;
+
+    Ok(())
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn remote_compact_filters_deferred_dynamic_tools() -> Result<()> {
     skip_if_no_network!(Ok(()));

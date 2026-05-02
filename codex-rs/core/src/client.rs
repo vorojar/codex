@@ -459,6 +459,7 @@ impl ModelClient {
             effort,
             summary,
             service_tier,
+            client_setup.auth.as_ref(),
         )?;
         // Phase 1 builds the same request body that a normal `/responses` turn would send. Phase 2
         // clears only the fields the compact endpoint currently rejects; the rest of the body stays
@@ -648,6 +649,7 @@ impl ModelClient {
         effort: Option<ReasoningEffortConfig>,
         summary: ReasoningSummaryConfig,
         service_tier: Option<ServiceTier>,
+        auth: Option<&CodexAuth>,
     ) -> Result<ResponsesApiRequest> {
         let instructions = &prompt.base_instructions.text;
         let input = prompt.get_formatted_input();
@@ -687,6 +689,14 @@ impl ModelClient {
             prompt.output_schema_strict,
         );
         let prompt_cache_key = Some(self.state.conversation_id.to_string());
+        // API-key requests reject `service_tier`; keep the shared builder responsible so
+        // `/responses` and `/responses/compact` omit it the same way.
+        let service_tier = match (service_tier, auth.is_some_and(CodexAuth::is_api_key_auth)) {
+            (_, true) => None,
+            (Some(ServiceTier::Fast), false) => Some("priority".to_string()),
+            (Some(service_tier), false) => Some(service_tier.to_string()),
+            (None, false) => None,
+        };
         let request = ResponsesApiRequest {
             model: model_info.slug.clone(),
             instructions: instructions.clone(),
@@ -697,11 +707,7 @@ impl ModelClient {
             store: Some(provider.is_azure_responses_endpoint()),
             stream: Some(true),
             include: Some(include),
-            service_tier: match service_tier {
-                Some(ServiceTier::Fast) => Some("priority".to_string()),
-                Some(service_tier) => Some(service_tier.to_string()),
-                None => None,
-            },
+            service_tier,
             prompt_cache_key,
             text,
             client_metadata: Some(HashMap::from([(
@@ -1192,6 +1198,7 @@ impl ModelClientSession {
                 effort,
                 summary,
                 service_tier,
+                client_setup.auth.as_ref(),
             )?;
             let inference_trace_attempt = inference_trace.start_attempt();
             inference_trace_attempt.record_started(&request);
@@ -1302,6 +1309,7 @@ impl ModelClientSession {
                 effort,
                 summary,
                 service_tier,
+                client_setup.auth.as_ref(),
             )?;
             let mut ws_payload = ResponseCreateWsRequest {
                 client_metadata: response_create_client_metadata(
