@@ -109,6 +109,7 @@ pub(crate) struct AnyToolResult {
     pub(crate) payload: ToolPayload,
     pub(crate) result: Box<dyn ToolOutput>,
     pub(crate) post_tool_use_payload: Option<PostToolUsePayload>,
+    pub(crate) model_visible_override: Option<FunctionToolOutput>,
 }
 
 impl AnyToolResult {
@@ -117,9 +118,13 @@ impl AnyToolResult {
             call_id,
             payload,
             result,
+            model_visible_override,
             ..
         } = self;
-        result.to_response_item(&call_id, &payload)
+        model_visible_override.map_or_else(
+            || result.to_response_item(&call_id, &payload),
+            |override_output| override_output.to_response_item(&call_id, &payload),
+        )
     }
 
     pub(crate) fn code_mode_result(self) -> serde_json::Value {
@@ -207,6 +212,7 @@ where
                 payload,
                 result: Box::new(output),
                 post_tool_use_payload,
+                model_visible_override: None,
             })
         })
     }
@@ -481,7 +487,7 @@ impl ToolRegistry {
             } else if let Some(updated_tool_output) = &outcome.updated_tool_output {
                 let mut guard = response_cell.lock().await;
                 if let Some(result) = guard.as_mut() {
-                    result.result = Box::new(FunctionToolOutput::from_text(
+                    result.model_visible_override = Some(FunctionToolOutput::from_text(
                         post_tool_use_output_to_model_text(updated_tool_output),
                         Some(true),
                     ));
@@ -511,6 +517,10 @@ impl ToolRegistry {
                     &result.call_id,
                     &result.payload,
                     result.result.as_ref(),
+                    result
+                        .model_visible_override
+                        .as_ref()
+                        .map(|override_output| override_output as &dyn ToolOutput),
                 );
                 Ok(result)
             }

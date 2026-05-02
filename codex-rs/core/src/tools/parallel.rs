@@ -179,6 +179,7 @@ impl ToolCallRuntime {
                 message: Self::abort_message(call, secs),
             }),
             post_tool_use_payload: None,
+            model_visible_override: None,
         }
     }
 
