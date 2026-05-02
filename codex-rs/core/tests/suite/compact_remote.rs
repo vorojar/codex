@@ -131,25 +131,6 @@ fn format_labeled_requests_snapshot(
     )
 }
 
-fn format_request_input_diff_snapshot(
-    scenario: &str,
-    before_title: &str,
-    before_request: &responses::ResponsesRequest,
-    after_title: &str,
-    after_request: &responses::ResponsesRequest,
-) -> String {
-    // Keep compact parity snapshots on the same rendering path as the broader context snapshots,
-    // but show a unified diff because this test cares about the precise append-only delta.
-    context_snapshot::format_request_input_diff_snapshot(
-        scenario,
-        before_title,
-        before_request,
-        after_title,
-        after_request,
-        &context_snapshot_options(),
-    )
-}
-
 fn compacted_summary_only_output(summary: &str) -> Vec<ResponseItem> {
     vec![ResponseItem::Compaction {
         encrypted_content: summary_with_prefix(summary),
@@ -643,12 +624,13 @@ async fn remote_manual_compact_matches_last_sampling_request_after_varied_histor
     // captured before those outputs existed.
     insta::assert_snapshot!(
         "remote_manual_compact_varied_history_request_diff",
-        format_request_input_diff_snapshot(
+        context_snapshot::format_request_input_diff_snapshot(
             "After five varied turns, remote manual compaction reuses the last sampling request input and only appends the completed final-turn outputs.",
             "Last Normal /responses Request",
             &last_turn_request,
             "Remote /responses/compact Request",
             &compact_request,
+            &context_snapshot_options(),
         )
     );
 
