@@ -5,13 +5,11 @@
 //! dispatch step and records the staged entry once the command has been handled, so
 //! slash-command recall follows the same submitted-input rule as ordinary text.
 
+use super::goal_validation::GoalObjectiveValidationSource;
 use super::*;
 use crate::app_event::ThreadGoalSetMode;
-use crate::bottom_pane::ChatComposer;
 use crate::bottom_pane::prompt_args::parse_slash_name;
 use crate::bottom_pane::slash_commands;
-use codex_protocol::num_format::format_with_separators;
-use codex_protocol::protocol::MAX_THREAD_GOAL_OBJECTIVE_CHARS;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum SlashCommandDispatchSource {
@@ -34,7 +32,6 @@ const SIDE_REVIEW_UNAVAILABLE_MESSAGE: &str =
 const SIDE_SLASH_COMMAND_UNAVAILABLE_HINT: &str = "Press Esc to return to the main thread first.";
 const GOAL_USAGE: &str = "Usage: /goal <objective>";
 const GOAL_USAGE_HINT: &str = "Example: /goal improve benchmark coverage";
-const GOAL_TOO_LONG_FILE_HINT: &str = "Put longer instructions in a file and refer to that file in the goal, for example: /goal follow the instructions in docs/goal.md.";
 
 impl ChatWidget {
     /// Dispatch a bare slash command and record its staged local-history entry.
@@ -676,7 +673,11 @@ impl ChatWidget {
                     }
                     return;
                 }
-                if !self.goal_objective_is_allowed(objective, source) {
+                let validation_source = match source {
+                    SlashCommandDispatchSource::Live => GoalObjectiveValidationSource::Live,
+                    SlashCommandDispatchSource::Queued => GoalObjectiveValidationSource::Queued,
+                };
+                if !self.goal_objective_is_allowed(objective, validation_source) {
                     return;
                 }
                 let Some(thread_id) = self.thread_id else {
@@ -744,51 +745,6 @@ impl ChatWidget {
         if source == SlashCommandDispatchSource::Live && cmd != SlashCommand::Goal {
             self.bottom_pane.drain_pending_submission_state();
         }
-    }
-
-    fn goal_objective_with_pending_pastes_is_allowed(
-        &mut self,
-        args: &str,
-        text_elements: &[TextElement],
-    ) -> bool {
-        let pending_pastes = self.bottom_pane.composer_pending_pastes();
-        let objective_chars = if pending_pastes.is_empty() {
-            args.trim().chars().count()
-        } else {
-            let (expanded, _) =
-                ChatComposer::expand_pending_pastes(args, text_elements.to_vec(), &pending_pastes);
-            expanded.trim().chars().count()
-        };
-        self.goal_objective_char_count_is_allowed(objective_chars, SlashCommandDispatchSource::Live)
-    }
-
-    fn goal_objective_is_allowed(
-        &mut self,
-        objective: &str,
-        source: SlashCommandDispatchSource,
-    ) -> bool {
-        self.goal_objective_char_count_is_allowed(objective.chars().count(), source)
-    }
-
-    fn goal_objective_char_count_is_allowed(
-        &mut self,
-        actual_chars: usize,
-        source: SlashCommandDispatchSource,
-    ) -> bool {
-        if actual_chars <= MAX_THREAD_GOAL_OBJECTIVE_CHARS {
-            return true;
-        }
-        let actual_chars = format_with_separators(actual_chars as i64);
-        let max_chars = format_with_separators(MAX_THREAD_GOAL_OBJECTIVE_CHARS as i64);
-        self.add_error_message(format!(
-            "Goal objective is too long: {actual_chars} characters. Limit: {max_chars} characters. {GOAL_TOO_LONG_FILE_HINT}"
-        ));
-        if source == SlashCommandDispatchSource::Live {
-            self.bottom_pane
-                .set_composer_text(String::new(), Vec::new(), Vec::new());
-            self.bottom_pane.drain_pending_submission_state();
-        }
-        false
     }
 
     pub(super) fn submit_queued_slash_prompt(&mut self, user_message: UserMessage) -> QueueDrain {
