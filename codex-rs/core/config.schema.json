@@ -1067,6 +1067,13 @@
       ],
       "description": "One action binding value in config.\n\nThis accepts either:\n\n1. A single key spec string (`\"ctrl-a\"`). 2. A list of key spec strings (`[\"ctrl-a\", \"alt-a\"]`).\n\nAn empty list explicitly unbinds the action in that scope. Because an explicit empty list is still a configured value, runtime resolution must not fall through to global or built-in defaults for that action."
     },
+    "LocalImageResizePolicy": {
+      "enum": [
+        "resize_to_fit",
+        "original"
+      ],
+      "type": "string"
+    },
     "MarketplaceConfig": {
       "additionalProperties": false,
       "properties": {
@@ -4146,6 +4153,20 @@
     "instructions": {
       "description": "System instructions.",
       "type": "string"
+    },
+    "local_image_max_dimension": {
+      "description": "Maximum width or height for local image files when `local_image_resize_policy` is `resize_to_fit`.",
+      "format": "uint32",
+      "minimum": 1.0,
+      "type": "integer"
+    },
+    "local_image_resize_policy": {
+      "allOf": [
+        {
+          "$ref": "#/definitions/LocalImageResizePolicy"
+        }
+      ],
+      "description": "Controls how local image files are transformed before sending them to the model."
     },
     "log_dir": {
       "allOf": [

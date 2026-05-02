@@ -616,6 +616,8 @@ Turns attach user input (text or images) to a thread and trigger Codex generatio
 - `{"type":"image","url":"https://…png"}`
 - `{"type":"localImage","path":"/tmp/screenshot.png"}`
 
+Local image files use the thread config keys `local_image_resize_policy` (`"resize_to_fit"` or `"original"`) and `local_image_max_dimension` (default `2048`) before Codex sends image data to the model.
+
 You can optionally specify config overrides on the new turn. If specified, these settings become the default for subsequent turns on the same thread. `outputSchema` applies only to the current turn. Experimental `environments` is turn-scoped: omit it to inherit the thread's sticky environments, pass `[]` to run the turn with no environments, or pass explicit environment ids to override the sticky selection for this turn only.
 
 `approvalsReviewer` accepts:

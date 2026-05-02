@@ -135,7 +135,7 @@ impl ToolHandler for ViewImageHandler {
         let image_mode = if use_original_detail {
             PromptImageMode::Original
         } else {
-            PromptImageMode::ResizeToFit
+            turn.config.local_image.prompt_image_mode()
         };
         let image_detail = Some(if use_original_detail {
             ImageDetail::Original

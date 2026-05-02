@@ -39,8 +39,16 @@ impl EncodedImage {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum PromptImageMode {
-    ResizeToFit,
+    ResizeToFit { max_dimension: u32 },
     Original,
+}
+
+impl Default for PromptImageMode {
+    fn default() -> Self {
+        Self::ResizeToFit {
+            max_dimension: MAX_DIMENSION,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -77,30 +85,17 @@ pub fn load_for_prompt_bytes(
             .map_err(|source| ImageProcessingError::decode_error(&path_buf, source))?;
 
         let (width, height) = dynamic.dimensions();
-
-        let encoded = if mode == PromptImageMode::Original
-            || (width <= MAX_DIMENSION && height <= MAX_DIMENSION)
-        {
-            if let Some(format) = format.filter(|format| can_preserve_source_bytes(*format)) {
-                let mime = format_to_mime(format);
-                EncodedImage {
-                    bytes: file_bytes,
-                    mime,
-                    width,
-                    height,
-                }
-            } else {
-                let (bytes, output_format) = encode_image(&dynamic, ImageFormat::Png)?;
-                let mime = format_to_mime(output_format);
-                EncodedImage {
-                    bytes,
-                    mime,
-                    width,
-                    height,
-                }
+        let resize_to = match mode {
+            PromptImageMode::ResizeToFit { max_dimension }
+                if width > max_dimension || height > max_dimension =>
+            {
+                Some(max_dimension)
             }
-        } else {
-            let resized = dynamic.resize(MAX_DIMENSION, MAX_DIMENSION, FilterType::Triangle);
+            PromptImageMode::ResizeToFit { .. } | PromptImageMode::Original => None,
+        };
+
+        let encoded = if let Some(max_dimension) = resize_to {
+            let resized = dynamic.resize(max_dimension, max_dimension, FilterType::Triangle);
             let target_format = format
                 .filter(|format| can_preserve_source_bytes(*format))
                 .unwrap_or(ImageFormat::Png);
@@ -111,6 +106,23 @@ pub fn load_for_prompt_bytes(
                 mime,
                 width: resized.width(),
                 height: resized.height(),
+            }
+        } else if let Some(format) = format.filter(|format| can_preserve_source_bytes(*format)) {
+            let mime = format_to_mime(format);
+            EncodedImage {
+                bytes: file_bytes,
+                mime,
+                width,
+                height,
+            }
+        } else {
+            let (bytes, output_format) = encode_image(&dynamic, ImageFormat::Png)?;
+            let mime = format_to_mime(output_format);
+            EncodedImage {
+                bytes,
+                mime,
+                width,
+                height,
             }
         };
 
@@ -223,7 +235,7 @@ mod tests {
             let encoded = load_for_prompt_bytes(
                 Path::new("in-memory-image"),
                 original_bytes.clone(),
-                PromptImageMode::ResizeToFit,
+                PromptImageMode::default(),
             )
             .expect("process image");
 
@@ -246,7 +258,7 @@ mod tests {
             let processed = load_for_prompt_bytes(
                 Path::new("in-memory-image"),
                 original_bytes,
-                PromptImageMode::ResizeToFit,
+                PromptImageMode::default(),
             )
             .expect("process image");
 
@@ -272,7 +284,7 @@ mod tests {
         let processed = load_for_prompt_bytes(
             Path::new("in-memory-image"),
             original_bytes,
-            PromptImageMode::ResizeToFit,
+            PromptImageMode::default(),
         )
         .expect("process image");
 
@@ -304,7 +316,7 @@ mod tests {
         let err = load_for_prompt_bytes(
             Path::new("in-memory-image"),
             b"not an image".to_vec(),
-            PromptImageMode::ResizeToFit,
+            PromptImageMode::default(),
         )
         .expect_err("invalid image should fail");
         assert!(matches!(
@@ -326,7 +338,7 @@ mod tests {
         let first = load_for_prompt_bytes(
             Path::new("in-memory-image"),
             first_bytes,
-            PromptImageMode::ResizeToFit,
+            PromptImageMode::default(),
         )
         .expect("process first image");
 
@@ -336,7 +348,7 @@ mod tests {
         let second = load_for_prompt_bytes(
             Path::new("in-memory-image"),
             second_bytes,
-            PromptImageMode::ResizeToFit,
+            PromptImageMode::default(),
         )
         .expect("process updated image");
 

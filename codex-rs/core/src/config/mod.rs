@@ -26,6 +26,7 @@ use codex_config::ThreadConfigLoader;
 use codex_config::config_toml::ConfigLockfileToml;
 use codex_config::config_toml::ConfigToml;
 use codex_config::config_toml::DEFAULT_PROJECT_DOC_MAX_BYTES;
+use codex_config::config_toml::LocalImageResizePolicy;
 use codex_config::config_toml::ProjectConfig;
 use codex_config::config_toml::RealtimeAudioConfig;
 use codex_config::config_toml::RealtimeConfig;
@@ -101,6 +102,8 @@ use codex_protocol::protocol::AskForApproval;
 use codex_protocol::protocol::SandboxPolicy;
 use codex_utils_absolute_path::AbsolutePathBuf;
 use codex_utils_absolute_path::AbsolutePathBufGuard;
+use codex_utils_image::MAX_DIMENSION;
+use codex_utils_image::PromptImageMode;
 use serde::Deserialize;
 use serde::Serialize;
 use std::collections::BTreeMap;
@@ -471,6 +474,9 @@ pub struct Config {
 
     /// Compact prompt override.
     pub compact_prompt: Option<String>,
+
+    /// Local image prompt serialization settings.
+    pub local_image: LocalImageConfig,
 
     /// Optional commit attribution text for commit message co-author trailers.
     ///
@@ -852,6 +858,32 @@ pub enum TerminalResizeReflowMaxRows {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct TerminalResizeReflowConfig {
     pub max_rows: TerminalResizeReflowMaxRows,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct LocalImageConfig {
+    pub resize_policy: LocalImageResizePolicy,
+    pub max_dimension: u32,
+}
+
+impl Default for LocalImageConfig {
+    fn default() -> Self {
+        Self {
+            resize_policy: LocalImageResizePolicy::default(),
+            max_dimension: MAX_DIMENSION,
+        }
+    }
+}
+
+impl LocalImageConfig {
+    pub(crate) fn prompt_image_mode(self) -> PromptImageMode {
+        match self.resize_policy {
+            LocalImageResizePolicy::ResizeToFit => PromptImageMode::ResizeToFit {
+                max_dimension: self.max_dimension,
+            },
+            LocalImageResizePolicy::Original => PromptImageMode::Original,
+        }
+    }
 }
 
 impl AuthManagerConfig for Config {
@@ -1938,6 +1970,23 @@ fn resolve_terminal_resize_reflow_config(config_toml: &ConfigToml) -> TerminalRe
     }
 }
 
+fn resolve_local_image_config(config_toml: &ConfigToml) -> std::io::Result<LocalImageConfig> {
+    let max_dimension = config_toml
+        .local_image_max_dimension
+        .unwrap_or(MAX_DIMENSION);
+    if max_dimension == 0 {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "local_image_max_dimension must be at least 1",
+        ));
+    }
+
+    Ok(LocalImageConfig {
+        resize_policy: config_toml.local_image_resize_policy.unwrap_or_default(),
+        max_dimension,
+    })
+}
+
 fn multi_agent_v2_toml_config(features: Option<&FeaturesToml>) -> Option<&MultiAgentV2ConfigToml> {
     match features?.multi_agent_v2.as_ref()? {
         FeatureToml::Enabled(_) => None,
@@ -2477,6 +2526,7 @@ impl Config {
             .unwrap_or(WebSearchMode::Cached);
         let web_search_config = resolve_web_search_config(&cfg, &config_profile);
         let multi_agent_v2 = resolve_multi_agent_v2_config(&cfg, &config_profile);
+        let local_image = resolve_local_image_config(&cfg)?;
         let apps_mcp_path_override = if features.enabled(Feature::AppsMcpPathOverride) {
             let base = apps_mcp_path_override_toml_config(cfg.features.as_ref());
             let profile = apps_mcp_path_override_toml_config(config_profile.features.as_ref());
@@ -2920,6 +2970,7 @@ impl Config {
             personality,
             developer_instructions,
             compact_prompt,
+            local_image,
             commit_attribution,
             include_permissions_instructions,
             include_apps_instructions,

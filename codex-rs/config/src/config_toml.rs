@@ -87,6 +87,14 @@ const fn default_hide_agent_reasoning() -> Option<bool> {
     Some(false)
 }
 
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, Default, PartialEq, Eq, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum LocalImageResizePolicy {
+    #[default]
+    ResizeToFit,
+    Original,
+}
+
 /// Base config deserialized from ~/.codex/config.toml.
 #[derive(Serialize, Deserialize, Debug, Clone, Default, PartialEq, JsonSchema)]
 #[schemars(deny_unknown_fields)]
@@ -174,6 +182,14 @@ pub struct ConfigToml {
 
     /// Compact prompt used for history compaction.
     pub compact_prompt: Option<String>,
+
+    /// Controls how local image files are transformed before sending them to the model.
+    pub local_image_resize_policy: Option<LocalImageResizePolicy>,
+
+    /// Maximum width or height for local image files when `local_image_resize_policy` is
+    /// `resize_to_fit`.
+    #[schemars(range(min = 1))]
+    pub local_image_max_dimension: Option<u32>,
 
     /// Optional commit attribution text for commit message co-author trailers.
     ///

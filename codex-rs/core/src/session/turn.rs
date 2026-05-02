@@ -84,6 +84,7 @@ use codex_protocol::models::ContentItem;
 use codex_protocol::models::MessagePhase;
 use codex_protocol::models::ResponseInputItem;
 use codex_protocol::models::ResponseItem;
+use codex_protocol::models::response_input_item_from_user_input;
 use codex_protocol::protocol::AgentMessageContentDeltaEvent;
 use codex_protocol::protocol::AgentReasoningSectionBreakEvent;
 use codex_protocol::protocol::AskForApproval;
@@ -303,7 +304,10 @@ pub(crate) async fn run_turn(
     let additional_contexts = if input.is_empty() {
         Vec::new()
     } else {
-        let initial_input_for_turn: ResponseInputItem = ResponseInputItem::from(input.clone());
+        let initial_input_for_turn = response_input_item_from_user_input(
+            input.clone(),
+            turn_context.config.local_image.prompt_image_mode(),
+        );
         let response_item: ResponseItem = initial_input_for_turn.clone().into();
         let user_prompt_submit_outcome = run_user_prompt_submit_hooks(
             &sess,
