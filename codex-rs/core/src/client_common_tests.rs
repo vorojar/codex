@@ -21,7 +21,7 @@ fn serializes_text_verbosity_when_set() {
         reasoning: None,
         store: Some(false),
         stream: Some(true),
-        include: vec![],
+        include: Some(vec![]),
         prompt_cache_key: None,
         service_tier: None,
         text: Some(TextControls {
@@ -67,7 +67,7 @@ fn serializes_text_schema_with_strict_format() {
         reasoning: None,
         store: Some(false),
         stream: Some(true),
-        include: vec![],
+        include: Some(vec![]),
         prompt_cache_key: None,
         service_tier: None,
         text: Some(text_controls),
@@ -127,7 +127,7 @@ fn omits_text_when_not_set() {
         reasoning: None,
         store: Some(false),
         stream: Some(true),
-        include: vec![],
+        include: Some(vec![]),
         prompt_cache_key: None,
         service_tier: None,
         text: None,
@@ -149,7 +149,7 @@ fn serializes_flex_service_tier_when_set() {
         reasoning: None,
         store: Some(false),
         stream: Some(true),
-        include: vec![],
+        include: Some(vec![]),
         prompt_cache_key: None,
         service_tier: Some(ServiceTier::Flex.to_string()),
         text: None,
@@ -174,7 +174,7 @@ fn omits_store_when_not_set() {
         reasoning: None,
         store: None,
         stream: Some(true),
-        include: vec![],
+        include: Some(vec![]),
         prompt_cache_key: None,
         service_tier: None,
         text: None,
@@ -196,7 +196,7 @@ fn omits_stream_when_not_set() {
         reasoning: None,
         store: Some(false),
         stream: None,
-        include: vec![],
+        include: Some(vec![]),
         prompt_cache_key: None,
         service_tier: None,
         text: None,
@@ -205,6 +205,28 @@ fn omits_stream_when_not_set() {
 
     let v = serde_json::to_value(&req).expect("json");
     assert!(v.get("stream").is_none());
+}
+
+#[test]
+fn omits_include_when_not_set() {
+    let req = ResponsesApiRequest {
+        model: "gpt-5.4".to_string(),
+        instructions: "i".to_string(),
+        input: vec![],
+        tools: vec![],
+        parallel_tool_calls: true,
+        reasoning: None,
+        store: Some(false),
+        stream: Some(true),
+        include: None,
+        prompt_cache_key: None,
+        service_tier: None,
+        text: None,
+        client_metadata: None,
+    };
+
+    let v = serde_json::to_value(&req).expect("json");
+    assert!(v.get("include").is_none());
 }
 
 #[test]

@@ -440,8 +440,14 @@ impl ModelClient {
             summary,
             None,
         )?;
+        // `/responses/compact` currently rejects several `/responses`-only transport and caching
+        // fields, so omit them while keeping the shared request builder for the supported shape.
         request.store = None;
         request.stream = None;
+        request.include = None;
+        request.service_tier = None;
+        request.prompt_cache_key = None;
+        request.client_metadata = None;
         let options = self.build_responses_options(
             /*turn_state*/ None,
             /*turn_metadata_header*/ None,
@@ -671,7 +677,7 @@ impl ModelClient {
             reasoning,
             store: Some(provider.is_azure_responses_endpoint()),
             stream: Some(true),
-            include,
+            include: Some(include),
             service_tier: match service_tier {
                 Some(ServiceTier::Fast) => Some("priority".to_string()),
                 Some(service_tier) => Some(service_tier.to_string()),

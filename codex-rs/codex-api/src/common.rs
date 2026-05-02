@@ -160,7 +160,8 @@ pub struct ResponsesApiRequest {
     pub store: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub stream: Option<bool>,
-    pub include: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub include: Option<Vec<String>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub service_tier: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -208,7 +209,8 @@ pub struct ResponseCreateWsRequest {
     pub store: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub stream: Option<bool>,
-    pub include: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub include: Option<Vec<String>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub service_tier: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
