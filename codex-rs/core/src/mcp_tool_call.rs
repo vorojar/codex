@@ -899,16 +899,16 @@ struct McpToolApprovalPrompt {
     tool_params_display: Option<Vec<RenderedMcpToolApprovalParam>>,
 }
 
-const MCP_TOOL_APPROVAL_ACCEPT: &str = "Allow";
-const MCP_TOOL_APPROVAL_ACCEPT_FOR_SESSION: &str = "Allow for this session";
-const MCP_TOOL_APPROVAL_ACCEPT_AND_REMEMBER: &str = "Allow and don't ask me again";
-const MCP_TOOL_APPROVAL_CANCEL: &str = "Cancel";
+pub(crate) const MCP_TOOL_APPROVAL_QUESTION_ID_PREFIX: &str = "mcp_tool_call_approval";
+pub(crate) const MCP_TOOL_APPROVAL_ACCEPT: &str = "Allow";
+pub(crate) const MCP_TOOL_APPROVAL_ACCEPT_FOR_SESSION: &str = "Allow for this session";
 // Internal-only token used when guardian auto-reviews delegated MCP approvals on the
 // RequestUserInput compatibility path. That legacy MCP prompt has allow/cancel labels but no
 // real "Decline" answer, so this lets guardian denials round-trip distinctly from user cancel.
 // This is not a user-facing option.
 pub(crate) const MCP_TOOL_APPROVAL_DECLINE_SYNTHETIC: &str = "__codex_mcp_decline__";
-const MCP_TOOL_APPROVAL_QUESTION_ID_PREFIX: &str = "mcp_tool_call_approval";
+const MCP_TOOL_APPROVAL_ACCEPT_AND_REMEMBER: &str = "Allow and don't ask me again";
+const MCP_TOOL_APPROVAL_CANCEL: &str = "Cancel";
 const MCP_TOOL_APPROVAL_KIND_KEY: &str = "codex_approval_kind";
 const MCP_TOOL_APPROVAL_KIND_MCP_TOOL_CALL: &str = "mcp_tool_call";
 const MCP_TOOL_APPROVAL_PERSIST_KEY: &str = "persist";
