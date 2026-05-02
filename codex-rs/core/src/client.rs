@@ -302,6 +302,21 @@ fn sideband_websocket_auth_headers(api_auth: &dyn AuthProvider) -> ApiHeaderMap 
     headers
 }
 
+/// Adapts the shared `/responses` request body for the `/responses/compact` endpoint.
+///
+/// Remote compaction starts from the same request builder as a normal sampling turn, then clears
+/// only the fields the compact endpoint rejects. This keeps parity drift visible in integration
+/// snapshots while preserving endpoint-specific validation behavior.
+fn prepare_responses_compact_request(request: &mut ResponsesApiRequest, auth: Option<&CodexAuth>) {
+    request.store = None;
+    request.stream = None;
+    request.include = None;
+    request.client_metadata = None;
+    if auth.is_some_and(CodexAuth::is_api_key_auth) {
+        request.service_tier = None;
+    }
+}
+
 impl ModelClient {
     #[allow(clippy::too_many_arguments)]
     /// Creates a new session-scoped `ModelClient`.
@@ -460,20 +475,7 @@ impl ModelClient {
             summary,
             service_tier,
         )?;
-        // Phase 1 builds the same request body that a normal `/responses` turn would send. Phase 2
-        // clears only the fields the compact endpoint currently rejects; the rest of the body stays
-        // shared so parity drift shows up in the integration snapshot.
-        request.store = None;
-        request.stream = None;
-        request.include = None;
-        request.client_metadata = None;
-        if client_setup
-            .auth
-            .as_ref()
-            .is_some_and(CodexAuth::is_api_key_auth)
-        {
-            request.service_tier = None;
-        }
+        prepare_responses_compact_request(&mut request, client_setup.auth.as_ref());
         let options = self.build_responses_options(
             /*turn_state*/ None,
             turn_metadata_header,
