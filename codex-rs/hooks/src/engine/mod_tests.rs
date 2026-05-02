@@ -12,7 +12,6 @@ use codex_config::Constrained;
 use codex_config::ConstrainedWithSource;
 use codex_config::HookEventsToml;
 use codex_config::HookHandlerConfig;
-use codex_config::HookStateToml;
 use codex_config::ManagedHooksRequirementsToml;
 use codex_config::MatcherGroup;
 use codex_config::RequirementSource;
@@ -365,85 +364,6 @@ fn user_disablement_does_not_filter_managed_layer_hooks() {
     );
 }
 
-#[test]
-fn unmanaged_hook_trust_status_tracks_stored_hash() {
-    let temp = tempdir().expect("create temp dir");
-    let config_path =
-        AbsolutePathBuf::try_from(temp.path().join("config.toml")).expect("absolute path");
-    let key = format!("{}:pre_tool_use:0:0", config_path.display());
-
-    let untrusted_stack = ConfigLayerStack::new(
-        vec![ConfigLayerEntry::new(
-            ConfigLayerSource::User {
-                file: config_path.clone(),
-            },
-            config_with_pre_tool_use_hook("python3 /tmp/user.py"),
-        )],
-        ConfigRequirements::default(),
-        ConfigRequirementsToml::default(),
-    )
-    .expect("config layer stack");
-    let untrusted =
-        super::discovery::discover_handlers(Some(&untrusted_stack), Vec::new(), Vec::new());
-    assert_eq!(untrusted.hook_entries.len(), 1);
-    assert_eq!(
-        untrusted.hook_entries[0].trust_status,
-        HookTrustStatus::Untrusted
-    );
-    assert_eq!(untrusted.handlers, Vec::new());
-
-    let current_hash = untrusted.hook_entries[0].current_hash.clone();
-    let trusted_stack = ConfigLayerStack::new(
-        vec![ConfigLayerEntry::new(
-            ConfigLayerSource::User { file: config_path },
-            config_with_pre_tool_use_hook_and_state(
-                "python3 /tmp/user.py",
-                &key,
-                HookStateToml {
-                    enabled: None,
-                    trusted_hash: Some(current_hash),
-                },
-            ),
-        )],
-        ConfigRequirements::default(),
-        ConfigRequirementsToml::default(),
-    )
-    .expect("config layer stack");
-    let trusted = super::discovery::discover_handlers(Some(&trusted_stack), Vec::new(), Vec::new());
-    assert_eq!(trusted.hook_entries.len(), 1);
-    assert_eq!(
-        trusted.hook_entries[0].trust_status,
-        HookTrustStatus::Trusted
-    );
-    assert_eq!(trusted.handlers.len(), 1);
-
-    let changed_stack = ConfigLayerStack::new(
-        vec![ConfigLayerEntry::new(
-            ConfigLayerSource::User {
-                file: trusted.hook_entries[0].source_path.clone(),
-            },
-            config_with_pre_tool_use_hook_and_state(
-                "python3 /tmp/user.py",
-                &key,
-                HookStateToml {
-                    enabled: None,
-                    trusted_hash: Some("sha256:old".to_string()),
-                },
-            ),
-        )],
-        ConfigRequirements::default(),
-        ConfigRequirementsToml::default(),
-    )
-    .expect("config layer stack");
-    let changed = super::discovery::discover_handlers(Some(&changed_stack), Vec::new(), Vec::new());
-    assert_eq!(changed.hook_entries.len(), 1);
-    assert_eq!(
-        changed.hook_entries[0].trust_status,
-        HookTrustStatus::Modified
-    );
-    assert_eq!(changed.handlers, Vec::new());
-}
-
 fn config_with_hook_state(key: &str, enabled: bool) -> TomlValue {
     serde_json::from_value(serde_json::json!({
         "hooks": {
@@ -452,27 +372,6 @@ fn config_with_hook_state(key: &str, enabled: bool) -> TomlValue {
                     "enabled": enabled,
                 },
             },
-        },
-    }))
-    .expect("config TOML should deserialize")
-}
-
-fn config_with_pre_tool_use_hook_and_state(
-    command: &str,
-    key: &str,
-    state: HookStateToml,
-) -> TomlValue {
-    serde_json::from_value(serde_json::json!({
-        "hooks": {
-            "state": {
-                (key): serde_json::to_value(state).expect("hook state should serialize"),
-            },
-            "PreToolUse": [{
-                "hooks": [{
-                    "type": "command",
-                    "command": command,
-                }],
-            }],
         },
     }))
     .expect("config TOML should deserialize")

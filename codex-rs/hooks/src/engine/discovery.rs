@@ -70,8 +70,7 @@ pub(crate) fn discover_handlers(
             ConfigLayerStackOrdering::LowestPrecedenceFirst,
             /*include_disabled*/ false,
         ) {
-            let hook_source = hook_source_for_config_layer_source(&layer.name);
-            let is_managed = is_managed_config_layer_source(&layer.name);
+            let (hook_source, is_managed) = hook_metadata_for_config_layer_source(&layer.name);
             let json_hooks = load_hooks_json(layer.config_folder().as_deref(), &mut warnings);
             let toml_hooks = load_toml_hooks_from_layer(layer, &mut warnings);
 
@@ -557,28 +556,20 @@ fn hook_trusted_hash(is_managed: bool, state: Option<&HookStateToml>) -> Option<
         .flatten()
 }
 
-fn hook_source_for_config_layer_source(source: &ConfigLayerSource) -> HookSource {
+fn hook_metadata_for_config_layer_source(source: &ConfigLayerSource) -> (HookSource, bool) {
     match source {
-        ConfigLayerSource::System { .. } => HookSource::System,
-        ConfigLayerSource::User { .. } => HookSource::User,
-        ConfigLayerSource::Project { .. } => HookSource::Project,
-        ConfigLayerSource::Mdm { .. } => HookSource::Mdm,
-        ConfigLayerSource::SessionFlags => HookSource::SessionFlags,
+        ConfigLayerSource::System { .. } => (HookSource::System, true),
+        ConfigLayerSource::User { .. } => (HookSource::User, false),
+        ConfigLayerSource::Project { .. } => (HookSource::Project, false),
+        ConfigLayerSource::Mdm { .. } => (HookSource::Mdm, true),
+        ConfigLayerSource::SessionFlags => (HookSource::SessionFlags, false),
         ConfigLayerSource::LegacyManagedConfigTomlFromFile { .. } => {
-            HookSource::LegacyManagedConfigFile
+            (HookSource::LegacyManagedConfigFile, true)
         }
-        ConfigLayerSource::LegacyManagedConfigTomlFromMdm => HookSource::LegacyManagedConfigMdm,
+        ConfigLayerSource::LegacyManagedConfigTomlFromMdm => {
+            (HookSource::LegacyManagedConfigMdm, true)
+        }
     }
-}
-
-fn is_managed_config_layer_source(source: &ConfigLayerSource) -> bool {
-    matches!(
-        source,
-        ConfigLayerSource::System { .. }
-            | ConfigLayerSource::Mdm { .. }
-            | ConfigLayerSource::LegacyManagedConfigTomlFromFile { .. }
-            | ConfigLayerSource::LegacyManagedConfigTomlFromMdm
-    )
 }
 
 fn hook_source_for_requirement_source(source: Option<&RequirementSource>) -> HookSource {
@@ -818,50 +809,50 @@ mod tests {
     }
 
     #[test]
-    fn hook_source_for_config_layer_source_discards_source_details() {
+    fn hook_metadata_for_config_layer_source_discards_source_details() {
         let config_file = test_path_buf("/tmp/.codex/config.toml").abs();
         let dot_codex_folder = test_path_buf("/tmp/worktree/.codex").abs();
 
         assert_eq!(
-            super::hook_source_for_config_layer_source(&ConfigLayerSource::System {
+            super::hook_metadata_for_config_layer_source(&ConfigLayerSource::System {
                 file: config_file.clone(),
             }),
-            HookSource::System,
+            (HookSource::System, true),
         );
         assert_eq!(
-            super::hook_source_for_config_layer_source(&ConfigLayerSource::User {
+            super::hook_metadata_for_config_layer_source(&ConfigLayerSource::User {
                 file: config_file.clone(),
             }),
-            HookSource::User,
+            (HookSource::User, false),
         );
         assert_eq!(
-            super::hook_source_for_config_layer_source(&ConfigLayerSource::Project {
+            super::hook_metadata_for_config_layer_source(&ConfigLayerSource::Project {
                 dot_codex_folder
             }),
-            HookSource::Project,
+            (HookSource::Project, false),
         );
         assert_eq!(
-            super::hook_source_for_config_layer_source(&ConfigLayerSource::Mdm {
+            super::hook_metadata_for_config_layer_source(&ConfigLayerSource::Mdm {
                 domain: "com.openai.codex".to_string(),
                 key: "config".to_string(),
             }),
-            HookSource::Mdm,
+            (HookSource::Mdm, true),
         );
         assert_eq!(
-            super::hook_source_for_config_layer_source(&ConfigLayerSource::SessionFlags),
-            HookSource::SessionFlags,
+            super::hook_metadata_for_config_layer_source(&ConfigLayerSource::SessionFlags),
+            (HookSource::SessionFlags, false),
         );
         assert_eq!(
-            super::hook_source_for_config_layer_source(
+            super::hook_metadata_for_config_layer_source(
                 &ConfigLayerSource::LegacyManagedConfigTomlFromFile { file: config_file },
             ),
-            HookSource::LegacyManagedConfigFile,
+            (HookSource::LegacyManagedConfigFile, true),
         );
         assert_eq!(
-            super::hook_source_for_config_layer_source(
+            super::hook_metadata_for_config_layer_source(
                 &ConfigLayerSource::LegacyManagedConfigTomlFromMdm,
             ),
-            HookSource::LegacyManagedConfigMdm,
+            (HookSource::LegacyManagedConfigMdm, true),
         );
     }
 }
