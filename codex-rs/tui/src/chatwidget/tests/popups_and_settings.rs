@@ -275,6 +275,34 @@ async fn plugins_popup_add_marketplace_tab_opens_prompt_and_submits_source() {
 }
 
 #[tokio::test]
+async fn marketplace_add_error_popup_shows_server_error() {
+    let (mut chat, _rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
+    chat.set_feature_enabled(Feature::Plugins, /*enabled*/ true);
+
+    let cwd = chat.config.cwd.to_path_buf();
+    render_loaded_plugins_popup(
+        &mut chat,
+        plugins_test_response(vec![plugins_test_curated_marketplace(Vec::new())]),
+    );
+    chat.open_marketplace_add_loading_popup("bad-source");
+    chat.on_marketplace_add_loaded(
+        cwd,
+        "bad-source".to_string(),
+        Err(
+            "Failed to add marketplace: invalid marketplace source format; expected owner/repo, a git URL, or a local marketplace path"
+                .to_string(),
+        ),
+    );
+
+    let popup = render_bottom_popup(&chat, /*width*/ 100);
+    assert_chatwidget_snapshot!("plugins_popup_marketplace_add_error", popup);
+    assert!(
+        popup.contains("invalid marketplace source format"),
+        "expected marketplace add error popup to show server error, got:\n{popup}"
+    );
+}
+
+#[tokio::test]
 async fn marketplace_add_success_refreshes_to_new_marketplace_tab() {
     let (mut chat, _rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
     chat.set_feature_enabled(Feature::Plugins, /*enabled*/ true);

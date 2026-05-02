@@ -1,0 +1,13 @@
+---
+source: tui/src/chatwidget/tests/popups_and_settings.rs
+expression: popup
+---
+  Plugins
+  Failed to add marketplace.
+
+     Marketplace add failed  Failed to add marketplace: invalid marketplace source format;
+                             expected owner/repo, a git URL, or a local marketplace path
+› 1. Try again               Enter a marketplace source.
+  2. Back to plugins         Return to the plugin list.
+
+  Press esc to close.
