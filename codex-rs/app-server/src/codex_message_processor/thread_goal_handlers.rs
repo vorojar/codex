@@ -60,6 +60,8 @@ impl CodexMessageProcessor {
         if let Some(objective) = objective
             && running_thread.is_some()
         {
+            // `/goal` can be the first interaction on a lazily-created thread. Materialize the
+            // rollout now so thread list/resume can discover it on disk.
             if let Err(err) = self.thread_store.persist_thread(thread_id).await {
                 self.send_internal_error(
                     request_id,
@@ -84,6 +86,9 @@ impl CodexMessageProcessor {
                 .as_deref()
                 .is_none_or(|message| message.trim().is_empty())
             {
+                // Thread previews come from the first user message. If the first interaction was a
+                // goal command, seed that command into the rollout so the resume picker has a
+                // stable preview without changing threads that already have user history.
                 let item = RolloutItem::EventMsg(EventMsg::UserMessage(UserMessageEvent {
                     message: format!("/goal {objective}"),
                     images: None,
