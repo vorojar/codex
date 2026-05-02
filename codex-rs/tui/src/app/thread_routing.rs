@@ -526,6 +526,10 @@ impl App {
                 }
                 Ok(true)
             }
+            AppCommandView::NoteOwnerActivity => {
+                app_server.thread_input_activity(thread_id).await?;
+                Ok(true)
+            }
             AppCommandView::UserTurn {
                 items,
                 cwd,
@@ -715,7 +719,15 @@ impl App {
                     .await?;
                 Ok(true)
             }
-            _ => Ok(false),
+            AppCommandView::ExecApproval { .. }
+            | AppCommandView::PatchApproval { .. }
+            | AppCommandView::ResolveElicitation { .. }
+            | AppCommandView::UserInputAnswer { .. }
+            | AppCommandView::RequestPermissionsResponse { .. }
+            | AppCommandView::Shutdown
+            | AppCommandView::Other(Op::AddToHistory { .. })
+            | AppCommandView::Other(Op::GetHistoryEntryRequest { .. })
+            | AppCommandView::Other(_) => Ok(false),
         }
     }
 

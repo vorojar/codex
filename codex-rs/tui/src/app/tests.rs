@@ -5124,6 +5124,26 @@ async fn interrupt_without_active_turn_is_treated_as_handled() {
 }
 
 #[tokio::test]
+async fn owner_activity_is_routed_to_app_server() {
+    let mut app = make_test_app().await;
+    let mut app_server = crate::start_embedded_app_server_for_picker(app.chat_widget.config_ref())
+        .await
+        .expect("embedded app server");
+    let op = AppCommand::note_owner_activity();
+
+    let err = app
+        .try_submit_active_thread_op_via_app_server(&mut app_server, ThreadId::new(), &op)
+        .await
+        .expect_err("missing thread should fail after routing owner activity to app-server");
+
+    assert!(
+        err.to_string()
+            .contains("thread/inputActivity failed in TUI"),
+        "owner activity should reach the app-server path: {err:#}"
+    );
+}
+
+#[tokio::test]
 async fn clear_only_ui_reset_preserves_chat_session_state() {
     let mut app = make_test_app().await;
     let thread_id = ThreadId::new();
