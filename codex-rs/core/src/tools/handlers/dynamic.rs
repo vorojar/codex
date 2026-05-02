@@ -241,7 +241,7 @@ mod tests {
         assert_eq!(
             DynamicToolHandler.pre_tool_use_payload(&invocation),
             Some(PreToolUsePayload {
-                tool_name: HookToolName::new("dynamic__default__automation_update"),
+                tool_name: HookToolName::new("automation_update"),
                 tool_input: json!({ "id": 1 }),
             })
         );
@@ -265,7 +265,7 @@ mod tests {
         assert_eq!(
             DynamicToolHandler.post_tool_use_payload(&invocation, &output),
             Some(PostToolUsePayload {
-                tool_name: HookToolName::new("dynamic__codex_app__automation_update"),
+                tool_name: HookToolName::new("codex_app__automation_update"),
                 tool_use_id: "call-dynamic".to_string(),
                 tool_input: json!({ "job": "sync" }),
                 tool_response: json!("ok"),

@@ -29,24 +29,24 @@ impl HookToolName {
 
     /// Builds the canonical hook-facing identity for dynamic tools.
     ///
-    /// Dynamic tools always use `dynamic__namespace__tool` so hooks can target
-    /// the dynamic-tool surface without colliding with plain Codex tools or
-    /// MCP names. Unnamespaced tools are assigned to the synthetic `default`
-    /// namespace for hook identity purposes.
+    /// Plain dynamic tools keep their plain tool name. Namespaced dynamic tools
+    /// flatten to `namespace__tool`, mirroring the namespaced form used across
+    /// the model-facing tool surface.
     ///
-    /// Each segment is escaped independently to keep the flattened form
-    /// unambiguous even when namespaces or tool names contain separator-like
-    /// substrings or punctuation.
+    /// Each segment is escaped independently so the structural `__` separator
+    /// stays injective even when identifiers contain edge underscores or runs
+    /// of multiple underscores. Other bytes remain percent-encoded
+    /// defensively, though new dynamic tool registration already narrows the
+    /// upstream contract to Responses-compatible ASCII identifiers.
     pub(crate) fn for_dynamic_tool(tool_name: &ToolName) -> Self {
-        let namespace = tool_name
-            .namespace
-            .as_deref()
-            .unwrap_or(DEFAULT_DYNAMIC_HOOK_NAMESPACE);
-        Self::new(format!(
-            "{DYNAMIC_HOOK_PREFIX}{}__{}",
-            encode_dynamic_segment(namespace),
-            encode_dynamic_segment(&tool_name.name),
-        ))
+        match tool_name.namespace.as_deref() {
+            Some(namespace) => Self::new(format!(
+                "{}__{}",
+                encode_dynamic_segment(namespace),
+                encode_dynamic_segment(&tool_name.name),
+            )),
+            None => Self::new(encode_dynamic_segment(&tool_name.name)),
+        }
     }
 
     /// Builds the canonical hook-facing identity for MCP tools.
@@ -105,12 +105,12 @@ fn encode_dynamic_segment(segment: &str) -> String {
 
 fn should_preserve_dynamic_byte(bytes: &[u8], index: usize, byte: u8) -> bool {
     match byte {
-        b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' => true,
+        b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'-' => true,
         b'_' => {
             index > 0
                 && index + 1 < bytes.len()
-                && bytes[index - 1].is_ascii_alphanumeric()
-                && bytes[index + 1].is_ascii_alphanumeric()
+                && (bytes[index - 1].is_ascii_alphanumeric() || bytes[index - 1] == b'-')
+                && (bytes[index + 1].is_ascii_alphanumeric() || bytes[index + 1] == b'-')
                 && bytes[index - 1] != b'_'
                 && bytes[index + 1] != b'_'
         }
@@ -118,8 +118,6 @@ fn should_preserve_dynamic_byte(bytes: &[u8], index: usize, byte: u8) -> bool {
     }
 }
 
-const DYNAMIC_HOOK_PREFIX: &str = "dynamic__";
-const DEFAULT_DYNAMIC_HOOK_NAMESPACE: &str = "default";
 const HEX_DIGITS: &[u8; 16] = b"0123456789ABCDEF";
 
 #[cfg(test)]
@@ -129,10 +127,10 @@ mod tests {
     use pretty_assertions::assert_eq;
 
     #[test]
-    fn for_dynamic_tool_assigns_default_namespace_to_plain_tool_names() {
+    fn for_dynamic_tool_keeps_plain_tool_names_plain() {
         assert_eq!(
             HookToolName::for_dynamic_tool(&ToolName::plain("tool_search")),
-            HookToolName::new("dynamic__default__tool_search"),
+            HookToolName::new("tool_search"),
         );
     }
 
@@ -145,22 +143,22 @@ mod tests {
     }
 
     #[test]
-    fn for_dynamic_tool_prefixes_dynamic_namespaces() {
+    fn for_dynamic_tool_uses_namespace_separator_for_namespaced_tools() {
         assert_eq!(
             HookToolName::for_dynamic_tool(
                 &ToolName::namespaced("codex_app", "automation_update",)
             ),
-            HookToolName::new("dynamic__codex_app__automation_update"),
+            HookToolName::new("codex_app__automation_update"),
         );
     }
 
     #[test]
-    fn for_dynamic_tool_does_not_spoof_mcp_namespaces() {
+    fn for_dynamic_tool_does_not_spoof_plain_namespaced_shapes() {
         assert_eq!(
             HookToolName::for_dynamic_tool(
                 &ToolName::namespaced("mcp__filesystem__", "read_file",)
             ),
-            HookToolName::new("dynamic__mcp%5F%5Ffilesystem%5F%5F__read_file"),
+            HookToolName::new("mcp%5F%5Ffilesystem%5F%5F__read_file"),
         );
     }
 
@@ -169,16 +167,16 @@ mod tests {
         let first = HookToolName::for_dynamic_tool(&ToolName::namespaced("foo__bar", "baz"));
         let second = HookToolName::for_dynamic_tool(&ToolName::namespaced("foo", "bar__baz"));
 
-        assert_eq!(first, HookToolName::new("dynamic__foo%5F%5Fbar__baz"));
-        assert_eq!(second, HookToolName::new("dynamic__foo__bar%5F%5Fbaz"));
+        assert_eq!(first, HookToolName::new("foo%5F%5Fbar__baz"));
+        assert_eq!(second, HookToolName::new("foo__bar%5F%5Fbaz"));
         assert_ne!(first, second);
     }
 
     #[test]
-    fn for_dynamic_tool_escapes_punctuation_and_edge_underscores() {
+    fn for_dynamic_tool_escapes_edge_underscores_and_preserves_hyphens() {
         assert_eq!(
             HookToolName::for_dynamic_tool(&ToolName::namespaced("_google-drive", "update.file_",)),
-            HookToolName::new("dynamic__%5Fgoogle%2Ddrive__update%2Efile%5F"),
+            HookToolName::new("%5Fgoogle-drive__update%2Efile%5F"),
         );
     }
 
@@ -186,15 +184,15 @@ mod tests {
     fn for_dynamic_tool_keeps_single_internal_underscores() {
         assert_eq!(
             HookToolName::for_dynamic_tool(&ToolName::namespaced("codex_app", "automation_update")),
-            HookToolName::new("dynamic__codex_app__automation_update"),
+            HookToolName::new("codex_app__automation_update"),
         );
     }
 
     #[test]
-    fn for_dynamic_tool_percent_encodes_utf8_bytes() {
+    fn for_dynamic_tool_percent_encodes_unsupported_bytes_defensively() {
         assert_eq!(
             HookToolName::for_dynamic_tool(&ToolName::namespaced("検", "索")),
-            HookToolName::new("dynamic__%E6%A4%9C__%E7%B4%A2"),
+            HookToolName::new("%E6%A4%9C__%E7%B4%A2"),
         );
     }
 }

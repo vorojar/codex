@@ -36,8 +36,8 @@ use wiremock::MockServer;
 
 const DYNAMIC_TOOL_NAME: &str = "automation_update";
 const DYNAMIC_NAMESPACE: &str = "codex_app";
-const PLAIN_DYNAMIC_HOOK_NAME: &str = "dynamic__default__automation_update";
-const DYNAMIC_HOOK_NAME: &str = "dynamic__codex_app__automation_update";
+const PLAIN_DYNAMIC_HOOK_NAME: &str = "automation_update";
+const DYNAMIC_HOOK_NAME: &str = "codex_app__automation_update";
 
 fn dynamic_tool(namespace: Option<&str>, name: &str) -> DynamicToolSpec {
     DynamicToolSpec {

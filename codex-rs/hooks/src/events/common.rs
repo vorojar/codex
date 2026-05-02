@@ -216,12 +216,12 @@ mod tests {
             Some("lookup+ticket")
         ));
         assert!(matches_matcher(
-            Some("dynamic__codex_app__automation_update"),
-            Some("dynamic__codex_app__automation_update")
+            Some("codex_app__automation_update"),
+            Some("codex_app__automation_update")
         ));
         assert!(!matches_matcher(
-            Some("dynamic__codex_app"),
-            Some("dynamic__codex_app__automation_update")
+            Some("codex_app"),
+            Some("codex_app__automation_update")
         ));
         assert!(matches_matcher(
             Some("mcp__memory__create_entities"),
@@ -260,40 +260,37 @@ mod tests {
     }
 
     #[test]
-    fn dynamic_matchers_support_regex_wildcards() {
+    fn namespaced_dynamic_matchers_support_regex_wildcards() {
         assert!(matches_matcher(
-            Some("dynamic__codex_app__.*"),
-            Some("dynamic__codex_app__automation_update")
+            Some("codex_app__.*"),
+            Some("codex_app__automation_update")
         ));
         assert!(matches_matcher(
-            Some("dynamic__.*__automation_update"),
-            Some("dynamic__codex_app__automation_update")
+            Some(".*__automation_update"),
+            Some("codex_app__automation_update")
         ));
         assert!(!matches_matcher(
-            Some("dynamic__other_app__.*"),
-            Some("dynamic__codex_app__automation_update")
+            Some("other_app__.*"),
+            Some("codex_app__automation_update")
         ));
-        assert_eq!(validate_matcher_pattern("dynamic__codex_app__.*"), Ok(()));
+        assert_eq!(validate_matcher_pattern("codex_app__.*"), Ok(()));
     }
 
     #[test]
     fn dynamic_matchers_support_percent_encoded_names() {
         assert!(matches_matcher(
-            Some("dynamic__default__%E6%A4%9C%E7%B4%A2"),
-            Some("dynamic__default__%E6%A4%9C%E7%B4%A2")
+            Some("%E6%A4%9C%E7%B4%A2"),
+            Some("%E6%A4%9C%E7%B4%A2")
         ));
         assert!(!matches_matcher(
-            Some("dynamic__default__%E6%A4%9C%E7%B4%A2"),
-            Some("dynamic__default__%E6%A4%9C%E7%B4%A2_extra")
+            Some("%E6%A4%9C%E7%B4%A2"),
+            Some("%E6%A4%9C%E7%B4%A2_extra")
         ));
         assert!(matches_matcher(
-            Some("dynamic__default__%E6%A4%9C.*"),
-            Some("dynamic__default__%E6%A4%9C%E7%B4%A2")
+            Some("%E6%A4%9C.*"),
+            Some("%E6%A4%9C%E7%B4%A2")
         ));
-        assert_eq!(
-            validate_matcher_pattern("dynamic__default__%E6%A4%9C.*"),
-            Ok(())
-        );
+        assert_eq!(validate_matcher_pattern("%E6%A4%9C.*"), Ok(()));
     }
 
     #[test]
