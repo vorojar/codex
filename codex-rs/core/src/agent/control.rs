@@ -487,12 +487,13 @@ impl AgentControl {
                             agent_nickname: None,
                             agent_role: None,
                         });
-                    match Box::pin(self.resume_single_agent_from_rollout(
-                        config.clone(),
-                        child_thread_id,
-                        child_session_source,
-                    ))
-                    .await
+                    match self
+                        .resume_single_agent_from_rollout(
+                            config.clone(),
+                            child_thread_id,
+                            child_session_source,
+                        )
+                        .await
                     {
                         Ok(_) => true,
                         Err(err) => {
@@ -704,14 +705,9 @@ impl AgentControl {
             thread.codex.session.ensure_rollout_materialized().await;
             thread.codex.session.flush_rollout().await?;
             if matches!(thread.agent_status().await, AgentStatus::Shutdown) {
-                thread.wait_until_terminated().await;
                 Ok(String::new())
             } else {
-                let result = state.send_op(agent_id, Op::Shutdown {}).await;
-                if result.is_ok() {
-                    thread.wait_until_terminated().await;
-                }
-                result
+                state.send_op(agent_id, Op::Shutdown {}).await
             }
         } else {
             state.send_op(agent_id, Op::Shutdown {}).await
