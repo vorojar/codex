@@ -1,5 +1,6 @@
 use crate::status::format_tokens_compact;
 use codex_app_server_protocol::ThreadGoal;
+use codex_app_server_protocol::ThreadGoalBudget;
 use codex_app_server_protocol::ThreadGoalStatus;
 
 pub(crate) fn format_goal_elapsed_seconds(seconds: i64) -> String {
@@ -51,8 +52,67 @@ pub(crate) fn goal_usage_summary(goal: &ThreadGoal) -> String {
             format_tokens_compact(goal.tokens_used),
             format_tokens_compact(token_budget)
         ));
+    } else if let Some(ThreadGoalBudget::FiveHourLimitPercent {
+        percent,
+        baseline_used_percent,
+        latest_used_percent,
+        baseline_resets_at,
+        ..
+    }) = &goal.budget
+    {
+        parts.push(format!(
+            "5h limit: {} / {}.",
+            format_percent_points(latest_used_percent - baseline_used_percent),
+            format_percent_points(*percent)
+        ));
+        if let Some(resets_at) = baseline_resets_at {
+            parts.push(format!(
+                "Started at {}; limit at {}; resets {}.",
+                format_percent(*baseline_used_percent),
+                format_percent(baseline_used_percent + percent),
+                format_unix_date(*resets_at)
+            ));
+        }
     }
     parts.join(" ")
+}
+
+pub(crate) fn format_five_hour_goal_progress(budget: &ThreadGoalBudget) -> Option<String> {
+    match budget {
+        ThreadGoalBudget::FiveHourLimitPercent {
+            percent,
+            baseline_used_percent,
+            latest_used_percent,
+            ..
+        } => Some(format!(
+            "{} / {}",
+            format_percent_points(latest_used_percent - baseline_used_percent),
+            format_percent_points(*percent)
+        )),
+        ThreadGoalBudget::Tokens { .. } => None,
+    }
+}
+
+fn format_percent_points(value: f64) -> String {
+    format!("+{}pp", format_percent_number(value.max(0.0)))
+}
+
+fn format_percent(value: f64) -> String {
+    format!("{}%", format_percent_number(value))
+}
+
+fn format_percent_number(value: f64) -> String {
+    if (value.fract()).abs() < 0.05 {
+        format!("{value:.0}")
+    } else {
+        format!("{value:.1}")
+    }
+}
+
+fn format_unix_date(value: i64) -> String {
+    chrono::DateTime::from_timestamp(value, 0)
+        .map(|date| date.format("%b %-d, %Y").to_string())
+        .unwrap_or_else(|| "unknown".to_string())
 }
 
 #[cfg(test)]
@@ -86,6 +146,7 @@ mod tests {
             objective: "Complete the task described in ../gameboy-long-running-prompt5.txt"
                 .to_string(),
             status: ThreadGoalStatus::BudgetLimited,
+            budget: token_budget.map(|token_budget| ThreadGoalBudget::Tokens { token_budget }),
             token_budget,
             tokens_used,
             time_used_seconds: 120,

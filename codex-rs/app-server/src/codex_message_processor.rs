@@ -165,6 +165,8 @@ use codex_app_server_protocol::ThreadDecrementElicitationResponse;
 use codex_app_server_protocol::ThreadForkParams;
 use codex_app_server_protocol::ThreadForkResponse;
 use codex_app_server_protocol::ThreadGoal;
+use codex_app_server_protocol::ThreadGoalBudget;
+use codex_app_server_protocol::ThreadGoalBudgetParams;
 use codex_app_server_protocol::ThreadGoalClearParams;
 use codex_app_server_protocol::ThreadGoalClearResponse;
 use codex_app_server_protocol::ThreadGoalClearedNotification;

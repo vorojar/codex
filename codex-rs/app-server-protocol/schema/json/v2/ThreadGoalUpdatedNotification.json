@@ -3,6 +3,16 @@
   "definitions": {
     "ThreadGoal": {
       "properties": {
+        "budget": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/ThreadGoalBudget"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
         "createdAt": {
           "format": "int64",
           "type": "integer"
@@ -46,6 +56,80 @@
         "updatedAt"
       ],
       "type": "object"
+    },
+    "ThreadGoalBudget": {
+      "oneOf": [
+        {
+          "properties": {
+            "token_budget": {
+              "format": "int64",
+              "type": "integer"
+            },
+            "type": {
+              "enum": [
+                "tokens"
+              ],
+              "title": "TokensThreadGoalBudgetType",
+              "type": "string"
+            }
+          },
+          "required": [
+            "token_budget",
+            "type"
+          ],
+          "title": "TokensThreadGoalBudget",
+          "type": "object"
+        },
+        {
+          "properties": {
+            "baseline_resets_at": {
+              "format": "int64",
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "baseline_used_percent": {
+              "format": "double",
+              "type": "number"
+            },
+            "latest_resets_at": {
+              "format": "int64",
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "latest_used_percent": {
+              "format": "double",
+              "type": "number"
+            },
+            "limit_id": {
+              "type": "string"
+            },
+            "percent": {
+              "format": "double",
+              "type": "number"
+            },
+            "type": {
+              "enum": [
+                "fiveHourLimitPercent"
+              ],
+              "title": "FiveHourLimitPercentThreadGoalBudgetType",
+              "type": "string"
+            }
+          },
+          "required": [
+            "baseline_used_percent",
+            "latest_used_percent",
+            "limit_id",
+            "percent",
+            "type"
+          ],
+          "title": "FiveHourLimitPercentThreadGoalBudget",
+          "type": "object"
+        }
+      ]
     },
     "ThreadGoalStatus": {
       "enum": [

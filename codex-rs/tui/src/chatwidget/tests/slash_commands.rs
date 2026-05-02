@@ -571,16 +571,57 @@ async fn goal_slash_command_emits_set_goal_event() {
     let AppEvent::SetThreadGoalObjective {
         thread_id: actual_thread_id,
         objective,
+        budget,
         mode,
     } = event
     else {
         panic!("expected SetThreadGoalObjective, got {event:?}");
     };
     assert_eq!(actual_thread_id, thread_id);
-    assert_eq!(objective, "--tokens 98.5K improve benchmark coverage");
+    assert_eq!(objective, "improve benchmark coverage");
+    assert_eq!(
+        budget,
+        Some(codex_app_server_protocol::ThreadGoalBudgetParams::Tokens {
+            token_budget: 98_500,
+        })
+    );
     assert_eq!(mode, crate::app_event::ThreadGoalSetMode::ConfirmIfExists);
     assert_no_submit_op(&mut op_rx);
     assert_eq!(recall_latest_after_clearing(&mut chat), command);
+}
+
+#[tokio::test]
+async fn goal_slash_command_accepts_five_hour_limit_budget() {
+    let (mut chat, mut rx, mut op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
+    chat.set_feature_enabled(Feature::Goals, /*enabled*/ true);
+    let thread_id = ThreadId::new();
+    chat.thread_id = Some(thread_id);
+    let command = "/goal --5h-limit 7.5% finish the risky migration";
+
+    submit_composer_text(&mut chat, command);
+
+    let event = rx.try_recv().expect("expected goal objective event");
+    let AppEvent::SetThreadGoalObjective {
+        thread_id: actual_thread_id,
+        objective,
+        budget,
+        mode,
+    } = event
+    else {
+        panic!("expected SetThreadGoalObjective, got {event:?}");
+    };
+    assert_eq!(actual_thread_id, thread_id);
+    assert_eq!(objective, "finish the risky migration");
+    assert_eq!(
+        budget,
+        Some(
+            codex_app_server_protocol::ThreadGoalBudgetParams::FiveHourLimitPercent {
+                percent: 7.5
+            }
+        )
+    );
+    assert_eq!(mode, crate::app_event::ThreadGoalSetMode::ConfirmIfExists);
+    assert_no_submit_op(&mut op_rx);
 }
 
 #[tokio::test]
@@ -1355,6 +1396,7 @@ async fn active_goal_without_follow_up_suppresses_agent_turn_complete_notificati
                     thread_id: "thread-1".to_string(),
                     objective: "finish the benchmark".to_string(),
                     status: codex_app_server_protocol::ThreadGoalStatus::Active,
+                    budget: None,
                     token_budget: None,
                     tokens_used: 0,
                     time_used_seconds: 0,

@@ -25,6 +25,7 @@ pub use memories::Stage1JobClaimOutcome;
 pub use memories::Stage1Output;
 pub use memories::Stage1StartupClaimParams;
 pub use thread_goal::ThreadGoal;
+pub use thread_goal::ThreadGoalBudget;
 pub use thread_goal::ThreadGoalStatus;
 pub use thread_metadata::Anchor;
 pub use thread_metadata::BackfillStats;

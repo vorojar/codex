@@ -653,9 +653,10 @@ impl App {
             AppEvent::SetThreadGoalObjective {
                 thread_id,
                 objective,
+                budget,
                 mode,
             } => {
-                self.set_thread_goal_objective(app_server, thread_id, objective, mode)
+                self.set_thread_goal_objective(app_server, thread_id, objective, budget, mode)
                     .await;
             }
             AppEvent::SetThreadGoalStatus { thread_id, status } => {

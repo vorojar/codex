@@ -7,6 +7,17 @@ pub struct ThreadGoalUpdate {
     pub expected_goal_id: Option<String>,
 }
 
+struct GoalBudgetColumns<'a> {
+    kind: Option<&'static str>,
+    limit_id: Option<&'a str>,
+    percent: Option<f64>,
+    baseline_used_percent: Option<f64>,
+    baseline_resets_at: Option<i64>,
+    latest_used_percent: Option<f64>,
+    latest_resets_at: Option<i64>,
+    token_budget: Option<i64>,
+}
+
 pub enum ThreadGoalAccountingOutcome {
     Unchanged(Option<crate::ThreadGoal>),
     Updated(crate::ThreadGoal),
@@ -32,6 +43,13 @@ SELECT
     goal_id,
     objective,
     status,
+    budget_kind,
+    budget_limit_id,
+    budget_percent,
+    budget_baseline_used_percent,
+    budget_baseline_resets_at,
+    budget_latest_used_percent,
+    budget_latest_resets_at,
     token_budget,
     tokens_used,
     time_used_seconds,
@@ -55,9 +73,27 @@ WHERE thread_id = ?
         status: crate::ThreadGoalStatus,
         token_budget: Option<i64>,
     ) -> anyhow::Result<crate::ThreadGoal> {
+        self.replace_thread_goal_with_budget(
+            thread_id,
+            objective,
+            status,
+            token_budget.map(|token_budget| crate::ThreadGoalBudget::Tokens { token_budget }),
+        )
+        .await
+    }
+
+    pub async fn replace_thread_goal_with_budget(
+        &self,
+        thread_id: ThreadId,
+        objective: &str,
+        status: crate::ThreadGoalStatus,
+        budget: Option<crate::ThreadGoalBudget>,
+    ) -> anyhow::Result<crate::ThreadGoal> {
         let goal_id = Uuid::new_v4().to_string();
         let now_ms = datetime_to_epoch_millis(Utc::now());
-        let status = status_after_budget_limit(status, /*tokens_used*/ 0, token_budget);
+        let budget_columns = budget_columns(budget.as_ref());
+        let status =
+            status_after_budget_limit(status, /*tokens_used*/ 0, budget_columns.token_budget);
         let row = sqlx::query(
             r#"
 INSERT INTO thread_goals (
@@ -65,16 +101,30 @@ INSERT INTO thread_goals (
     goal_id,
     objective,
     status,
+    budget_kind,
+    budget_limit_id,
+    budget_percent,
+    budget_baseline_used_percent,
+    budget_baseline_resets_at,
+    budget_latest_used_percent,
+    budget_latest_resets_at,
     token_budget,
     tokens_used,
     time_used_seconds,
     created_at_ms,
     updated_at_ms
-) VALUES (?, ?, ?, ?, ?, 0, 0, ?, ?)
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0, ?, ?)
 ON CONFLICT(thread_id) DO UPDATE SET
     goal_id = excluded.goal_id,
     objective = excluded.objective,
     status = excluded.status,
+    budget_kind = excluded.budget_kind,
+    budget_limit_id = excluded.budget_limit_id,
+    budget_percent = excluded.budget_percent,
+    budget_baseline_used_percent = excluded.budget_baseline_used_percent,
+    budget_baseline_resets_at = excluded.budget_baseline_resets_at,
+    budget_latest_used_percent = excluded.budget_latest_used_percent,
+    budget_latest_resets_at = excluded.budget_latest_resets_at,
     token_budget = excluded.token_budget,
     tokens_used = 0,
     time_used_seconds = 0,
@@ -85,6 +135,13 @@ RETURNING
     goal_id,
     objective,
     status,
+    budget_kind,
+    budget_limit_id,
+    budget_percent,
+    budget_baseline_used_percent,
+    budget_baseline_resets_at,
+    budget_latest_used_percent,
+    budget_latest_resets_at,
     token_budget,
     tokens_used,
     time_used_seconds,
@@ -96,7 +153,14 @@ RETURNING
         .bind(goal_id)
         .bind(objective)
         .bind(status.as_str())
-        .bind(token_budget)
+        .bind(budget_columns.kind)
+        .bind(budget_columns.limit_id)
+        .bind(budget_columns.percent)
+        .bind(budget_columns.baseline_used_percent)
+        .bind(budget_columns.baseline_resets_at)
+        .bind(budget_columns.latest_used_percent)
+        .bind(budget_columns.latest_resets_at)
+        .bind(budget_columns.token_budget)
         .bind(now_ms)
         .bind(now_ms)
         .fetch_one(self.pool.as_ref())
@@ -112,9 +176,27 @@ RETURNING
         status: crate::ThreadGoalStatus,
         token_budget: Option<i64>,
     ) -> anyhow::Result<Option<crate::ThreadGoal>> {
+        self.insert_thread_goal_with_budget(
+            thread_id,
+            objective,
+            status,
+            token_budget.map(|token_budget| crate::ThreadGoalBudget::Tokens { token_budget }),
+        )
+        .await
+    }
+
+    pub async fn insert_thread_goal_with_budget(
+        &self,
+        thread_id: ThreadId,
+        objective: &str,
+        status: crate::ThreadGoalStatus,
+        budget: Option<crate::ThreadGoalBudget>,
+    ) -> anyhow::Result<Option<crate::ThreadGoal>> {
         let goal_id = Uuid::new_v4().to_string();
         let now_ms = datetime_to_epoch_millis(Utc::now());
-        let status = status_after_budget_limit(status, /*tokens_used*/ 0, token_budget);
+        let budget_columns = budget_columns(budget.as_ref());
+        let status =
+            status_after_budget_limit(status, /*tokens_used*/ 0, budget_columns.token_budget);
         let row = sqlx::query(
             r#"
 INSERT INTO thread_goals (
@@ -122,18 +204,32 @@ INSERT INTO thread_goals (
     goal_id,
     objective,
     status,
+    budget_kind,
+    budget_limit_id,
+    budget_percent,
+    budget_baseline_used_percent,
+    budget_baseline_resets_at,
+    budget_latest_used_percent,
+    budget_latest_resets_at,
     token_budget,
     tokens_used,
     time_used_seconds,
     created_at_ms,
     updated_at_ms
-) VALUES (?, ?, ?, ?, ?, 0, 0, ?, ?)
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0, ?, ?)
 ON CONFLICT(thread_id) DO NOTHING
 RETURNING
     thread_id,
     goal_id,
     objective,
     status,
+    budget_kind,
+    budget_limit_id,
+    budget_percent,
+    budget_baseline_used_percent,
+    budget_baseline_resets_at,
+    budget_latest_used_percent,
+    budget_latest_resets_at,
     token_budget,
     tokens_used,
     time_used_seconds,
@@ -145,7 +241,14 @@ RETURNING
         .bind(goal_id)
         .bind(objective)
         .bind(status.as_str())
-        .bind(token_budget)
+        .bind(budget_columns.kind)
+        .bind(budget_columns.limit_id)
+        .bind(budget_columns.percent)
+        .bind(budget_columns.baseline_used_percent)
+        .bind(budget_columns.baseline_resets_at)
+        .bind(budget_columns.latest_used_percent)
+        .bind(budget_columns.latest_resets_at)
+        .bind(budget_columns.token_budget)
         .bind(now_ms)
         .bind(now_ms)
         .fetch_optional(self.pool.as_ref())
@@ -177,6 +280,13 @@ SET
         WHEN ? = 'active' AND ? IS NOT NULL AND tokens_used >= ? THEN ?
         ELSE ?
     END,
+    budget_kind = CASE WHEN ? IS NULL THEN NULL ELSE 'tokens' END,
+    budget_limit_id = NULL,
+    budget_percent = NULL,
+    budget_baseline_used_percent = NULL,
+    budget_baseline_resets_at = NULL,
+    budget_latest_used_percent = NULL,
+    budget_latest_resets_at = NULL,
     token_budget = ?,
     updated_at_ms = ?
 WHERE thread_id = ?
@@ -191,6 +301,7 @@ WHERE thread_id = ?
                 .bind(token_budget)
                 .bind(crate::ThreadGoalStatus::BudgetLimited.as_str())
                 .bind(status.as_str())
+                .bind(token_budget)
                 .bind(token_budget)
                 .bind(now_ms)
                 .bind(thread_id.to_string())
@@ -233,6 +344,13 @@ WHERE thread_id = ?
 UPDATE thread_goals
 SET
     token_budget = ?,
+    budget_kind = CASE WHEN ? IS NULL THEN NULL ELSE 'tokens' END,
+    budget_limit_id = NULL,
+    budget_percent = NULL,
+    budget_baseline_used_percent = NULL,
+    budget_baseline_resets_at = NULL,
+    budget_latest_used_percent = NULL,
+    budget_latest_resets_at = NULL,
     status = CASE
         WHEN status = 'active' AND ? IS NOT NULL AND tokens_used >= ? THEN ?
         ELSE status
@@ -242,6 +360,7 @@ WHERE thread_id = ?
   AND (? IS NULL OR goal_id = ?)
             "#,
                 )
+                .bind(token_budget)
                 .bind(token_budget)
                 .bind(token_budget)
                 .bind(token_budget)
@@ -373,6 +492,13 @@ RETURNING
     goal_id,
     objective,
     status,
+    budget_kind,
+    budget_limit_id,
+    budget_percent,
+    budget_baseline_used_percent,
+    budget_baseline_resets_at,
+    budget_latest_used_percent,
+    budget_latest_resets_at,
     token_budget,
     tokens_used,
     time_used_seconds,
@@ -403,10 +529,137 @@ RETURNING
         let updated = thread_goal_from_row(&row)?;
         Ok(ThreadGoalAccountingOutcome::Updated(updated))
     }
+
+    pub async fn account_thread_goal_five_hour_limit(
+        &self,
+        thread_id: ThreadId,
+        limit_id: &str,
+        used_percent: f64,
+        resets_at: Option<i64>,
+        expected_goal_id: Option<&str>,
+    ) -> anyhow::Result<ThreadGoalAccountingOutcome> {
+        let now_ms = datetime_to_epoch_millis(Utc::now());
+        let goal_id_filter = if expected_goal_id.is_some() {
+            "goal_id = ?"
+        } else {
+            "1 = 1"
+        };
+        let query = format!(
+            r#"
+UPDATE thread_goals
+SET
+    budget_latest_used_percent = ?,
+    budget_latest_resets_at = ?,
+    status = CASE
+        WHEN status = 'active'
+            AND (
+                ? - budget_baseline_used_percent >= budget_percent
+                OR (
+                    budget_baseline_resets_at IS NOT NULL
+                    AND ? IS NOT NULL
+                    AND budget_baseline_resets_at != ?
+                )
+            )
+            THEN ?
+        ELSE status
+    END,
+    updated_at_ms = ?
+WHERE thread_id = ?
+  AND budget_kind = 'five_hour_limit_percent'
+  AND budget_limit_id = ?
+  AND status IN ('active', 'budget_limited')
+  AND {goal_id_filter}
+RETURNING
+    thread_id,
+    goal_id,
+    objective,
+    status,
+    budget_kind,
+    budget_limit_id,
+    budget_percent,
+    budget_baseline_used_percent,
+    budget_baseline_resets_at,
+    budget_latest_used_percent,
+    budget_latest_resets_at,
+    token_budget,
+    tokens_used,
+    time_used_seconds,
+    created_at_ms,
+    updated_at_ms
+            "#,
+        );
+
+        let mut query = sqlx::query(&query)
+            .bind(used_percent)
+            .bind(resets_at)
+            .bind(used_percent)
+            .bind(resets_at)
+            .bind(resets_at)
+            .bind(crate::ThreadGoalStatus::BudgetLimited.as_str())
+            .bind(now_ms)
+            .bind(thread_id.to_string())
+            .bind(limit_id);
+        if let Some(expected_goal_id) = expected_goal_id {
+            query = query.bind(expected_goal_id);
+        }
+
+        let row = query.fetch_optional(self.pool.as_ref()).await?;
+
+        let Some(row) = row else {
+            return Ok(ThreadGoalAccountingOutcome::Unchanged(
+                self.get_thread_goal(thread_id).await?,
+            ));
+        };
+
+        let updated = thread_goal_from_row(&row)?;
+        Ok(ThreadGoalAccountingOutcome::Updated(updated))
+    }
 }
 
 fn thread_goal_from_row(row: &sqlx::sqlite::SqliteRow) -> anyhow::Result<crate::ThreadGoal> {
     ThreadGoalRow::try_from_row(row).and_then(crate::ThreadGoal::try_from)
+}
+
+fn budget_columns(budget: Option<&crate::ThreadGoalBudget>) -> GoalBudgetColumns<'_> {
+    match budget {
+        Some(crate::ThreadGoalBudget::Tokens { token_budget }) => GoalBudgetColumns {
+            kind: Some("tokens"),
+            limit_id: None,
+            percent: None,
+            baseline_used_percent: None,
+            baseline_resets_at: None,
+            latest_used_percent: None,
+            latest_resets_at: None,
+            token_budget: Some(*token_budget),
+        },
+        Some(crate::ThreadGoalBudget::FiveHourLimitPercent {
+            limit_id,
+            percent,
+            baseline_used_percent,
+            baseline_resets_at,
+            latest_used_percent,
+            latest_resets_at,
+        }) => GoalBudgetColumns {
+            kind: Some("five_hour_limit_percent"),
+            limit_id: Some(limit_id.as_str()),
+            percent: Some(*percent),
+            baseline_used_percent: Some(*baseline_used_percent),
+            baseline_resets_at: *baseline_resets_at,
+            latest_used_percent: Some(*latest_used_percent),
+            latest_resets_at: *latest_resets_at,
+            token_budget: None,
+        },
+        None => GoalBudgetColumns {
+            kind: None,
+            limit_id: None,
+            percent: None,
+            baseline_used_percent: None,
+            baseline_resets_at: None,
+            latest_used_percent: None,
+            latest_resets_at: None,
+            token_budget: None,
+        },
+    }
 }
 
 fn status_after_budget_limit(
@@ -486,6 +739,9 @@ mod tests {
             .expect("goal should exist");
         let expected = crate::ThreadGoal {
             status: crate::ThreadGoalStatus::Paused,
+            budget: Some(crate::ThreadGoalBudget::Tokens {
+                token_budget: 200_000,
+            }),
             token_budget: Some(200_000),
             updated_at: updated.updated_at,
             ..goal.clone()
@@ -589,6 +845,60 @@ mod tests {
         assert_eq!(Some(0), inserted.token_budget);
         assert_eq!(0, inserted.tokens_used);
         assert_eq!(0, inserted.time_used_seconds);
+    }
+
+    #[tokio::test]
+    async fn five_hour_limit_accounting_budget_limits_at_percent_threshold() {
+        let runtime = test_runtime().await;
+        let thread_id = test_thread_id();
+        upsert_test_thread(&runtime, thread_id).await;
+
+        let goal = runtime
+            .replace_thread_goal_with_budget(
+                thread_id,
+                "stay under 5h usage",
+                crate::ThreadGoalStatus::Active,
+                Some(crate::ThreadGoalBudget::FiveHourLimitPercent {
+                    limit_id: "codex".to_string(),
+                    percent: 10.0,
+                    baseline_used_percent: 25.0,
+                    baseline_resets_at: Some(1_800_000_000),
+                    latest_used_percent: 25.0,
+                    latest_resets_at: Some(1_800_000_000),
+                }),
+            )
+            .await
+            .expect("goal replacement should succeed");
+
+        let outcome = runtime
+            .account_thread_goal_five_hour_limit(
+                thread_id,
+                "codex",
+                /*used_percent*/ 34.9,
+                Some(1_800_000_000),
+                Some(goal.goal_id.as_str()),
+            )
+            .await
+            .expect("5h limit accounting should succeed");
+        let ThreadGoalAccountingOutcome::Updated(goal) = outcome else {
+            panic!("5h limit progress should update the goal");
+        };
+        assert_eq!(crate::ThreadGoalStatus::Active, goal.status);
+
+        let outcome = runtime
+            .account_thread_goal_five_hour_limit(
+                thread_id,
+                "codex",
+                /*used_percent*/ 35.0,
+                Some(1_800_000_000),
+                Some(goal.goal_id.as_str()),
+            )
+            .await
+            .expect("5h limit accounting should succeed");
+        let ThreadGoalAccountingOutcome::Updated(goal) = outcome else {
+            panic!("5h limit threshold should update the goal");
+        };
+        assert_eq!(crate::ThreadGoalStatus::BudgetLimited, goal.status);
     }
 
     #[tokio::test]

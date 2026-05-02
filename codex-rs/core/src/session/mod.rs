@@ -2852,9 +2852,19 @@ impl Session {
     ) {
         {
             let mut state = self.state.lock().await;
-            state.set_rate_limits(new_rate_limits);
+            state.set_rate_limits(new_rate_limits.clone());
+        }
+        if let Err(err) = self
+            .account_thread_goal_five_hour_limit_snapshot(turn_context, &new_rate_limits)
+            .await
+        {
+            tracing::warn!("failed to account five-hour-limit goal progress: {err}");
         }
         self.send_token_count_event(turn_context).await;
+    }
+
+    pub(crate) async fn latest_rate_limits(&self) -> Option<RateLimitSnapshot> {
+        self.state.lock().await.latest_rate_limits.clone()
     }
 
     pub(crate) async fn mcp_dependency_prompted(&self) -> HashSet<String> {

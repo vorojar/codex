@@ -3521,6 +3521,52 @@
       ],
       "type": "object"
     },
+    "ThreadGoalBudgetParams": {
+      "oneOf": [
+        {
+          "properties": {
+            "token_budget": {
+              "format": "int64",
+              "type": "integer"
+            },
+            "type": {
+              "enum": [
+                "tokens"
+              ],
+              "title": "TokensThreadGoalBudgetParamsType",
+              "type": "string"
+            }
+          },
+          "required": [
+            "token_budget",
+            "type"
+          ],
+          "title": "TokensThreadGoalBudgetParams",
+          "type": "object"
+        },
+        {
+          "properties": {
+            "percent": {
+              "format": "double",
+              "type": "number"
+            },
+            "type": {
+              "enum": [
+                "fiveHourLimitPercent"
+              ],
+              "title": "FiveHourLimitPercentThreadGoalBudgetParamsType",
+              "type": "string"
+            }
+          },
+          "required": [
+            "percent",
+            "type"
+          ],
+          "title": "FiveHourLimitPercentThreadGoalBudgetParams",
+          "type": "object"
+        }
+      ]
+    },
     "ThreadGoalStatus": {
       "enum": [
         "active",

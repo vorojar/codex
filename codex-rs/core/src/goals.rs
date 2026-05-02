@@ -18,6 +18,7 @@ use codex_protocol::models::ResponseInputItem;
 use codex_protocol::protocol::Event;
 use codex_protocol::protocol::EventMsg;
 use codex_protocol::protocol::ThreadGoal;
+use codex_protocol::protocol::ThreadGoalBudget;
 use codex_protocol::protocol::ThreadGoalStatus;
 use codex_protocol::protocol::ThreadGoalUpdatedEvent;
 use codex_protocol::protocol::TokenUsage;
@@ -44,6 +45,12 @@ pub(crate) struct SetGoalRequest {
 pub(crate) struct CreateGoalRequest {
     pub(crate) objective: String,
     pub(crate) token_budget: Option<i64>,
+    pub(crate) budget: Option<GoalBudgetRequest>,
+}
+
+pub(crate) enum GoalBudgetRequest {
+    Tokens(i64),
+    FiveHourLimitPercent(f64),
 }
 
 static CONTINUATION_PROMPT_TEMPLATE: LazyLock<Template> =
@@ -494,10 +501,13 @@ impl Session {
         let CreateGoalRequest {
             objective,
             token_budget,
+            budget,
         } = request;
-        validate_goal_budget(token_budget)?;
+        let budget = budget.or_else(|| token_budget.map(GoalBudgetRequest::Tokens));
+        validate_goal_budget_request(budget.as_ref())?;
         let objective = objective.trim();
         validate_thread_goal_objective(objective).map_err(anyhow::Error::msg)?;
+        let budget = self.state_budget_from_request(budget).await?;
 
         let state_db = self.require_state_db_for_thread_goals().await?;
         self.account_thread_goal_wall_clock_usage(
@@ -506,11 +516,11 @@ impl Session {
         )
         .await?;
         let goal = state_db
-            .insert_thread_goal(
+            .insert_thread_goal_with_budget(
                 self.conversation_id,
                 objective,
                 codex_state::ThreadGoalStatus::Active,
-                token_budget,
+                budget,
             )
             .await?
             .ok_or_else(|| {
@@ -542,6 +552,43 @@ impl Session {
         )
         .await;
         Ok(goal)
+    }
+
+    async fn state_budget_from_request(
+        &self,
+        budget: Option<GoalBudgetRequest>,
+    ) -> anyhow::Result<Option<codex_state::ThreadGoalBudget>> {
+        let Some(budget) = budget else {
+            return Ok(None);
+        };
+
+        match budget {
+            GoalBudgetRequest::Tokens(token_budget) => {
+                Ok(Some(codex_state::ThreadGoalBudget::Tokens { token_budget }))
+            }
+            GoalBudgetRequest::FiveHourLimitPercent(percent) => {
+                let snapshot = self.latest_rate_limits().await;
+                let Some(snapshot) = snapshot else {
+                    anyhow::bail!(
+                        "cannot create a five-hour-limit goal because current Codex usage data is unavailable; retry after rate-limit data loads"
+                    );
+                };
+                let Some(window) = snapshot.primary else {
+                    anyhow::bail!(
+                        "cannot create a five-hour-limit goal because the current Codex 5h limit is unavailable"
+                    );
+                };
+                let limit_id = snapshot.limit_id.unwrap_or_else(|| "codex".to_string());
+                Ok(Some(codex_state::ThreadGoalBudget::FiveHourLimitPercent {
+                    limit_id,
+                    percent,
+                    baseline_used_percent: window.used_percent,
+                    baseline_resets_at: window.resets_at,
+                    latest_used_percent: window.used_percent,
+                    latest_resets_at: window.resets_at,
+                }))
+            }
+        }
     }
 
     async fn apply_external_thread_goal_status(
@@ -888,6 +935,74 @@ impl Session {
             let item = budget_limit_steering_item(&goal);
             if self.inject_response_items(vec![item]).await.is_err() {
                 tracing::debug!("skipping budget-limit goal steering because no turn is active");
+            }
+            *self.goal_runtime.budget_limit_reported_goal_id.lock().await = Some(goal_id);
+        }
+        Ok(())
+    }
+
+    pub(crate) async fn account_thread_goal_five_hour_limit_snapshot(
+        &self,
+        turn_context: &TurnContext,
+        snapshot: &codex_protocol::protocol::RateLimitSnapshot,
+    ) -> anyhow::Result<()> {
+        if !self.enabled(Feature::Goals) {
+            return Ok(());
+        }
+        if should_ignore_goal_for_mode(turn_context.collaboration_mode.mode) {
+            return Ok(());
+        }
+        let Some(window) = snapshot.primary.as_ref() else {
+            return Ok(());
+        };
+        let Some(state_db) = self.state_db_for_thread_goals().await? else {
+            return Ok(());
+        };
+        let limit_id = snapshot.limit_id.as_deref().unwrap_or("codex");
+        let expected_goal_id = {
+            let accounting = self.goal_runtime.accounting.lock().await;
+            accounting.wall_clock.active_goal_id()
+        };
+        let outcome = state_db
+            .account_thread_goal_five_hour_limit(
+                self.conversation_id,
+                limit_id,
+                window.used_percent,
+                window.resets_at,
+                expected_goal_id.as_deref(),
+            )
+            .await?;
+        let budget_limit_was_already_reported = {
+            let reported_goal_id = self.goal_runtime.budget_limit_reported_goal_id.lock().await;
+            expected_goal_id
+                .as_deref()
+                .is_some_and(|goal_id| reported_goal_id.as_deref() == Some(goal_id))
+        };
+        let goal = match outcome {
+            codex_state::ThreadGoalAccountingOutcome::Updated(goal) => goal,
+            codex_state::ThreadGoalAccountingOutcome::Unchanged(_) => return Ok(()),
+        };
+        let should_steer_budget_limit = goal.status == codex_state::ThreadGoalStatus::BudgetLimited
+            && !budget_limit_was_already_reported;
+        let goal_status = goal.status;
+        let goal_id = goal.goal_id.clone();
+        if goal_status != codex_state::ThreadGoalStatus::BudgetLimited {
+            *self.goal_runtime.budget_limit_reported_goal_id.lock().await = None;
+        }
+        let goal = protocol_goal_from_state(goal);
+        self.send_event(
+            turn_context,
+            EventMsg::ThreadGoalUpdated(ThreadGoalUpdatedEvent {
+                thread_id: self.conversation_id,
+                turn_id: Some(turn_context.sub_id.clone()),
+                goal: goal.clone(),
+            }),
+        )
+        .await;
+        if should_steer_budget_limit {
+            let item = budget_limit_steering_item(&goal);
+            if self.inject_response_items(vec![item]).await.is_err() {
+                tracing::debug!("skipping 5h budget-limit goal steering because no turn is active");
             }
             *self.goal_runtime.budget_limit_reported_goal_id.lock().await = Some(goal_id);
         }
@@ -1414,11 +1529,35 @@ pub(crate) fn protocol_goal_from_state(goal: codex_state::ThreadGoal) -> ThreadG
         thread_id: goal.thread_id,
         objective: goal.objective,
         status: protocol_goal_status_from_state(goal.status),
+        budget: goal.budget.map(protocol_goal_budget_from_state),
         token_budget: goal.token_budget,
         tokens_used: goal.tokens_used,
         time_used_seconds: goal.time_used_seconds,
         created_at: goal.created_at.timestamp(),
         updated_at: goal.updated_at.timestamp(),
+    }
+}
+
+fn protocol_goal_budget_from_state(budget: codex_state::ThreadGoalBudget) -> ThreadGoalBudget {
+    match budget {
+        codex_state::ThreadGoalBudget::Tokens { token_budget } => {
+            ThreadGoalBudget::Tokens { token_budget }
+        }
+        codex_state::ThreadGoalBudget::FiveHourLimitPercent {
+            limit_id,
+            percent,
+            baseline_used_percent,
+            baseline_resets_at,
+            latest_used_percent,
+            latest_resets_at,
+        } => ThreadGoalBudget::FiveHourLimitPercent {
+            limit_id,
+            percent,
+            baseline_used_percent,
+            baseline_resets_at,
+            latest_used_percent,
+            latest_resets_at,
+        },
     }
 }
 
@@ -1451,6 +1590,21 @@ pub(crate) fn validate_goal_budget(value: Option<i64>) -> anyhow::Result<()> {
         anyhow::bail!("goal budgets must be positive when provided");
     }
     Ok(())
+}
+
+pub(crate) fn validate_goal_budget_request(
+    value: Option<&GoalBudgetRequest>,
+) -> anyhow::Result<()> {
+    match value {
+        Some(GoalBudgetRequest::Tokens(token_budget)) => validate_goal_budget(Some(*token_budget)),
+        Some(GoalBudgetRequest::FiveHourLimitPercent(percent)) => {
+            if !percent.is_finite() || *percent <= 0.0 || *percent > 100.0 {
+                anyhow::bail!("five-hour-limit goal budgets must be a percent from 0 to 100");
+            }
+            Ok(())
+        }
+        None => Ok(()),
+    }
 }
 
 pub(crate) fn goal_token_delta_for_usage(usage: &TokenUsage) -> i64 {
@@ -1518,6 +1672,7 @@ mod tests {
             thread_id: ThreadId::new(),
             objective: "finish the stack".to_string(),
             status: ThreadGoalStatus::Active,
+            budget: None,
             token_budget: Some(10_000),
             tokens_used: 1_234,
             time_used_seconds: 56,
@@ -1543,6 +1698,7 @@ mod tests {
             thread_id: ThreadId::new(),
             objective: "finish the stack".to_string(),
             status: ThreadGoalStatus::BudgetLimited,
+            budget: None,
             token_budget: Some(10_000),
             tokens_used: 10_100,
             time_used_seconds: 56,
@@ -1568,6 +1724,7 @@ mod tests {
             thread_id: ThreadId::new(),
             objective: objective.to_string(),
             status: ThreadGoalStatus::Active,
+            budget: None,
             token_budget: None,
             tokens_used: 0,
             time_used_seconds: 0,
@@ -1578,6 +1735,7 @@ mod tests {
             thread_id: ThreadId::new(),
             objective: objective.to_string(),
             status: ThreadGoalStatus::BudgetLimited,
+            budget: None,
             token_budget: Some(10_000),
             tokens_used: 10_100,
             time_used_seconds: 56,

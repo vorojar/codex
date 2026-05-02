@@ -91,6 +91,7 @@ pub(crate) mod custom_prompt_view;
 mod experimental_features_view;
 mod file_search_popup;
 mod footer;
+mod goal_setup_view;
 mod list_selection_view;
 mod memories_settings_view;
 pub(crate) mod prompt_args;
@@ -101,6 +102,7 @@ pub(crate) use footer::CollaborationModeIndicator;
 pub(crate) use footer::GoalStatusIndicator;
 #[cfg(test)]
 pub(crate) use footer::goal_status_indicator_line;
+pub(crate) use goal_setup_view::GoalSetupView;
 pub(crate) use list_selection_view::ColumnWidthMode;
 #[cfg(test)]
 pub(crate) use list_selection_view::ListSelectionView;

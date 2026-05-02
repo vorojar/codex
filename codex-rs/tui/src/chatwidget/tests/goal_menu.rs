@@ -42,6 +42,14 @@ async fn goal_menu_budget_limited_snapshot() {
     assert_chatwidget_snapshot!("goal_menu_budget_limited", rendered_goal_summary(&mut rx));
 }
 
+#[tokio::test]
+async fn goal_setup_snapshot() {
+    let (mut chat, _rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
+    chat.show_goal_setup(ThreadId::new());
+
+    assert_chatwidget_snapshot!("goal_setup", render_bottom_popup(&chat, /*width*/ 80));
+}
+
 fn test_goal(
     thread_id: ThreadId,
     status: AppThreadGoalStatus,
@@ -52,6 +60,7 @@ fn test_goal(
         objective: "Keep improving the bare goal command until it feels calm and useful."
             .to_string(),
         status,
+        budget: None,
         token_budget,
         tokens_used: 12_500,
         time_used_seconds: 90,

@@ -3992,12 +3992,74 @@ v2_enum_from_core! {
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, JsonSchema, TS)]
+#[serde(tag = "type", rename_all = "camelCase")]
+#[ts(tag = "type")]
+#[ts(export_to = "v2/")]
+pub enum ThreadGoalBudget {
+    Tokens {
+        #[ts(type = "number")]
+        token_budget: i64,
+    },
+    FiveHourLimitPercent {
+        limit_id: String,
+        percent: f64,
+        baseline_used_percent: f64,
+        #[ts(type = "number | null")]
+        baseline_resets_at: Option<i64>,
+        latest_used_percent: f64,
+        #[ts(type = "number | null")]
+        latest_resets_at: Option<i64>,
+    },
+}
+
+impl From<codex_protocol::protocol::ThreadGoalBudget> for ThreadGoalBudget {
+    fn from(value: codex_protocol::protocol::ThreadGoalBudget) -> Self {
+        match value {
+            codex_protocol::protocol::ThreadGoalBudget::Tokens { token_budget } => {
+                Self::Tokens { token_budget }
+            }
+            codex_protocol::protocol::ThreadGoalBudget::FiveHourLimitPercent {
+                limit_id,
+                percent,
+                baseline_used_percent,
+                baseline_resets_at,
+                latest_used_percent,
+                latest_resets_at,
+            } => Self::FiveHourLimitPercent {
+                limit_id,
+                percent,
+                baseline_used_percent,
+                baseline_resets_at,
+                latest_used_percent,
+                latest_resets_at,
+            },
+        }
+    }
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, JsonSchema, TS)]
+#[serde(tag = "type", rename_all = "camelCase")]
+#[ts(tag = "type")]
+#[ts(export_to = "v2/")]
+pub enum ThreadGoalBudgetParams {
+    Tokens {
+        #[ts(type = "number")]
+        token_budget: i64,
+    },
+    FiveHourLimitPercent {
+        percent: f64,
+    },
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, JsonSchema, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export_to = "v2/")]
 pub struct ThreadGoal {
     pub thread_id: String,
     pub objective: String,
     pub status: ThreadGoalStatus,
+    #[ts(type = "ThreadGoalBudget | null")]
+    pub budget: Option<ThreadGoalBudget>,
     #[ts(type = "number | null")]
     pub token_budget: Option<i64>,
     #[ts(type = "number")]
@@ -4016,6 +4078,7 @@ impl From<codex_protocol::protocol::ThreadGoal> for ThreadGoal {
             thread_id: value.thread_id.to_string(),
             objective: value.objective,
             status: value.status.into(),
+            budget: value.budget.map(ThreadGoalBudget::from),
             token_budget: value.token_budget,
             tokens_used: value.tokens_used,
             time_used_seconds: value.time_used_seconds,
@@ -4034,6 +4097,14 @@ pub struct ThreadGoalSetParams {
     pub objective: Option<String>,
     #[ts(optional = nullable)]
     pub status: Option<ThreadGoalStatus>,
+    #[serde(
+        default,
+        deserialize_with = "super::serde_helpers::deserialize_double_option",
+        serialize_with = "super::serde_helpers::serialize_double_option",
+        skip_serializing_if = "Option::is_none"
+    )]
+    #[ts(optional = nullable, type = "ThreadGoalBudgetParams | null")]
+    pub budget: Option<Option<ThreadGoalBudgetParams>>,
     #[serde(
         default,
         deserialize_with = "super::serde_helpers::deserialize_double_option",

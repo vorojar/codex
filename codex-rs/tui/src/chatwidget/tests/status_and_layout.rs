@@ -1867,6 +1867,7 @@ fn test_thread_goal(
         thread_id: "thread-1".to_string(),
         objective: "Keep improving the benchmark".to_string(),
         status,
+        budget: None,
         token_budget,
         tokens_used,
         time_used_seconds: 30 * 60,

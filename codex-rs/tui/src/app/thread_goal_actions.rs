@@ -8,6 +8,7 @@ use crate::bottom_pane::SelectionViewParams;
 use crate::bottom_pane::popup_consts::standard_popup_hint_line;
 use crate::goal_display::goal_status_label;
 use crate::goal_display::goal_usage_summary;
+use codex_app_server_protocol::ThreadGoalBudgetParams;
 use codex_app_server_protocol::ThreadGoalStatus;
 use codex_protocol::ThreadId;
 
@@ -32,10 +33,7 @@ impl App {
         };
 
         let Some(goal) = response.goal else {
-            self.chat_widget.add_info_message(
-                "Usage: /goal <objective>".to_string(),
-                Some("No goal is currently set.".to_string()),
-            );
+            self.chat_widget.show_goal_setup(thread_id);
             return;
         };
 
@@ -47,6 +45,7 @@ impl App {
         app_server: &mut AppServerSession,
         thread_id: ThreadId,
         objective: String,
+        budget: Option<ThreadGoalBudgetParams>,
         mode: ThreadGoalSetMode,
     ) {
         if mode == ThreadGoalSetMode::ConfirmIfExists {
@@ -57,7 +56,7 @@ impl App {
 
             match result {
                 Ok(response) if response.goal.is_some() => {
-                    self.show_replace_thread_goal_confirmation(thread_id, objective);
+                    self.show_replace_thread_goal_confirmation(thread_id, objective, budget);
                     return;
                 }
                 Ok(_) => {}
@@ -74,6 +73,7 @@ impl App {
                 thread_id,
                 Some(objective),
                 Some(ThreadGoalStatus::Active),
+                budget.map(Some),
                 /*token_budget*/ None,
             )
             .await;
@@ -103,6 +103,7 @@ impl App {
                 thread_id,
                 /*objective*/ None,
                 Some(status),
+                /*budget*/ None,
                 /*token_budget*/ None,
             )
             .await;
@@ -149,12 +150,19 @@ impl App {
         }
     }
 
-    fn show_replace_thread_goal_confirmation(&mut self, thread_id: ThreadId, objective: String) {
+    fn show_replace_thread_goal_confirmation(
+        &mut self,
+        thread_id: ThreadId,
+        objective: String,
+        budget: Option<ThreadGoalBudgetParams>,
+    ) {
         let replace_objective = objective.clone();
+        let replace_budget = budget;
         let replace_actions: Vec<SelectionAction> = vec![Box::new(move |tx| {
             tx.send(AppEvent::SetThreadGoalObjective {
                 thread_id,
                 objective: replace_objective.clone(),
+                budget: replace_budget.clone(),
                 mode: ThreadGoalSetMode::ReplaceExisting,
             });
         })];

@@ -55,6 +55,7 @@ use codex_app_server_protocol::ThreadCompactStartParams;
 use codex_app_server_protocol::ThreadCompactStartResponse;
 use codex_app_server_protocol::ThreadForkParams;
 use codex_app_server_protocol::ThreadForkResponse;
+use codex_app_server_protocol::ThreadGoalBudgetParams;
 use codex_app_server_protocol::ThreadGoalClearParams;
 use codex_app_server_protocol::ThreadGoalClearResponse;
 use codex_app_server_protocol::ThreadGoalGetParams;
@@ -686,6 +687,7 @@ impl AppServerSession {
         thread_id: ThreadId,
         objective: Option<String>,
         status: Option<ThreadGoalStatus>,
+        budget: Option<Option<ThreadGoalBudgetParams>>,
         token_budget: Option<Option<i64>>,
     ) -> Result<ThreadGoalSetResponse> {
         let request_id = self.next_request_id();
@@ -696,6 +698,7 @@ impl AppServerSession {
                     thread_id: thread_id.to_string(),
                     objective,
                     status,
+                    budget,
                     token_budget,
                 },
             })

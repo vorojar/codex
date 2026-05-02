@@ -6,6 +6,7 @@
 
 use crate::function_tool::FunctionCallError;
 use crate::goals::CreateGoalRequest;
+use crate::goals::GoalBudgetRequest;
 use crate::goals::GoalRuntimeEvent;
 use crate::goals::SetGoalRequest;
 use crate::session::session::Session;
@@ -33,6 +34,14 @@ pub struct GoalHandler;
 struct CreateGoalArgs {
     objective: String,
     token_budget: Option<i64>,
+    budget: Option<CreateGoalBudgetArgs>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+enum CreateGoalBudgetArgs {
+    Tokens { token_budget: i64 },
+    FiveHourLimitPercent { percent: f64 },
 }
 
 #[derive(Debug, Deserialize)]
@@ -134,6 +143,7 @@ async fn handle_create_goal(
             CreateGoalRequest {
                 objective: args.objective,
                 token_budget: args.token_budget,
+                budget: args.budget.map(goal_budget_request_from_args),
             },
         )
         .await
@@ -151,6 +161,15 @@ async fn handle_create_goal(
             }
         })?;
     goal_response(Some(goal), CompletionBudgetReport::Omit)
+}
+
+fn goal_budget_request_from_args(args: CreateGoalBudgetArgs) -> GoalBudgetRequest {
+    match args {
+        CreateGoalBudgetArgs::Tokens { token_budget } => GoalBudgetRequest::Tokens(token_budget),
+        CreateGoalBudgetArgs::FiveHourLimitPercent { percent } => {
+            GoalBudgetRequest::FiveHourLimitPercent(percent)
+        }
+    }
 }
 
 async fn handle_update_goal(
@@ -231,6 +250,7 @@ mod tests {
             thread_id: ThreadId::new(),
             objective: "Keep optimizing".to_string(),
             status: ThreadGoalStatus::Complete,
+            budget: None,
             token_budget: Some(10_000),
             tokens_used: 3_250,
             time_used_seconds: 75,
@@ -259,6 +279,7 @@ mod tests {
             thread_id: ThreadId::new(),
             objective: "Write a poem".to_string(),
             status: ThreadGoalStatus::Complete,
+            budget: None,
             token_budget: None,
             tokens_used: 120,
             time_used_seconds: 0,

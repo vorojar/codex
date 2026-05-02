@@ -9,6 +9,7 @@ use super::*;
 use crate::app_event::ThreadGoalSetMode;
 use crate::bottom_pane::prompt_args::parse_slash_name;
 use crate::bottom_pane::slash_commands;
+use codex_app_server_protocol::ThreadGoalBudgetParams;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum SlashCommandDispatchSource {
@@ -31,6 +32,84 @@ const SIDE_REVIEW_UNAVAILABLE_MESSAGE: &str =
 const SIDE_SLASH_COMMAND_UNAVAILABLE_HINT: &str = "Press Esc to return to the main thread first.";
 const GOAL_USAGE: &str = "Usage: /goal <objective>";
 const GOAL_USAGE_HINT: &str = "Example: /goal improve benchmark coverage";
+
+struct ParsedGoalCommand {
+    objective: String,
+    budget: Option<ThreadGoalBudgetParams>,
+}
+
+fn parse_goal_objective_and_budget(input: &str) -> Result<ParsedGoalCommand, String> {
+    let Some(rest) = input.strip_prefix("--tokens ") else {
+        if let Some(rest) = input.strip_prefix("--5h-limit ") {
+            return parse_goal_five_hour_limit_budget(rest, "--5h-limit");
+        }
+        if let Some(rest) = input.strip_prefix("--five-hour-limit ") {
+            return parse_goal_five_hour_limit_budget(rest, "--five-hour-limit");
+        };
+        return Ok(ParsedGoalCommand {
+            objective: input.to_string(),
+            budget: None,
+        });
+    };
+    let (tokens, objective) = split_budget_value(rest, "--tokens")?;
+    Ok(ParsedGoalCommand {
+        objective: objective.to_string(),
+        budget: Some(ThreadGoalBudgetParams::Tokens {
+            token_budget: parse_goal_token_budget(tokens)?,
+        }),
+    })
+}
+
+fn parse_goal_five_hour_limit_budget(input: &str, flag: &str) -> Result<ParsedGoalCommand, String> {
+    let (percent, objective) = split_budget_value(input, flag)?;
+    Ok(ParsedGoalCommand {
+        objective: objective.to_string(),
+        budget: Some(ThreadGoalBudgetParams::FiveHourLimitPercent {
+            percent: parse_goal_five_hour_percent(percent)?,
+        }),
+    })
+}
+
+fn split_budget_value<'a>(input: &'a str, flag: &str) -> Result<(&'a str, &'a str), String> {
+    let mut parts = input.trim().splitn(2, char::is_whitespace);
+    let value = parts.next().unwrap_or_default();
+    let objective = parts.next().unwrap_or_default().trim();
+    if value.is_empty() || objective.is_empty() {
+        return Err(format!("Usage: /goal {flag} <value> <objective>"));
+    }
+    Ok((value, objective))
+}
+
+fn parse_goal_token_budget(value: &str) -> Result<i64, String> {
+    let (number, multiplier) = match value.chars().last() {
+        Some('k' | 'K') => (&value[..value.len() - 1], 1_000.0),
+        Some('m' | 'M') => (&value[..value.len() - 1], 1_000_000.0),
+        _ => (value, 1.0),
+    };
+    let parsed = number
+        .parse::<f64>()
+        .map_err(|_| "Token budget must be a number like 500000 or 500k.".to_string())?;
+    let budget = (parsed * multiplier).round();
+    if !budget.is_finite() || budget <= 0.0 || budget > i64::MAX as f64 {
+        return Err("Token budget must be positive.".to_string());
+    }
+    Ok(budget as i64)
+}
+
+fn parse_goal_five_hour_percent(value: &str) -> Result<f64, String> {
+    let value = value
+        .trim()
+        .strip_suffix('%')
+        .unwrap_or(value.trim())
+        .trim();
+    let percent = value
+        .parse::<f64>()
+        .map_err(|_| "5h limit must be a percent like 10%.".to_string())?;
+    if !percent.is_finite() || percent <= 0.0 || percent > 100.0 {
+        return Err("5h limit must be between 0% and 100%.".to_string());
+    }
+    Ok(percent)
+}
 
 impl ChatWidget {
     /// Dispatch a bare slash command and record its staged local-history entry.
@@ -654,7 +733,17 @@ impl ChatWidget {
                     }
                     return;
                 }
-                let objective = args.trim();
+                let parsed_goal = match parse_goal_objective_and_budget(args.trim()) {
+                    Ok(parsed_goal) => parsed_goal,
+                    Err(err) => {
+                        self.add_error_message(err);
+                        if source == SlashCommandDispatchSource::Live {
+                            self.bottom_pane.drain_pending_submission_state();
+                        }
+                        return;
+                    }
+                };
+                let objective = parsed_goal.objective.as_str();
                 if objective.is_empty() {
                     self.add_error_message("Goal objective must not be empty.".to_string());
                     self.add_info_message(
@@ -689,7 +778,8 @@ impl ChatWidget {
                 };
                 self.app_event_tx.send(AppEvent::SetThreadGoalObjective {
                     thread_id,
-                    objective: objective.to_string(),
+                    objective: parsed_goal.objective,
+                    budget: parsed_goal.budget,
                     mode: ThreadGoalSetMode::ConfirmIfExists,
                 });
                 if source == SlashCommandDispatchSource::Live {

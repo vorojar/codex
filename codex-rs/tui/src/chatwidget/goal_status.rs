@@ -5,6 +5,7 @@ use codex_app_server_protocol::ThreadGoalStatus as AppThreadGoalStatus;
 use std::time::Instant;
 
 use crate::bottom_pane::GoalStatusIndicator;
+use crate::goal_display::format_five_hour_goal_progress;
 use crate::goal_display::format_goal_elapsed_seconds;
 use crate::status::format_tokens_compact;
 
@@ -47,14 +48,24 @@ pub(super) fn goal_status_indicator_from_app_goal(
 ) -> Option<GoalStatusIndicator> {
     match goal.status {
         AppThreadGoalStatus::Active => Some(GoalStatusIndicator::Active {
-            usage: active_goal_usage(goal.token_budget, goal.tokens_used, goal.time_used_seconds),
+            usage: active_goal_usage(
+                goal.budget.as_ref(),
+                goal.token_budget,
+                goal.tokens_used,
+                goal.time_used_seconds,
+            ),
         }),
         AppThreadGoalStatus::Paused => Some(GoalStatusIndicator::Paused),
         AppThreadGoalStatus::BudgetLimited => Some(GoalStatusIndicator::BudgetLimited {
-            usage: stopped_goal_budget_usage(goal.token_budget, goal.tokens_used),
+            usage: stopped_goal_budget_usage(
+                goal.budget.as_ref(),
+                goal.token_budget,
+                goal.tokens_used,
+            ),
         }),
         AppThreadGoalStatus::Complete => Some(GoalStatusIndicator::Complete {
             usage: Some(completed_goal_usage(
+                goal.budget.as_ref(),
                 goal.token_budget,
                 goal.tokens_used,
                 goal.time_used_seconds,
@@ -64,10 +75,14 @@ pub(super) fn goal_status_indicator_from_app_goal(
 }
 
 fn active_goal_usage(
+    budget: Option<&codex_app_server_protocol::ThreadGoalBudget>,
     token_budget: Option<i64>,
     tokens_used: i64,
     time_used_seconds: i64,
 ) -> Option<String> {
+    if let Some(budget) = budget.and_then(format_five_hour_goal_progress) {
+        return Some(budget);
+    }
     if let Some(token_budget) = token_budget {
         return Some(format!(
             "{} / {}",
@@ -79,7 +94,14 @@ fn active_goal_usage(
     Some(format_goal_elapsed_seconds(time_used_seconds))
 }
 
-fn stopped_goal_budget_usage(token_budget: Option<i64>, tokens_used: i64) -> Option<String> {
+fn stopped_goal_budget_usage(
+    budget: Option<&codex_app_server_protocol::ThreadGoalBudget>,
+    token_budget: Option<i64>,
+    tokens_used: i64,
+) -> Option<String> {
+    if let Some(budget) = budget.and_then(format_five_hour_goal_progress) {
+        return Some(format!("{budget} 5h limit"));
+    }
     token_budget.map(|token_budget| {
         format!(
             "{} / {} tokens",
@@ -90,10 +112,14 @@ fn stopped_goal_budget_usage(token_budget: Option<i64>, tokens_used: i64) -> Opt
 }
 
 fn completed_goal_usage(
+    budget: Option<&codex_app_server_protocol::ThreadGoalBudget>,
     token_budget: Option<i64>,
     tokens_used: i64,
     time_used_seconds: i64,
 ) -> String {
+    if let Some(budget) = budget.and_then(format_five_hour_goal_progress) {
+        return format!("{budget} 5h limit");
+    }
     if token_budget.is_some() {
         return format!("{} tokens", format_tokens_compact(tokens_used));
     }
@@ -117,6 +143,7 @@ mod tests {
     fn active_goal_usage_prefers_token_budget() {
         assert_eq!(
             active_goal_usage(
+                /*budget*/ None,
                 Some(50_000),
                 /*tokens_used*/ 12_500,
                 /*time_used_seconds*/ 90
@@ -129,7 +156,7 @@ mod tests {
     fn active_goal_usage_reports_time_without_budget() {
         assert_eq!(
             active_goal_usage(
-                /*token_budget*/ None, /*tokens_used*/ 12_500,
+                /*budget*/ None, /*token_budget*/ None, /*tokens_used*/ 12_500,
                 /*time_used_seconds*/ 120,
             ),
             Some("2m".to_string())
@@ -139,7 +166,11 @@ mod tests {
     #[test]
     fn stopped_goal_budget_usage_reports_budgeted_tokens() {
         assert_eq!(
-            stopped_goal_budget_usage(Some(50_000), /*tokens_used*/ 63_876),
+            stopped_goal_budget_usage(
+                /*budget*/ None,
+                Some(50_000),
+                /*tokens_used*/ 63_876
+            ),
             Some("63.9K / 50K tokens".to_string())
         );
     }
@@ -147,7 +178,9 @@ mod tests {
     #[test]
     fn stopped_goal_budget_usage_omits_unbudgeted_usage() {
         assert_eq!(
-            stopped_goal_budget_usage(/*token_budget*/ None, /*tokens_used*/ 12_500),
+            stopped_goal_budget_usage(
+                /*budget*/ None, /*token_budget*/ None, /*tokens_used*/ 12_500
+            ),
             None
         );
     }
@@ -156,6 +189,7 @@ mod tests {
     fn completed_goal_usage_reports_tokens_when_budgeted() {
         assert_eq!(
             completed_goal_usage(
+                /*budget*/ None,
                 Some(50_000),
                 /*tokens_used*/ 40_000,
                 /*time_used_seconds*/ 120,
@@ -168,7 +202,7 @@ mod tests {
     fn completed_goal_usage_reports_time_without_token_budget() {
         assert_eq!(
             completed_goal_usage(
-                /*token_budget*/ None, /*tokens_used*/ 40_000,
+                /*budget*/ None, /*token_budget*/ None, /*tokens_used*/ 40_000,
                 /*time_used_seconds*/ 36_720,
             ),
             "10h 12m".to_string()
@@ -214,6 +248,7 @@ mod tests {
                 thread_id: "thread".to_string(),
                 objective: "do the thing".to_string(),
                 status: AppThreadGoalStatus::Active,
+                budget: None,
                 token_budget: None,
                 tokens_used: 0,
                 time_used_seconds,

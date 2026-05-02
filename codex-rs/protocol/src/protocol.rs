@@ -3613,13 +3613,35 @@ pub fn validate_thread_goal_objective(value: &str) -> Result<(), String> {
     Ok(())
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq, JsonSchema, TS)]
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, JsonSchema, TS)]
+#[serde(tag = "type", rename_all = "snake_case")]
+#[ts(tag = "type", export_to = "protocol/")]
+pub enum ThreadGoalBudget {
+    Tokens {
+        token_budget: i64,
+    },
+    FiveHourLimitPercent {
+        limit_id: String,
+        percent: f64,
+        baseline_used_percent: f64,
+        #[ts(type = "number | null")]
+        baseline_resets_at: Option<i64>,
+        latest_used_percent: f64,
+        #[ts(type = "number | null")]
+        latest_resets_at: Option<i64>,
+    },
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, JsonSchema, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export_to = "protocol/")]
 pub struct ThreadGoal {
     pub thread_id: ThreadId,
     pub objective: String,
     pub status: ThreadGoalStatus,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub budget: Option<ThreadGoalBudget>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub token_budget: Option<i64>,
@@ -3629,7 +3651,7 @@ pub struct ThreadGoal {
     pub updated_at: i64,
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq, JsonSchema, TS)]
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, JsonSchema, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export_to = "protocol/")]
 pub struct ThreadGoalUpdatedEvent {

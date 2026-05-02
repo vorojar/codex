@@ -25,6 +25,7 @@ use codex_app_server_protocol::PluginReadResponse;
 use codex_app_server_protocol::PluginUninstallResponse;
 use codex_app_server_protocol::RateLimitSnapshot;
 use codex_app_server_protocol::SkillsListResponse;
+use codex_app_server_protocol::ThreadGoalBudgetParams;
 use codex_app_server_protocol::ThreadGoalStatus;
 use codex_file_search::FileMatch;
 use codex_protocol::ThreadId;
@@ -226,6 +227,7 @@ pub(crate) enum AppEvent {
     SetThreadGoalObjective {
         thread_id: ThreadId,
         objective: String,
+        budget: Option<ThreadGoalBudgetParams>,
         mode: ThreadGoalSetMode,
     },
 

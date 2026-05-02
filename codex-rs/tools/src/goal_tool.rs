@@ -26,6 +26,40 @@ pub fn create_get_goal_tool() -> ToolSpec {
 }
 
 pub fn create_create_goal_tool() -> ToolSpec {
+    let token_budget_schema = JsonSchema::object(
+        BTreeMap::from([
+            (
+                "type".to_string(),
+                JsonSchema::string_enum(vec![json!("tokens")], /*description*/ None),
+            ),
+            (
+                "token_budget".to_string(),
+                JsonSchema::integer(Some("Positive token budget.".to_string())),
+            ),
+        ]),
+        Some(vec!["type".to_string(), "token_budget".to_string()]),
+        Some(false.into()),
+    );
+    let five_hour_limit_budget_schema = JsonSchema::object(
+        BTreeMap::from([
+            (
+                "type".to_string(),
+                JsonSchema::string_enum(
+                    vec![json!("five_hour_limit_percent")],
+                    /*description*/ None,
+                ),
+            ),
+            (
+                "percent".to_string(),
+                JsonSchema::number(Some(
+                    "Percentage points of the current Codex 5h limit to spend on this goal."
+                        .to_string(),
+                )),
+            ),
+        ]),
+        Some(vec!["type".to_string(), "percent".to_string()]),
+        Some(false.into()),
+    );
     let properties = BTreeMap::from([
         (
             "objective".to_string(),
@@ -40,13 +74,23 @@ pub fn create_create_goal_tool() -> ToolSpec {
                 "Optional positive token budget for the new active goal.".to_string(),
             )),
         ),
+        (
+            "budget".to_string(),
+            JsonSchema::any_of(
+                vec![token_budget_schema, five_hour_limit_budget_schema],
+                Some(
+                    "Optional structured budget. Prefer this over token_budget. Use five_hour_limit_percent only when the user explicitly asks to cap the goal by a percentage of their 5h Codex limit."
+                        .to_string(),
+                ),
+            ),
+        ),
     ]);
 
     ToolSpec::Function(ResponsesApiTool {
         name: CREATE_GOAL_TOOL_NAME.to_string(),
         description: format!(
             r#"Create a goal only when explicitly requested by the user or system/developer instructions; do not infer goals from ordinary tasks.
-Set token_budget only when an explicit token budget is requested. Fails if a goal exists; use {UPDATE_GOAL_TOOL_NAME} only for status."#
+Set budget only when an explicit budget is requested. Use tokens for explicit token budgets and five_hour_limit_percent for explicit five-hour-limit percentage budgets. Fails if a goal exists; use {UPDATE_GOAL_TOOL_NAME} only for status."#
         ),
         strict: false,
         defer_loading: None,

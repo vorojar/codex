@@ -23,6 +23,7 @@ fn thread_goal_updated_notification() -> ServerNotification {
             thread_id: "thread-1".to_string(),
             objective: "ship goal mode".to_string(),
             status: ThreadGoalStatus::Active,
+            budget: None,
             token_budget: None,
             tokens_used: 0,
             time_used_seconds: 0,

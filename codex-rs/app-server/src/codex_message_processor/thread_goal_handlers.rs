@@ -82,18 +82,25 @@ impl CodexMessageProcessor {
         };
         let status = params.status.map(thread_goal_status_to_state);
         let objective = params.objective.as_deref().map(str::trim);
+        let budget = match self.state_goal_budget_from_params(&params).await {
+            Ok(budget) => budget,
+            Err(message) => {
+                self.send_invalid_request_error(request_id, message).await;
+                return;
+            }
+        };
 
         if let Some(objective) = objective {
             if let Err(message) = validate_thread_goal_objective(objective) {
                 self.send_invalid_request_error(request_id, message).await;
                 return;
             }
-            if let Err(message) = validate_goal_budget(params.token_budget.flatten()) {
+            if let Err(message) = validate_goal_budget(budget.as_ref()) {
                 self.send_invalid_request_error(request_id, message).await;
                 return;
             }
-        } else if let Some(token_budget) = params.token_budget
-            && let Err(message) = validate_goal_budget(token_budget)
+        } else if (params.budget.is_some() || params.token_budget.is_some())
+            && let Err(message) = validate_goal_budget(budget.as_ref())
         {
             self.send_invalid_request_error(request_id, message).await;
             return;
@@ -109,13 +116,14 @@ impl CodexMessageProcessor {
                     if let Some(goal) = goal.as_ref().filter(|goal| {
                         goal.objective == objective
                             && goal.status != codex_state::ThreadGoalStatus::Complete
+                            && supports_thread_goal_update_budget(budget.as_ref())
                     }) {
                         state_db
                             .update_thread_goal(
                                 thread_id,
                                 codex_state::ThreadGoalUpdate {
                                     status,
-                                    token_budget: params.token_budget,
+                                    token_budget: legacy_token_budget_update(budget.as_ref()),
                                     expected_goal_id: Some(goal.goal_id.clone()),
                                 },
                             )
@@ -129,11 +137,11 @@ impl CodexMessageProcessor {
                             })
                     } else {
                         state_db
-                            .replace_thread_goal(
+                            .replace_thread_goal_with_budget(
                                 thread_id,
                                 objective,
                                 status.unwrap_or(codex_state::ThreadGoalStatus::Active),
-                                params.token_budget.flatten(),
+                                budget.clone().flatten(),
                             )
                             .await
                     }
@@ -146,7 +154,7 @@ impl CodexMessageProcessor {
                     thread_id,
                     codex_state::ThreadGoalUpdate {
                         status,
-                        token_budget: params.token_budget,
+                        token_budget: legacy_token_budget_update(budget.as_ref()),
                         expected_goal_id: None,
                     },
                 )
@@ -217,6 +225,53 @@ impl CodexMessageProcessor {
         self.outgoing
             .send_response(request_id, ThreadGoalGetResponse { goal })
             .await;
+    }
+
+    async fn state_goal_budget_from_params(
+        &self,
+        params: &ThreadGoalSetParams,
+    ) -> Result<Option<Option<codex_state::ThreadGoalBudget>>, String> {
+        if let Some(budget) = params.budget.clone() {
+            return match budget {
+                Some(ThreadGoalBudgetParams::Tokens { token_budget }) => {
+                    Ok(Some(Some(codex_state::ThreadGoalBudget::Tokens {
+                        token_budget,
+                    })))
+                }
+                Some(ThreadGoalBudgetParams::FiveHourLimitPercent { percent }) => {
+                    let (snapshot, snapshots_by_limit_id) = self
+                        .fetch_account_rate_limits()
+                        .await
+                        .map_err(|err| err.message)?;
+                    let snapshot = snapshots_by_limit_id
+                        .get("codex")
+                        .cloned()
+                        .unwrap_or(snapshot);
+                    let Some(window) = snapshot.primary else {
+                        return Err(
+                            "cannot set a five-hour-limit goal because current Codex usage data is unavailable"
+                                .to_string(),
+                        );
+                    };
+                    let limit_id = snapshot.limit_id.unwrap_or_else(|| "codex".to_string());
+                    Ok(Some(Some(
+                        codex_state::ThreadGoalBudget::FiveHourLimitPercent {
+                            limit_id,
+                            percent,
+                            baseline_used_percent: window.used_percent,
+                            baseline_resets_at: window.resets_at,
+                            latest_used_percent: window.used_percent,
+                            latest_resets_at: window.resets_at,
+                        },
+                    )))
+                }
+                None => Ok(Some(None)),
+            };
+        }
+
+        Ok(params.token_budget.map(|token_budget| {
+            token_budget.map(|token_budget| codex_state::ThreadGoalBudget::Tokens { token_budget })
+        }))
     }
 
     pub(super) async fn thread_goal_clear(
@@ -438,13 +493,42 @@ impl CodexMessageProcessor {
     }
 }
 
-fn validate_goal_budget(value: Option<i64>) -> Result<(), String> {
-    if let Some(value) = value
-        && value <= 0
-    {
-        return Err("goal budgets must be positive when provided".to_string());
+fn supports_thread_goal_update_budget(
+    budget: Option<&Option<codex_state::ThreadGoalBudget>>,
+) -> bool {
+    matches!(
+        budget,
+        None | Some(None) | Some(Some(codex_state::ThreadGoalBudget::Tokens { .. }))
+    )
+}
+
+fn legacy_token_budget_update(
+    budget: Option<&Option<codex_state::ThreadGoalBudget>>,
+) -> Option<Option<i64>> {
+    budget.map(|budget| {
+        budget
+            .as_ref()
+            .and_then(codex_state::ThreadGoalBudget::token_budget)
+    })
+}
+
+fn validate_goal_budget(
+    value: Option<&Option<codex_state::ThreadGoalBudget>>,
+) -> Result<(), String> {
+    let Some(Some(value)) = value else {
+        return Ok(());
+    };
+    match value {
+        codex_state::ThreadGoalBudget::Tokens { token_budget } if *token_budget <= 0 => {
+            Err("goal budgets must be positive when provided".to_string())
+        }
+        codex_state::ThreadGoalBudget::FiveHourLimitPercent { percent, .. }
+            if !percent.is_finite() || *percent <= 0.0 || *percent > 100.0 =>
+        {
+            Err("five-hour-limit goal budgets must be a percent from 0 to 100".to_string())
+        }
+        _ => Ok(()),
     }
-    Ok(())
 }
 
 fn thread_goal_status_to_state(status: ThreadGoalStatus) -> codex_state::ThreadGoalStatus {
@@ -470,10 +554,34 @@ pub(super) fn api_thread_goal_from_state(goal: codex_state::ThreadGoal) -> Threa
         thread_id: goal.thread_id.to_string(),
         objective: goal.objective,
         status: thread_goal_status_from_state(goal.status),
+        budget: goal.budget.map(api_thread_goal_budget_from_state),
         token_budget: goal.token_budget,
         tokens_used: goal.tokens_used,
         time_used_seconds: goal.time_used_seconds,
         created_at: goal.created_at.timestamp(),
         updated_at: goal.updated_at.timestamp(),
+    }
+}
+
+fn api_thread_goal_budget_from_state(budget: codex_state::ThreadGoalBudget) -> ThreadGoalBudget {
+    match budget {
+        codex_state::ThreadGoalBudget::Tokens { token_budget } => {
+            ThreadGoalBudget::Tokens { token_budget }
+        }
+        codex_state::ThreadGoalBudget::FiveHourLimitPercent {
+            limit_id,
+            percent,
+            baseline_used_percent,
+            baseline_resets_at,
+            latest_used_percent,
+            latest_resets_at,
+        } => ThreadGoalBudget::FiveHourLimitPercent {
+            limit_id,
+            percent,
+            baseline_used_percent,
+            baseline_resets_at,
+            latest_used_percent,
+            latest_resets_at,
+        },
     }
 }
