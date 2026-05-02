@@ -2,6 +2,7 @@ use std::collections::HashSet;
 use std::sync::Arc;
 
 use crate::Prompt;
+use crate::client::CompactConversationRequest;
 use crate::compact::CompactionAnalyticsAttempt;
 use crate::compact::InitialContextInjection;
 use crate::compact::compaction_status_from_result;
@@ -168,16 +169,16 @@ async fn run_remote_compact_task_inner_impl(
     let mut new_history = sess
         .services
         .model_client
-        .compact_conversation_history(
-            &prompt,
-            &turn_context.model_info,
-            &turn_context.session_telemetry,
-            turn_context.reasoning_effort,
-            turn_context.reasoning_summary,
-            turn_context.config.service_tier,
-            turn_metadata_header.as_deref(),
-            &compaction_trace,
-        )
+        .compact_conversation_history(CompactConversationRequest {
+            prompt: &prompt,
+            model_info: &turn_context.model_info,
+            session_telemetry: &turn_context.session_telemetry,
+            effort: turn_context.reasoning_effort,
+            summary: turn_context.reasoning_summary,
+            service_tier: turn_context.config.service_tier,
+            turn_metadata_header: turn_metadata_header.as_deref(),
+            compaction_trace: &compaction_trace,
+        })
         .or_else(|err| async {
             let total_usage_breakdown = sess.get_total_token_usage_breakdown().await;
             let compact_request_log_data =

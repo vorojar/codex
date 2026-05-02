@@ -201,6 +201,21 @@ pub struct ModelClient {
     state: Arc<ModelClientState>,
 }
 
+/// Turn-scoped inputs for remote conversation-history compaction.
+///
+/// Remote compaction intentionally receives the same per-turn request controls as normal
+/// `/responses` sampling so the two paths stay aligned when request shape evolves.
+pub(crate) struct CompactConversationRequest<'a> {
+    pub(crate) prompt: &'a Prompt,
+    pub(crate) model_info: &'a ModelInfo,
+    pub(crate) session_telemetry: &'a SessionTelemetry,
+    pub(crate) effort: Option<ReasoningEffortConfig>,
+    pub(crate) summary: ReasoningSummaryConfig,
+    pub(crate) service_tier: Option<ServiceTier>,
+    pub(crate) turn_metadata_header: Option<&'a str>,
+    pub(crate) compaction_trace: &'a CompactionTraceContext,
+}
+
 /// A turn-scoped streaming session created from a [`ModelClient`].
 ///
 /// The session establishes a Responses WebSocket connection lazily and reuses it across multiple
@@ -410,15 +425,18 @@ impl ModelClient {
     /// callsite while keeping `ModelClient` session-scoped.
     pub async fn compact_conversation_history(
         &self,
-        prompt: &Prompt,
-        model_info: &ModelInfo,
-        session_telemetry: &SessionTelemetry,
-        effort: Option<ReasoningEffortConfig>,
-        summary: ReasoningSummaryConfig,
-        service_tier: Option<ServiceTier>,
-        turn_metadata_header: Option<&str>,
-        compaction_trace: &CompactionTraceContext,
+        request: CompactConversationRequest<'_>,
     ) -> Result<Vec<ResponseItem>> {
+        let CompactConversationRequest {
+            prompt,
+            model_info,
+            session_telemetry,
+            effort,
+            summary,
+            service_tier,
+            turn_metadata_header,
+            compaction_trace,
+        } = request;
         if prompt.input.is_empty() {
             return Ok(Vec::new());
         }
