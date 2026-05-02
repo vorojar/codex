@@ -383,8 +383,8 @@ fn mcp_tool_approval_compat_response_uses_synthetic_decline_for_abort() {
 }
 
 #[test]
-fn mcp_tool_approval_question_id_helpers_round_trip() {
-    let question_id = mcp_tool_approval_question_id("call-1");
+fn mcp_tool_approval_question_id_detection_round_trips() {
+    let question_id = format!("{MCP_TOOL_APPROVAL_QUESTION_ID_PREFIX}_call-1");
 
     assert_eq!(question_id, "mcp_tool_call_approval_call-1");
     assert!(is_mcp_tool_approval_question_id(&question_id));

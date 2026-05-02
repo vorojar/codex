@@ -875,7 +875,7 @@ fn with_mcp_tool_call_thread_id_meta(
     }
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy)]
 struct McpToolApprovalPromptOptions {
     allow_session_remember: bool,
     allow_persistent_approval: bool,
@@ -889,8 +889,8 @@ struct McpToolApprovalPrompt {
     tool_params_display: Option<Vec<RenderedMcpToolApprovalParam>>,
 }
 
-pub(crate) const MCP_TOOL_APPROVAL_ACCEPT: &str = "Allow";
-pub(crate) const MCP_TOOL_APPROVAL_ACCEPT_FOR_SESSION: &str = "Allow for this session";
+const MCP_TOOL_APPROVAL_ACCEPT: &str = "Allow";
+const MCP_TOOL_APPROVAL_ACCEPT_FOR_SESSION: &str = "Allow for this session";
 const MCP_TOOL_APPROVAL_ACCEPT_AND_REMEMBER: &str = "Allow and don't ask me again";
 const MCP_TOOL_APPROVAL_CANCEL: &str = "Cancel";
 // Internal-only token used when guardian auto-reviews delegated MCP approvals on the
@@ -898,12 +898,12 @@ const MCP_TOOL_APPROVAL_CANCEL: &str = "Cancel";
 // real "Decline" answer, so this lets guardian denials round-trip distinctly from user cancel.
 // This is not a user-facing option.
 pub(crate) const MCP_TOOL_APPROVAL_DECLINE_SYNTHETIC: &str = "__codex_mcp_decline__";
-pub(crate) const MCP_TOOL_APPROVAL_QUESTION_ID_PREFIX: &str = "mcp_tool_call_approval";
+const MCP_TOOL_APPROVAL_QUESTION_ID_PREFIX: &str = "mcp_tool_call_approval";
 const MCP_TOOL_APPROVAL_KIND_KEY: &str = "codex_approval_kind";
 const MCP_TOOL_APPROVAL_KIND_MCP_TOOL_CALL: &str = "mcp_tool_call";
-pub(crate) const MCP_TOOL_APPROVAL_PERSIST_KEY: &str = "persist";
-pub(crate) const MCP_TOOL_APPROVAL_PERSIST_SESSION: &str = "session";
-pub(crate) const MCP_TOOL_APPROVAL_PERSIST_ALWAYS: &str = "always";
+const MCP_TOOL_APPROVAL_PERSIST_KEY: &str = "persist";
+const MCP_TOOL_APPROVAL_PERSIST_SESSION: &str = "session";
+const MCP_TOOL_APPROVAL_PERSIST_ALWAYS: &str = "always";
 const MCP_TOOL_APPROVAL_SOURCE_KEY: &str = "source";
 const MCP_TOOL_APPROVAL_SOURCE_CONNECTOR: &str = "connector";
 const MCP_TOOL_APPROVAL_CONNECTOR_ID_KEY: &str = "connector_id";
@@ -932,10 +932,6 @@ struct McpToolApprovalKey {
     server: String,
     connector_id: Option<String>,
     tool_name: String,
-}
-
-pub(crate) fn mcp_tool_approval_question_id(call_id: &str) -> String {
-    format!("{MCP_TOOL_APPROVAL_QUESTION_ID_PREFIX}_{call_id}")
 }
 
 pub(crate) fn is_mcp_tool_approval_question_id(question_id: &str) -> bool {
@@ -1363,7 +1359,7 @@ async fn maybe_request_mcp_tool_approval(
         persistent_approval_key.as_ref(),
         tool_call_mcp_elicitation_enabled,
     );
-    let question_id = mcp_tool_approval_question_id(call_id);
+    let question_id = format!("{MCP_TOOL_APPROVAL_QUESTION_ID_PREFIX}_{call_id}");
     let Some(prompt) = mcp_tool_approval_prompt(
         &approval_request,
         question_id.clone(),

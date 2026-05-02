@@ -1,6 +1,5 @@
 use super::*;
 use crate::mcp_tool_call::MCP_TOOL_APPROVAL_DECLINE_SYNTHETIC;
-use crate::mcp_tool_call::MCP_TOOL_APPROVAL_QUESTION_ID_PREFIX;
 use async_channel::bounded;
 use codex_protocol::config_types::ApprovalsReviewer;
 use codex_protocol::models::NetworkPermissions;
@@ -504,7 +503,7 @@ async fn delegated_mcp_guardian_abort_returns_synthetic_decline_answer() {
             call_id: "call-1".to_string(),
             turn_id: "child-turn-1".to_string(),
             questions: vec![RequestUserInputQuestion {
-                id: format!("{MCP_TOOL_APPROVAL_QUESTION_ID_PREFIX}_call-1"),
+                id: "mcp_tool_call_approval_call-1".to_string(),
                 header: "Approve app tool call?".to_string(),
                 question: "Allow this app tool?".to_string(),
                 is_other: false,
@@ -520,7 +519,7 @@ async fn delegated_mcp_guardian_abort_returns_synthetic_decline_answer() {
         response,
         Some(RequestUserInputResponse {
             answers: HashMap::from([(
-                format!("{MCP_TOOL_APPROVAL_QUESTION_ID_PREFIX}_call-1"),
+                "mcp_tool_call_approval_call-1".to_string(),
                 RequestUserInputAnswer {
                     answers: vec![MCP_TOOL_APPROVAL_DECLINE_SYNTHETIC.to_string()],
                 },
