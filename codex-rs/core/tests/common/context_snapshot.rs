@@ -291,10 +291,12 @@ fn canonicalize_json_snapshot_value(value: &mut Value, options: &ContextSnapshot
 fn format_snapshot_json_string(text: &str, options: &ContextSnapshotOptions) -> String {
     let normalized = match options.render_mode {
         ContextSnapshotRenderMode::RedactedText
-        | ContextSnapshotRenderMode::KindWithTextPrefix { .. } => {
-            normalize_snapshot_line_endings(&canonicalize_snapshot_text(text))
+        | ContextSnapshotRenderMode::KindWithTextPrefix { .. } => normalize_snapshot_uuids(
+            &normalize_snapshot_line_endings(&canonicalize_snapshot_text(text)),
+        ),
+        ContextSnapshotRenderMode::FullText => {
+            normalize_snapshot_uuids(&normalize_snapshot_line_endings(text))
         }
-        ContextSnapshotRenderMode::FullText => normalize_snapshot_line_endings(text),
         ContextSnapshotRenderMode::KindOnly => unreachable!(),
     };
     match options.render_mode {
@@ -468,7 +470,7 @@ fn canonicalize_snapshot_text(text: &str) -> String {
     {
         return format!("<COMPACTION_SUMMARY>\n{summary}");
     }
-    normalize_dynamic_snapshot_text(text)
+    normalize_dynamic_snapshot_paths(text)
 }
 
 fn is_capability_instruction_text(text: &str) -> bool {
@@ -477,25 +479,26 @@ fn is_capability_instruction_text(text: &str) -> bool {
         || text.starts_with(PLUGINS_INSTRUCTIONS_OPEN_TAG)
 }
 
-fn normalize_dynamic_snapshot_text(text: &str) -> String {
+fn normalize_dynamic_snapshot_paths(text: &str) -> String {
     static SYSTEM_SKILL_PATH_RE: OnceLock<Regex> = OnceLock::new();
-    static UUID_RE: OnceLock<Regex> = OnceLock::new();
     let system_skill_path_re = SYSTEM_SKILL_PATH_RE.get_or_init(|| {
         Regex::new(r"/[^)\n]*/skills/\.system/([^/\n]+)/SKILL\.md")
             .expect("system skill path regex should compile")
     });
+    system_skill_path_re
+        .replace_all(text, "<SYSTEM_SKILLS_ROOT>/$1/SKILL.md")
+        .into_owned()
+}
+
+fn normalize_snapshot_uuids(text: &str) -> String {
+    static UUID_RE: OnceLock<Regex> = OnceLock::new();
     let uuid_re = UUID_RE.get_or_init(|| {
         Regex::new(
             r"\b[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\b",
         )
         .expect("uuid regex should compile")
     });
-    let normalized_paths = system_skill_path_re
-        .replace_all(text, "<SYSTEM_SKILLS_ROOT>/$1/SKILL.md")
-        .into_owned();
-    uuid_re
-        .replace_all(&normalized_paths, "<UUID>")
-        .into_owned()
+    uuid_re.replace_all(text, "<UUID>").into_owned()
 }
 
 #[cfg(test)]
