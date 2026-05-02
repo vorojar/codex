@@ -1,15 +1,17 @@
 use crate::auth::SharedAuthProvider;
-use crate::common::CompactionInput;
+use crate::common::ResponsesApiRequest;
+use crate::endpoint::ResponsesOptions;
 use crate::endpoint::session::EndpointSession;
 use crate::error::ApiError;
 use crate::provider::Provider;
+use crate::requests::responses::build_responses_request_body;
+use crate::requests::responses::build_responses_request_headers;
 use codex_client::HttpTransport;
 use codex_client::RequestTelemetry;
 use codex_protocol::models::ResponseItem;
 use http::HeaderMap;
 use http::Method;
 use serde::Deserialize;
-use serde_json::to_value;
 use std::sync::Arc;
 
 pub struct CompactClient<T: HttpTransport> {
@@ -47,14 +49,21 @@ impl<T: HttpTransport> CompactClient<T> {
         Ok(parsed.output)
     }
 
-    pub async fn compact_input(
+    pub async fn compact_request(
         &self,
-        input: &CompactionInput<'_>,
-        extra_headers: HeaderMap,
+        request: ResponsesApiRequest,
+        options: ResponsesOptions,
     ) -> Result<Vec<ResponseItem>, ApiError> {
-        let body = to_value(input)
-            .map_err(|e| ApiError::Stream(format!("failed to encode compaction input: {e}")))?;
-        self.compact(body, extra_headers).await
+        let ResponsesOptions {
+            conversation_id,
+            session_source,
+            extra_headers,
+            ..
+        } = options;
+        let body = build_responses_request_body(&request, self.session.provider())?;
+        let headers =
+            build_responses_request_headers(extra_headers, conversation_id, session_source);
+        self.compact(body, headers).await
     }
 }
 

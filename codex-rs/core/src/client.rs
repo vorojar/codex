@@ -34,7 +34,6 @@ use std::sync::atomic::Ordering;
 use codex_api::ApiError;
 use codex_api::AuthProvider;
 use codex_api::CompactClient as ApiCompactClient;
-use codex_api::CompactionInput as ApiCompactionInput;
 use codex_api::Compression;
 use codex_api::MemoriesClient as ApiMemoriesClient;
 use codex_api::MemorySummarizeInput as ApiMemorySummarizeInput;
@@ -433,51 +432,25 @@ impl ModelClient {
             RequestRouteTelemetry::for_endpoint(RESPONSES_COMPACT_ENDPOINT),
             self.state.auth_env_telemetry.clone(),
         );
+        let request = self.build_responses_request(
+            &client_setup.api_provider,
+            prompt,
+            model_info,
+            effort,
+            summary,
+            None,
+        )?;
+        let options = self.build_responses_options(
+            /*turn_state*/ None,
+            /*turn_metadata_header*/ None,
+            Compression::None,
+        );
+        let trace_attempt = compaction_trace.start_attempt(&request);
         let client =
             ApiCompactClient::new(transport, client_setup.api_provider, client_setup.api_auth)
                 .with_telemetry(Some(request_telemetry));
-
-        let instructions = prompt.base_instructions.text.clone();
-        let input = prompt.get_formatted_input();
-        let tools = create_tools_json_for_responses_api(&prompt.tools)?;
-        let reasoning = Self::build_reasoning(model_info, effort, summary);
-        let verbosity = if model_info.support_verbosity {
-            self.state.model_verbosity.or(model_info.default_verbosity)
-        } else {
-            if self.state.model_verbosity.is_some() {
-                warn!(
-                    "model_verbosity is set but ignored as the model does not support verbosity: {}",
-                    model_info.slug
-                );
-            }
-            None
-        };
-        let text = create_text_param_for_request(
-            verbosity,
-            &prompt.output_schema,
-            prompt.output_schema_strict,
-        );
-        let payload = ApiCompactionInput {
-            model: &model_info.slug,
-            input: &input,
-            instructions: &instructions,
-            tools,
-            parallel_tool_calls: prompt.parallel_tool_calls,
-            reasoning,
-            text,
-        };
-
-        let mut extra_headers = ApiHeaderMap::new();
-        if let Ok(header_value) = HeaderValue::from_str(&self.state.installation_id) {
-            extra_headers.insert(X_CODEX_INSTALLATION_ID_HEADER, header_value);
-        }
-        extra_headers.extend(self.build_responses_identity_headers());
-        extra_headers.extend(build_conversation_headers(Some(
-            self.state.conversation_id.to_string(),
-        )));
-        let trace_attempt = compaction_trace.start_attempt(&payload);
         let result = client
-            .compact_input(&payload, extra_headers)
+            .compact_request(request, options)
             .await
             .map_err(map_api_error);
         trace_attempt.record_result(result.as_deref());
@@ -640,14 +613,22 @@ impl ModelClient {
         request_telemetry
     }
 
-    fn build_reasoning(
+    fn build_responses_request(
+        &self,
+        provider: &ApiProvider,
+        prompt: &Prompt,
         model_info: &ModelInfo,
         effort: Option<ReasoningEffortConfig>,
         summary: ReasoningSummaryConfig,
-    ) -> Option<Reasoning> {
-        if model_info.supports_reasoning_summaries {
+        service_tier: Option<ServiceTier>,
+    ) -> Result<ResponsesApiRequest> {
+        let instructions = &prompt.base_instructions.text;
+        let input = prompt.get_formatted_input();
+        let tools = create_tools_json_for_responses_api(&prompt.tools)?;
+        let default_reasoning_effort = model_info.default_reasoning_level;
+        let reasoning = if model_info.supports_reasoning_summaries {
             Some(Reasoning {
-                effort: effort.or(model_info.default_reasoning_level),
+                effort: effort.or(default_reasoning_effort),
                 summary: if summary == ReasoningSummaryConfig::None {
                     None
                 } else {
@@ -656,6 +637,81 @@ impl ModelClient {
             })
         } else {
             None
+        };
+        let include = if reasoning.is_some() {
+            vec!["reasoning.encrypted_content".to_string()]
+        } else {
+            Vec::new()
+        };
+        let verbosity = if model_info.support_verbosity {
+            self.state.model_verbosity.or(model_info.default_verbosity)
+        } else {
+            if self.state.model_verbosity.is_some() {
+                warn!(
+                    "model_verbosity is set but ignored as the model does not support verbosity: {}",
+                    model_info.slug
+                );
+            }
+            None
+        };
+        let text = create_text_param_for_request(
+            verbosity,
+            &prompt.output_schema,
+            prompt.output_schema_strict,
+        );
+        let prompt_cache_key = Some(self.state.conversation_id.to_string());
+        let request = ResponsesApiRequest {
+            model: model_info.slug.clone(),
+            instructions: instructions.clone(),
+            input,
+            tools,
+            tool_choice: "auto".to_string(),
+            parallel_tool_calls: prompt.parallel_tool_calls,
+            reasoning,
+            store: provider.is_azure_responses_endpoint(),
+            stream: true,
+            include,
+            service_tier: match service_tier {
+                Some(ServiceTier::Fast) => Some("priority".to_string()),
+                Some(service_tier) => Some(service_tier.to_string()),
+                None => None,
+            },
+            prompt_cache_key,
+            text,
+            client_metadata: Some(HashMap::from([(
+                X_CODEX_INSTALLATION_ID_HEADER.to_string(),
+                self.state.installation_id.clone(),
+            )])),
+        };
+        Ok(request)
+    }
+
+    /// Builds shared Responses API transport options and request-body options.
+    ///
+    /// Keeping option construction in one place ensures request-scoped headers are consistent
+    /// regardless of transport choice.
+    fn build_responses_options(
+        &self,
+        turn_state: Option<Arc<OnceLock<String>>>,
+        turn_metadata_header: Option<&str>,
+        compression: Compression,
+    ) -> ApiResponsesOptions {
+        let turn_metadata_header = parse_turn_metadata_header(turn_metadata_header);
+        let conversation_id = self.state.conversation_id.to_string();
+        ApiResponsesOptions {
+            conversation_id: Some(conversation_id),
+            session_source: Some(self.state.session_source.clone()),
+            extra_headers: {
+                let mut headers = build_responses_headers(
+                    self.state.beta_features_header.as_deref(),
+                    turn_state.as_ref(),
+                    turn_metadata_header.as_ref(),
+                );
+                headers.extend(self.build_responses_identity_headers());
+                headers
+            },
+            compression,
+            turn_state,
         }
     }
 
@@ -826,111 +882,6 @@ impl ModelClientSession {
         self.websocket_session.last_response_rx = None;
         self.websocket_session
             .set_connection_reused(/*connection_reused*/ false);
-    }
-
-    fn build_responses_request(
-        &self,
-        provider: &codex_api::Provider,
-        prompt: &Prompt,
-        model_info: &ModelInfo,
-        effort: Option<ReasoningEffortConfig>,
-        summary: ReasoningSummaryConfig,
-        service_tier: Option<ServiceTier>,
-    ) -> Result<ResponsesApiRequest> {
-        let instructions = &prompt.base_instructions.text;
-        let input = prompt.get_formatted_input();
-        let tools = create_tools_json_for_responses_api(&prompt.tools)?;
-        let default_reasoning_effort = model_info.default_reasoning_level;
-        let reasoning = if model_info.supports_reasoning_summaries {
-            Some(Reasoning {
-                effort: effort.or(default_reasoning_effort),
-                summary: if summary == ReasoningSummaryConfig::None {
-                    None
-                } else {
-                    Some(summary)
-                },
-            })
-        } else {
-            None
-        };
-        let include = if reasoning.is_some() {
-            vec!["reasoning.encrypted_content".to_string()]
-        } else {
-            Vec::new()
-        };
-        let verbosity = if model_info.support_verbosity {
-            self.client
-                .state
-                .model_verbosity
-                .or(model_info.default_verbosity)
-        } else {
-            if self.client.state.model_verbosity.is_some() {
-                warn!(
-                    "model_verbosity is set but ignored as the model does not support verbosity: {}",
-                    model_info.slug
-                );
-            }
-            None
-        };
-        let text = create_text_param_for_request(
-            verbosity,
-            &prompt.output_schema,
-            prompt.output_schema_strict,
-        );
-        let prompt_cache_key = Some(self.client.state.conversation_id.to_string());
-        let request = ResponsesApiRequest {
-            model: model_info.slug.clone(),
-            instructions: instructions.clone(),
-            input,
-            tools,
-            tool_choice: "auto".to_string(),
-            parallel_tool_calls: prompt.parallel_tool_calls,
-            reasoning,
-            store: provider.is_azure_responses_endpoint(),
-            stream: true,
-            include,
-            service_tier: match service_tier {
-                Some(ServiceTier::Fast) => Some("priority".to_string()),
-                Some(service_tier) => Some(service_tier.to_string()),
-                None => None,
-            },
-            prompt_cache_key,
-            text,
-            client_metadata: Some(HashMap::from([(
-                X_CODEX_INSTALLATION_ID_HEADER.to_string(),
-                self.client.state.installation_id.clone(),
-            )])),
-        };
-        Ok(request)
-    }
-
-    #[allow(clippy::too_many_arguments)]
-    /// Builds shared Responses API transport options and request-body options.
-    ///
-    /// Keeping option construction in one place ensures request-scoped headers are consistent
-    /// regardless of transport choice.
-    fn build_responses_options(
-        &self,
-        turn_metadata_header: Option<&str>,
-        compression: Compression,
-    ) -> ApiResponsesOptions {
-        let turn_metadata_header = parse_turn_metadata_header(turn_metadata_header);
-        let conversation_id = self.client.state.conversation_id.to_string();
-        ApiResponsesOptions {
-            conversation_id: Some(conversation_id),
-            session_source: Some(self.client.state.session_source.clone()),
-            extra_headers: {
-                let mut headers = build_responses_headers(
-                    self.client.state.beta_features_header.as_deref(),
-                    Some(&self.turn_state),
-                    turn_metadata_header.as_ref(),
-                );
-                headers.extend(self.client.build_responses_identity_headers());
-                headers
-            },
-            compression,
-            turn_state: Some(Arc::clone(&self.turn_state)),
-        }
     }
 
     fn get_incremental_items(
@@ -1202,9 +1153,13 @@ impl ModelClientSession {
                 self.client.state.auth_env_telemetry.clone(),
             );
             let compression = self.responses_request_compression(client_setup.auth.as_ref());
-            let options = self.build_responses_options(turn_metadata_header, compression);
+            let options = self.client.build_responses_options(
+                Some(Arc::clone(&self.turn_state)),
+                turn_metadata_header,
+                compression,
+            );
 
-            let request = self.build_responses_request(
+            let request = self.client.build_responses_request(
                 &client_setup.api_provider,
                 prompt,
                 model_info,
@@ -1309,8 +1264,12 @@ impl ModelClientSession {
             );
             let compression = self.responses_request_compression(client_setup.auth.as_ref());
 
-            let options = self.build_responses_options(turn_metadata_header, compression);
-            let request = self.build_responses_request(
+            let options = self.client.build_responses_options(
+                Some(Arc::clone(&self.turn_state)),
+                turn_metadata_header,
+                compression,
+            );
+            let request = self.client.build_responses_request(
                 &client_setup.api_provider,
                 prompt,
                 model_info,

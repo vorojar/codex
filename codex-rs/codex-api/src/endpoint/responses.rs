@@ -5,10 +5,8 @@ use crate::endpoint::session::EndpointSession;
 use crate::error::ApiError;
 use crate::provider::Provider;
 use crate::requests::Compression;
-use crate::requests::attach_item_ids;
-use crate::requests::headers::build_conversation_headers;
-use crate::requests::headers::insert_header;
-use crate::requests::headers::subagent_header;
+use crate::requests::responses::build_responses_request_body;
+use crate::requests::responses::build_responses_request_headers;
 use crate::sse::spawn_response_stream;
 use crate::telemetry::SseTelemetry;
 use codex_client::HttpTransport;
@@ -28,7 +26,7 @@ pub struct ResponsesClient<T: HttpTransport> {
     sse_telemetry: Option<Arc<dyn SseTelemetry>>,
 }
 
-#[derive(Default)]
+#[derive(Clone, Default)]
 pub struct ResponsesOptions {
     pub conversation_id: Option<String>,
     pub session_source: Option<SessionSource>,
@@ -79,20 +77,9 @@ impl<T: HttpTransport> ResponsesClient<T> {
             turn_state,
         } = options;
 
-        let mut body = serde_json::to_value(&request)
-            .map_err(|e| ApiError::Stream(format!("failed to encode responses request: {e}")))?;
-        if request.store && self.session.provider().is_azure_responses_endpoint() {
-            attach_item_ids(&mut body, &request.input);
-        }
-
-        let mut headers = extra_headers;
-        if let Some(ref conv_id) = conversation_id {
-            insert_header(&mut headers, "x-client-request-id", conv_id);
-        }
-        headers.extend(build_conversation_headers(conversation_id));
-        if let Some(subagent) = subagent_header(&session_source) {
-            insert_header(&mut headers, "x-openai-subagent", &subagent);
-        }
+        let body = build_responses_request_body(&request, self.session.provider())?;
+        let headers =
+            build_responses_request_headers(extra_headers, conversation_id, session_source);
 
         self.stream(body, headers, compression, turn_state).await
     }

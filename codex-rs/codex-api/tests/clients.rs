@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::Mutex;
 use std::time::Duration;
@@ -8,6 +9,7 @@ use bytes::Bytes;
 use codex_api::ApiError;
 use codex_api::AuthError;
 use codex_api::AuthProvider;
+use codex_api::CompactClient;
 use codex_api::Compression;
 use codex_api::Provider;
 use codex_api::ResponsesApiRequest;
@@ -39,16 +41,33 @@ fn assert_path_ends_with(requests: &[Request], suffix: &str) {
 
 #[derive(Debug, Default, Clone)]
 struct RecordingState {
+    execute_requests: Arc<Mutex<Vec<Request>>>,
     stream_requests: Arc<Mutex<Vec<Request>>>,
 }
 
 impl RecordingState {
-    fn record(&self, req: Request) {
+    fn record_execute(&self, req: Request) {
+        let mut guard = self
+            .execute_requests
+            .lock()
+            .unwrap_or_else(|err| panic!("mutex poisoned: {err}"));
+        guard.push(req);
+    }
+
+    fn record_stream(&self, req: Request) {
         let mut guard = self
             .stream_requests
             .lock()
             .unwrap_or_else(|err| panic!("mutex poisoned: {err}"));
         guard.push(req);
+    }
+
+    fn take_execute_requests(&self) -> Vec<Request> {
+        let mut guard = self
+            .execute_requests
+            .lock()
+            .unwrap_or_else(|err| panic!("mutex poisoned: {err}"));
+        std::mem::take(&mut *guard)
     }
 
     fn take_stream_requests(&self) -> Vec<Request> {
@@ -73,12 +92,17 @@ impl RecordingTransport {
 
 #[async_trait]
 impl HttpTransport for RecordingTransport {
-    async fn execute(&self, _req: Request) -> Result<Response, TransportError> {
-        Err(TransportError::Build("execute should not run".to_string()))
+    async fn execute(&self, req: Request) -> Result<Response, TransportError> {
+        self.state.record_execute(req);
+        Ok(Response {
+            status: StatusCode::OK,
+            headers: HeaderMap::new(),
+            body: Bytes::from_static(br#"{"output":[]}"#),
+        })
     }
 
     async fn stream(&self, req: Request) -> Result<StreamResponse, TransportError> {
-        self.state.record(req);
+        self.state.record_stream(req);
 
         let stream = futures::stream::iter(Vec::<Result<Bytes, TransportError>>::new());
         Ok(StreamResponse {
@@ -483,6 +507,101 @@ async fn azure_default_store_attaches_ids_and_headers() -> Result<()> {
         .and_then(|item| item.get("id"))
         .and_then(|id| id.as_str());
     assert_eq!(input_id, Some("msg_1"));
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn compact_client_matches_responses_request_shape_and_headers() -> Result<()> {
+    let state = RecordingState::default();
+    let transport = RecordingTransport::new(state.clone());
+    let provider = provider("azure");
+    let responses_client =
+        ResponsesClient::new(transport.clone(), provider.clone(), Arc::new(NoAuth));
+    let compact_client = CompactClient::new(transport, provider, Arc::new(NoAuth));
+
+    let request = ResponsesApiRequest {
+        model: "gpt-test".into(),
+        instructions: "Say hi".into(),
+        input: vec![ResponseItem::Message {
+            id: Some("msg_1".into()),
+            role: "user".into(),
+            content: vec![ContentItem::InputText { text: "hi".into() }],
+            phase: None,
+        }],
+        tools: vec![serde_json::json!({
+            "type": "function",
+            "name": "echo",
+            "parameters": {"type": "object"},
+        })],
+        tool_choice: "auto".into(),
+        parallel_tool_calls: true,
+        reasoning: None,
+        store: true,
+        stream: true,
+        include: vec!["reasoning.encrypted_content".into()],
+        service_tier: Some("priority".into()),
+        prompt_cache_key: Some("thread_123".into()),
+        text: None,
+        client_metadata: Some(HashMap::from([(
+            "x-codex-installation-id".to_string(),
+            "install_123".to_string(),
+        )])),
+    };
+    let mut extra_headers = HeaderMap::new();
+    extra_headers.insert("x-test-header", HeaderValue::from_static("present"));
+    let options = ResponsesOptions {
+        conversation_id: Some("sess_123".into()),
+        session_source: Some(SessionSource::SubAgent(SubAgentSource::Review)),
+        extra_headers,
+        compression: Compression::None,
+        turn_state: None,
+    };
+
+    let _stream = responses_client
+        .stream_request(request.clone(), options.clone())
+        .await?;
+    let _output = compact_client.compact_request(request, options).await?;
+
+    let stream_requests = state.take_stream_requests();
+    let execute_requests = state.take_execute_requests();
+    assert_path_ends_with(&stream_requests, "/responses");
+    assert_path_ends_with(&execute_requests, "/responses/compact");
+
+    let stream_request = &stream_requests[0];
+    let compact_request = &execute_requests[0];
+    for header_name in [
+        "session_id",
+        "x-client-request-id",
+        "x-openai-subagent",
+        "x-test-header",
+    ] {
+        assert_eq!(
+            stream_request
+                .headers
+                .get(header_name)
+                .and_then(|value| value.to_str().ok()),
+            compact_request
+                .headers
+                .get(header_name)
+                .and_then(|value| value.to_str().ok()),
+        );
+    }
+
+    let stream_body = stream_request
+        .body
+        .as_ref()
+        .and_then(RequestBody::json)
+        .cloned()
+        .expect("responses request should serialize to JSON");
+    let compact_body = compact_request
+        .body
+        .as_ref()
+        .and_then(RequestBody::json)
+        .cloned()
+        .expect("compact request should serialize to JSON");
+    assert_eq!(compact_body, stream_body);
+    assert_eq!(compact_body["input"][0]["id"], "msg_1");
 
     Ok(())
 }
