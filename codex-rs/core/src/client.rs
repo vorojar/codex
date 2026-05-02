@@ -445,6 +445,7 @@ impl ModelClient {
         request.store = None;
         request.stream = None;
         request.include = None;
+        request.client_metadata = None;
         let options = self.build_responses_options(
             /*turn_state*/ None,
             /*turn_metadata_header*/ None,
