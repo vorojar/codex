@@ -91,7 +91,7 @@ pub enum SessionToolError {
 ///
 /// Implementations should keep their own state outside core, keyed by
 /// [`codex_protocol::ThreadId`] when needed. The returned futures are boxed
-/// explicitly so implementors do not need `async_trait`.
+/// explicitly so implementers do not need `async_trait`.
 pub trait SessionRuntimeExtension: Send + Sync {
     /// Return model-visible tool specs for the current turn context.
     fn tool_specs(&self, _context: SessionToolSpecContext) -> Vec<ToolSpec> {

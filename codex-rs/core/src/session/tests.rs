@@ -3611,7 +3611,7 @@ async fn session_new_fails_when_zsh_fork_enabled_without_zsh_path() {
             codex_thread_store::LocalThreadStoreConfig::from_config(config.as_ref()),
         )),
         codex_rollout_trace::ThreadTraceContext::disabled(),
-        None,
+        /*runtime_extension*/ None,
     )
     .await;
 
@@ -3932,7 +3932,7 @@ async fn make_session_with_config_and_rx(
             codex_thread_store::LocalThreadStoreConfig::from_config(config.as_ref()),
         )),
         codex_rollout_trace::ThreadTraceContext::disabled(),
-        None,
+        /*runtime_extension*/ None,
     )
     .await?;
 
@@ -7122,7 +7122,7 @@ async fn runtime_extension_receives_turn_lifecycle_events_in_order() {
     )
     .await;
 
-    let events = extension.wait_for_events(3).await;
+    let events = extension.wait_for_events(/*count*/ 3).await;
     assert_eq!(
         &events[..3],
         &[
@@ -7649,7 +7649,7 @@ async fn extension_tool_dispatch_invokes_host_handler_and_lifecycle_event() {
         } if call_id == "call-extension" && text == "extension output"
     ));
     assert_eq!(
-        extension.wait_for_events(2).await,
+        extension.wait_for_events(/*count*/ 2).await,
         vec![
             format!(
                 "tool_call:{}:{tool_name}:{{\"ok\":true}}",
