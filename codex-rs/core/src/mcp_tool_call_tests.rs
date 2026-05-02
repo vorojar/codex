@@ -2,19 +2,6 @@ use super::*;
 use crate::config::ConfigBuilder;
 use crate::guardian::GuardianApprovalRequest;
 use crate::guardian::GuardianMcpAnnotations;
-use crate::guardian::MCP_TOOL_APPROVAL_CANCEL;
-use crate::guardian::MCP_TOOL_APPROVAL_CONNECTOR_DESCRIPTION_KEY;
-use crate::guardian::MCP_TOOL_APPROVAL_CONNECTOR_ID_KEY;
-use crate::guardian::MCP_TOOL_APPROVAL_CONNECTOR_NAME_KEY;
-use crate::guardian::MCP_TOOL_APPROVAL_DECLINE_SYNTHETIC;
-use crate::guardian::MCP_TOOL_APPROVAL_KIND_KEY;
-use crate::guardian::MCP_TOOL_APPROVAL_KIND_MCP_TOOL_CALL;
-use crate::guardian::MCP_TOOL_APPROVAL_SOURCE_CONNECTOR;
-use crate::guardian::MCP_TOOL_APPROVAL_SOURCE_KEY;
-use crate::guardian::MCP_TOOL_APPROVAL_TOOL_DESCRIPTION_KEY;
-use crate::guardian::MCP_TOOL_APPROVAL_TOOL_PARAMS_DISPLAY_KEY;
-use crate::guardian::MCP_TOOL_APPROVAL_TOOL_PARAMS_KEY;
-use crate::guardian::MCP_TOOL_APPROVAL_TOOL_TITLE_KEY;
 use crate::session::tests::make_session_and_context;
 use crate::session::tests::make_session_and_context_with_rx;
 use crate::state::ActiveTurn;
@@ -320,20 +307,88 @@ fn approval_question_text_prepends_safety_reason() {
         /*metadata*/ None,
     );
     assert_eq!(
-        request
-            .mcp_tool_approval_prompt(
-                "q".to_string(),
-                prompt_options(
-                    /*allow_session_remember*/ false,
-                    /*allow_persistent_approval*/ false,
-                ),
-                Some("This tool may contact an external system."),
-            )
-            .expect("mcp approval prompt")
-            .question
-            .question,
+        mcp_tool_approval_prompt(
+            &request,
+            "q".to_string(),
+            prompt_options(
+                /*allow_session_remember*/ false, /*allow_persistent_approval*/ false,
+            ),
+            Some("This tool may contact an external system."),
+        )
+        .expect("mcp approval prompt")
+        .question
+        .question,
         "Tool call needs your approval. Reason: This tool may contact an external system."
     );
+}
+
+#[test]
+fn mcp_tool_approval_compat_response_uses_session_label_when_present() {
+    let request = approval_prompt_request(
+        "custom_server",
+        "dangerous_tool",
+        /*arguments*/ None,
+        /*metadata*/ None,
+    );
+    let question = RequestUserInputQuestion {
+        id: "q-1".to_string(),
+        header: "Approve app tool call?".to_string(),
+        question: "Allow this app tool?".to_string(),
+        is_other: false,
+        is_secret: false,
+        options: Some(vec![RequestUserInputQuestionOption {
+            label: MCP_TOOL_APPROVAL_ACCEPT_FOR_SESSION.to_string(),
+            description: "Remember until session ends".to_string(),
+        }]),
+    };
+
+    let response =
+        mcp_tool_approval_compat_response(&request, &question, ReviewDecision::ApprovedForSession)
+            .expect("compat response");
+
+    assert_eq!(
+        response.answers.get("q-1"),
+        Some(&RequestUserInputAnswer {
+            answers: vec![MCP_TOOL_APPROVAL_ACCEPT_FOR_SESSION.to_string()],
+        })
+    );
+}
+
+#[test]
+fn mcp_tool_approval_compat_response_uses_synthetic_decline_for_abort() {
+    let request = approval_prompt_request(
+        "custom_server",
+        "dangerous_tool",
+        /*arguments*/ None,
+        /*metadata*/ None,
+    );
+    let question = RequestUserInputQuestion {
+        id: "q-1".to_string(),
+        header: "Approve app tool call?".to_string(),
+        question: "Allow this app tool?".to_string(),
+        is_other: false,
+        is_secret: false,
+        options: None,
+    };
+
+    let response = mcp_tool_approval_compat_response(&request, &question, ReviewDecision::Abort)
+        .expect("compat response");
+
+    assert_eq!(
+        response.answers.get("q-1"),
+        Some(&RequestUserInputAnswer {
+            answers: vec![MCP_TOOL_APPROVAL_DECLINE_SYNTHETIC.to_string()],
+        })
+    );
+}
+
+#[test]
+fn mcp_tool_approval_question_id_helpers_round_trip() {
+    let question_id = mcp_tool_approval_question_id("call-1");
+
+    assert_eq!(question_id, "mcp_tool_call_approval_call-1");
+    assert!(is_mcp_tool_approval_question_id(&question_id));
+    assert!(!is_mcp_tool_approval_question_id("other_question"));
 }
 
 #[tokio::test]
@@ -543,15 +598,15 @@ async fn approval_elicitation_request_uses_message_override_and_preserves_tool_p
         })),
         Some(&metadata),
     );
-    let prompt = approval_request
-        .mcp_tool_approval_prompt(
-            "q".to_string(),
-            prompt_options(
-                /*allow_session_remember*/ true, /*allow_persistent_approval*/ true,
-            ),
-            /*monitor_reason*/ None,
-        )
-        .expect("mcp approval prompt");
+    let prompt = mcp_tool_approval_prompt(
+        &approval_request,
+        "q".to_string(),
+        prompt_options(
+            /*allow_session_remember*/ true, /*allow_persistent_approval*/ true,
+        ),
+        /*monitor_reason*/ None,
+    )
+    .expect("mcp approval prompt");
 
     let request = build_mcp_tool_approval_elicitation_request(
         &session,
@@ -625,13 +680,13 @@ async fn approval_elicitation_request_uses_message_override_and_preserves_tool_p
 
 #[test]
 fn custom_mcp_tool_question_mentions_server_name() {
-    let question = approval_prompt_request(
-        "custom_server",
-        "run_action",
-        /*arguments*/ None,
-        /*metadata*/ None,
-    )
-    .mcp_tool_approval_prompt(
+    let question = mcp_tool_approval_prompt(
+        &approval_prompt_request(
+            "custom_server",
+            "run_action",
+            /*arguments*/ None,
+            /*metadata*/ None,
+        ),
         "q".to_string(),
         prompt_options(
             /*allow_session_remember*/ false, /*allow_persistent_approval*/ false,
@@ -658,13 +713,13 @@ fn custom_mcp_tool_question_mentions_server_name() {
 
 #[test]
 fn codex_apps_tool_question_uses_fallback_app_label() {
-    let question = approval_prompt_request(
-        CODEX_APPS_MCP_SERVER_NAME,
-        "run_action",
-        /*arguments*/ None,
-        /*metadata*/ None,
-    )
-    .mcp_tool_approval_prompt(
+    let question = mcp_tool_approval_prompt(
+        &approval_prompt_request(
+            CODEX_APPS_MCP_SERVER_NAME,
+            "run_action",
+            /*arguments*/ None,
+            /*metadata*/ None,
+        ),
         "q".to_string(),
         prompt_options(
             /*allow_session_remember*/ true, /*allow_persistent_approval*/ true,
@@ -689,13 +744,13 @@ fn trusted_codex_apps_tool_question_offers_always_allow() {
         /*tool_title*/ None,
         /*tool_description*/ None,
     );
-    let question = approval_prompt_request(
-        CODEX_APPS_MCP_SERVER_NAME,
-        "run_action",
-        /*arguments*/ None,
-        Some(&metadata),
-    )
-    .mcp_tool_approval_prompt(
+    let question = mcp_tool_approval_prompt(
+        &approval_prompt_request(
+            CODEX_APPS_MCP_SERVER_NAME,
+            "run_action",
+            /*arguments*/ None,
+            Some(&metadata),
+        ),
         "q".to_string(),
         prompt_options(
             /*allow_session_remember*/ true, /*allow_persistent_approval*/ true,
@@ -743,13 +798,13 @@ fn codex_apps_tool_question_without_elicitation_omits_always_allow() {
         /*tool_title*/ None,
         /*tool_description*/ None,
     );
-    let question = approval_prompt_request(
-        CODEX_APPS_MCP_SERVER_NAME,
-        "run_action",
-        /*arguments*/ None,
-        Some(&metadata),
-    )
-    .mcp_tool_approval_prompt(
+    let question = mcp_tool_approval_prompt(
+        &approval_prompt_request(
+            CODEX_APPS_MCP_SERVER_NAME,
+            "run_action",
+            /*arguments*/ None,
+            Some(&metadata),
+        ),
         "q".to_string(),
         mcp_tool_approval_prompt_options(
             Some(&session_key),
@@ -778,13 +833,13 @@ fn codex_apps_tool_question_without_elicitation_omits_always_allow() {
 
 #[test]
 fn custom_mcp_tool_question_offers_session_remember_and_always_allow() {
-    let question = approval_prompt_request(
-        "custom_server",
-        "run_action",
-        /*arguments*/ None,
-        /*metadata*/ None,
-    )
-    .mcp_tool_approval_prompt(
+    let question = mcp_tool_approval_prompt(
+        &approval_prompt_request(
+            "custom_server",
+            "run_action",
+            /*arguments*/ None,
+            /*metadata*/ None,
+        ),
         "q".to_string(),
         prompt_options(
             /*allow_session_remember*/ true, /*allow_persistent_approval*/ true,
@@ -1181,7 +1236,8 @@ fn approval_elicitation_meta_marks_tool_approvals() {
         /*metadata*/ None,
     );
     assert_eq!(
-        request.mcp_tool_approval_elicitation_meta(
+        mcp_tool_approval_elicitation_meta(
+            &request,
             /*tool_params*/ None,
             /*tool_params_display*/ None,
             prompt_options(
@@ -1210,7 +1266,8 @@ fn approval_elicitation_meta_merges_session_and_always_persist_for_custom_server
         Some(&metadata),
     );
     assert_eq!(
-        request.mcp_tool_approval_elicitation_meta(
+        mcp_tool_approval_elicitation_meta(
+            &request,
             Some(&serde_json::json!({"id": 1})),
             /*tool_params_display*/ None,
             prompt_options(
@@ -1433,7 +1490,8 @@ fn approval_elicitation_meta_includes_connector_source_for_codex_apps() {
         Some(&metadata),
     );
     assert_eq!(
-        request.mcp_tool_approval_elicitation_meta(
+        mcp_tool_approval_elicitation_meta(
+            &request,
             Some(&serde_json::json!({
                 "calendar_id": "primary",
             })),
@@ -1475,7 +1533,8 @@ fn approval_elicitation_meta_merges_session_and_always_persist_with_connector_so
         Some(&metadata),
     );
     assert_eq!(
-        request.mcp_tool_approval_elicitation_meta(
+        mcp_tool_approval_elicitation_meta(
+            &request,
             Some(&serde_json::json!({
                 "calendar_id": "primary",
             })),
