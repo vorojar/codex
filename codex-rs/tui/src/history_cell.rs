@@ -2620,6 +2620,25 @@ pub(crate) fn new_proposed_plan_stream(
     ProposedPlanStreamCell {
         lines,
         is_stream_continuation,
+        markdown_source: None,
+    }
+}
+
+pub(crate) fn new_proposed_plan_stream_with_markdown_source(
+    lines: Vec<Line<'static>>,
+    is_stream_continuation: bool,
+    source: String,
+    cwd: &Path,
+    include_bottom_padding: bool,
+) -> ProposedPlanStreamCell {
+    ProposedPlanStreamCell {
+        lines,
+        is_stream_continuation,
+        markdown_source: Some(ProposedPlanStreamMarkdownSource {
+            source,
+            cwd: cwd.to_path_buf(),
+            include_bottom_padding,
+        }),
     }
 }
 
@@ -2643,6 +2662,26 @@ pub(crate) struct ProposedPlanCell {
 pub(crate) struct ProposedPlanStreamCell {
     lines: Vec<Line<'static>>,
     is_stream_continuation: bool,
+    markdown_source: Option<ProposedPlanStreamMarkdownSource>,
+}
+
+#[derive(Debug)]
+pub(crate) struct ProposedPlanStreamMarkdownSource {
+    source: String,
+    cwd: PathBuf,
+    include_bottom_padding: bool,
+}
+
+impl ProposedPlanStreamCell {
+    pub(crate) fn markdown_source(&self) -> Option<(&str, &Path, bool)> {
+        self.markdown_source.as_ref().map(|source| {
+            (
+                source.source.as_str(),
+                source.cwd.as_path(),
+                source.include_bottom_padding,
+            )
+        })
+    }
 }
 
 impl HistoryCell for ProposedPlanCell {

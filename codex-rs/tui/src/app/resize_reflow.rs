@@ -29,7 +29,9 @@ use super::App;
 use super::InitialHistoryReplayBuffer;
 use crate::history_cell;
 use crate::history_cell::HistoryCell;
+use crate::markdown::append_markdown;
 use crate::render::line_utils::prefix_lines;
+use crate::style::proposed_plan_style;
 use crate::transcript_reflow::TRANSCRIPT_REFLOW_DEBOUNCE;
 use crate::tui;
 
@@ -42,6 +44,12 @@ struct AgentMessageStreamSource {
     source: String,
     cwd: PathBuf,
     is_first_line: bool,
+}
+
+struct ProposedPlanStreamSource {
+    source: String,
+    cwd: PathBuf,
+    include_bottom_padding: bool,
 }
 
 /// Rendered transcript lines ready to be replayed into terminal scrollback.
@@ -399,22 +407,34 @@ impl App {
         let row_cap = self.resize_reflow_max_rows();
         let mut cell_displays = VecDeque::new();
         let mut rendered_rows = 0usize;
-        let stream_run_start =
-            trailing_run_start::<history_cell::AgentMessageCell>(&self.transcript_cells);
-        let stream_source = self
-            .trailing_agent_message_stream_source(stream_run_start, self.transcript_cells.len());
-        let mut start = stream_source
-            .as_ref()
-            .map(|_| stream_run_start)
-            .unwrap_or(self.transcript_cells.len());
+        let mut start = self.transcript_cells.len();
 
-        if let Some(stream_source) = stream_source {
-            let lines = render_agent_message_stream_source(&stream_source, width);
-            rendered_rows += lines.len();
-            cell_displays.push_front(ReflowCellDisplay {
-                lines,
-                is_stream_continuation: !stream_source.is_first_line,
-            });
+        let plan_stream_run_start =
+            trailing_run_start::<history_cell::ProposedPlanStreamCell>(&self.transcript_cells);
+        if let Some(displays) = self.trailing_proposed_plan_stream_displays(
+            plan_stream_run_start,
+            self.transcript_cells.len(),
+            width,
+        ) {
+            start = plan_stream_run_start;
+            for display in displays.into_iter().rev() {
+                rendered_rows += display.lines.len();
+                cell_displays.push_front(display);
+            }
+        } else {
+            let agent_stream_run_start =
+                trailing_run_start::<history_cell::AgentMessageCell>(&self.transcript_cells);
+            if let Some(displays) = self.trailing_agent_message_stream_displays(
+                agent_stream_run_start,
+                self.transcript_cells.len(),
+                width,
+            ) {
+                start = agent_stream_run_start;
+                for display in displays.into_iter().rev() {
+                    rendered_rows += display.lines.len();
+                    cell_displays.push_front(display);
+                }
+            }
         }
 
         while start > 0 {
@@ -470,11 +490,12 @@ impl App {
         }
     }
 
-    fn trailing_agent_message_stream_source(
+    fn trailing_agent_message_stream_displays(
         &self,
         start: usize,
         end: usize,
-    ) -> Option<AgentMessageStreamSource> {
+        width: u16,
+    ) -> Option<Vec<ReflowCellDisplay>> {
         if start == end {
             return None;
         }
@@ -485,7 +506,7 @@ impl App {
         let is_first_line = first_agent_cell.is_first_line();
 
         let mut latest_source = None;
-        let mut latest_source_offset = None;
+        let mut latest_source_offset = 0;
         for (offset, cell) in self.transcript_cells[start..end].iter().enumerate() {
             let agent_cell = cell
                 .as_any()
@@ -496,13 +517,66 @@ impl App {
                     cwd: cwd.to_path_buf(),
                     is_first_line,
                 });
-                latest_source_offset = Some(offset);
+                latest_source_offset = offset;
             }
         }
 
-        (latest_source_offset == Some(end - start - 1))
-            .then_some(latest_source)
-            .flatten()
+        let latest_source = latest_source?;
+        let mut displays = vec![ReflowCellDisplay {
+            lines: render_agent_message_stream_source(&latest_source, width),
+            is_stream_continuation: !latest_source.is_first_line,
+        }];
+
+        for cell in &self.transcript_cells[start + latest_source_offset + 1..end] {
+            displays.push(ReflowCellDisplay {
+                lines: cell.display_lines(width),
+                is_stream_continuation: cell.is_stream_continuation(),
+            });
+        }
+
+        Some(displays)
+    }
+
+    fn trailing_proposed_plan_stream_displays(
+        &self,
+        start: usize,
+        end: usize,
+        width: u16,
+    ) -> Option<Vec<ReflowCellDisplay>> {
+        if start == end {
+            return None;
+        }
+
+        let mut latest_source = None;
+        let mut latest_source_offset = 0;
+        for (offset, cell) in self.transcript_cells[start..end].iter().enumerate() {
+            let plan_cell = cell
+                .as_any()
+                .downcast_ref::<history_cell::ProposedPlanStreamCell>()?;
+            if let Some((source, cwd, include_bottom_padding)) = plan_cell.markdown_source() {
+                latest_source = Some(ProposedPlanStreamSource {
+                    source: source.to_string(),
+                    cwd: cwd.to_path_buf(),
+                    include_bottom_padding,
+                });
+                latest_source_offset = offset;
+            }
+        }
+
+        let latest_source = latest_source?;
+        let mut displays = vec![ReflowCellDisplay {
+            lines: render_proposed_plan_stream_source(&latest_source, width),
+            is_stream_continuation: false,
+        }];
+
+        for cell in &self.transcript_cells[start + latest_source_offset + 1..end] {
+            displays.push(ReflowCellDisplay {
+                lines: cell.display_lines(width),
+                is_stream_continuation: cell.is_stream_continuation(),
+            });
+        }
+
+        Some(displays)
     }
 
     /// Return whether current transcript state should be treated as stream-time resize state.
@@ -553,4 +627,34 @@ fn render_agent_message_stream_source(
         },
         "  ".into(),
     )
+}
+
+fn render_proposed_plan_stream_source(
+    stream_source: &ProposedPlanStreamSource,
+    width: u16,
+) -> Vec<Line<'static>> {
+    let mut lines: Vec<Line<'static>> = vec![vec!["• ".dim(), "Proposed Plan".bold()].into()];
+    lines.push(Line::from(" "));
+
+    let mut body = Vec::new();
+    let wrap_width = width.saturating_sub(4).max(1) as usize;
+    append_markdown(
+        &stream_source.source,
+        Some(wrap_width),
+        Some(stream_source.cwd.as_path()),
+        &mut body,
+    );
+    if body.is_empty() {
+        body.push(Line::from("(empty)".dim().italic()));
+    }
+
+    let plan_style = proposed_plan_style();
+    let mut plan_lines: Vec<Line<'static>> = vec![Line::from(" ")];
+    plan_lines.extend(prefix_lines(body, "  ".into(), "  ".into()));
+    if stream_source.include_bottom_padding {
+        plan_lines.push(Line::from(" "));
+    }
+
+    lines.extend(plan_lines.into_iter().map(|line| line.style(plan_style)));
+    lines
 }

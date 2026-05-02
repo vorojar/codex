@@ -450,15 +450,20 @@ impl PlanStreamController {
         }
 
         let source = std::mem::take(&mut self.core.raw_source);
-        let out = self.emit(remaining, /*include_bottom_padding*/ true);
+        let out = self.emit(
+            remaining,
+            /*include_bottom_padding*/ true,
+            Some(source.clone()),
+        );
         self.core.reset();
         (out, Some(source))
     }
 
     pub(crate) fn on_commit_tick(&mut self) -> (Option<Box<dyn HistoryCell>>, bool) {
         let step = self.core.tick();
+        let source = self.core.emitted_stable_source().map(str::to_string);
         (
-            self.emit(step, /*include_bottom_padding*/ false),
+            self.emit(step, /*include_bottom_padding*/ false, source),
             self.core.is_idle(),
         )
     }
@@ -468,8 +473,9 @@ impl PlanStreamController {
         max_lines: usize,
     ) -> (Option<Box<dyn HistoryCell>>, bool) {
         let step = self.core.tick_batch(max_lines);
+        let source = self.core.emitted_stable_source().map(str::to_string);
         (
-            self.emit(step, /*include_bottom_padding*/ false),
+            self.emit(step, /*include_bottom_padding*/ false, source),
             self.core.is_idle(),
         )
     }
@@ -494,6 +500,7 @@ impl PlanStreamController {
         &mut self,
         lines: Vec<Line<'static>>,
         include_bottom_padding: bool,
+        markdown_source: Option<String>,
     ) -> Option<Box<dyn HistoryCell>> {
         if lines.is_empty() && !include_bottom_padding {
             return None;
@@ -524,10 +531,22 @@ impl PlanStreamController {
             .collect::<Vec<_>>();
         out_lines.extend(plan_lines);
 
-        Some(Box::new(history_cell::new_proposed_plan_stream(
-            out_lines,
-            is_stream_continuation,
-        )))
+        if let Some(source) = markdown_source {
+            Some(Box::new(
+                history_cell::new_proposed_plan_stream_with_markdown_source(
+                    out_lines,
+                    is_stream_continuation,
+                    source,
+                    self.core.cwd.as_path(),
+                    include_bottom_padding,
+                ),
+            ))
+        } else {
+            Some(Box::new(history_cell::new_proposed_plan_stream(
+                out_lines,
+                is_stream_continuation,
+            )))
+        }
     }
 }
 
@@ -756,6 +775,26 @@ mod tests {
                 && tail.iter().any(|line| line.contains("second")),
             "tail should continue the existing plan cell without a duplicate header: {tail:?}",
         );
+    }
+
+    #[test]
+    fn plan_stream_cells_carry_stable_source_snapshots() {
+        let mut ctrl = plan_stream_controller(/*width*/ Some(80));
+
+        assert!(ctrl.push(&format!("{}\nAfter table.\n", table_source())));
+
+        let (cell, _idle) = ctrl.on_commit_tick_batch(usize::MAX);
+        let cell = cell.expect("expected queued stable plan table to emit");
+        let plan_cell = cell
+            .as_any()
+            .downcast_ref::<history_cell::ProposedPlanStreamCell>()
+            .expect("expected proposed plan stream cell");
+        let (source, _cwd, include_bottom_padding) = plan_cell
+            .markdown_source()
+            .expect("stable plan stream cell should carry markdown source");
+
+        assert_eq!(source, table_source());
+        assert!(!include_bottom_padding);
     }
 
     #[test]

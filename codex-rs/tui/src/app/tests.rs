@@ -18,6 +18,9 @@ use crate::history_cell::AgentMessageCell;
 use crate::history_cell::HistoryCell;
 use crate::history_cell::PlainHistoryCell;
 use crate::history_cell::UserHistoryCell;
+use crate::history_cell::new_proposed_plan;
+use crate::history_cell::new_proposed_plan_stream;
+use crate::history_cell::new_proposed_plan_stream_with_markdown_source;
 use crate::history_cell::new_session_info;
 use crate::multi_agents::AgentPickerThreadEntry;
 use assert_matches::assert_matches;
@@ -4024,7 +4027,87 @@ async fn table_resize_lifecycle_stream_reflow_uses_markdown_source_not_transient
 }
 
 #[tokio::test]
-async fn table_resize_lifecycle_stream_reflow_ignores_stale_markdown_source() {
+async fn table_resize_lifecycle_stream_reflow_preserves_source_prefix_before_unsourced_tail() {
+    let (mut app, _rx, _op_rx) = make_test_app_with_channels().await;
+    enable_terminal_resize_reflow(&mut app);
+    app.config.terminal_resize_reflow.max_rows = TerminalResizeReflowMaxRows::Disabled;
+    let cwd = std::env::temp_dir();
+    let source = markdown_table_source();
+
+    app.transcript_cells
+        .push(Arc::new(AgentMessageCell::new_with_markdown_source(
+            vec![Line::from("│ Area │ Result │")],
+            /*is_first_line*/ true,
+            source.to_string(),
+            cwd.as_path(),
+        )) as Arc<dyn HistoryCell>);
+    app.transcript_cells.push(Arc::new(AgentMessageCell::new(
+        vec![Line::from("newer emitted stream row")],
+        /*is_first_line*/ false,
+    )) as Arc<dyn HistoryCell>);
+
+    let reflowed = app.render_transcript_lines_for_reflow(/*width*/ 44);
+    let lines = reflowed
+        .lines
+        .iter()
+        .map(rendered_line_text)
+        .collect::<Vec<_>>();
+    let mut expected = AgentMarkdownCell::new(source.to_string(), cwd.as_path())
+        .display_lines(/*width*/ 44)
+        .iter()
+        .map(rendered_line_text)
+        .collect::<Vec<_>>();
+    expected.push("  newer emitted stream row".to_string());
+
+    assert_eq!(
+        lines, expected,
+        "resize reflow must rebuild the source-backed prefix and append newer unsourced stream cells",
+    );
+}
+
+#[tokio::test]
+async fn table_resize_lifecycle_plan_stream_reflow_uses_markdown_source_before_unsourced_tail() {
+    let (mut app, _rx, _op_rx) = make_test_app_with_channels().await;
+    enable_terminal_resize_reflow(&mut app);
+    app.config.terminal_resize_reflow.max_rows = TerminalResizeReflowMaxRows::Disabled;
+    let cwd = std::env::temp_dir();
+    let source = markdown_table_source();
+
+    app.transcript_cells
+        .push(Arc::new(new_proposed_plan_stream_with_markdown_source(
+            vec![Line::from("│ Area │ Result │")],
+            /*is_stream_continuation*/ false,
+            source.to_string(),
+            cwd.as_path(),
+            /*include_bottom_padding*/ false,
+        )) as Arc<dyn HistoryCell>);
+    app.transcript_cells.push(Arc::new(new_proposed_plan_stream(
+        vec![Line::from("  newer emitted plan row")],
+        /*is_stream_continuation*/ true,
+    )) as Arc<dyn HistoryCell>);
+
+    let reflowed = app.render_transcript_lines_for_reflow(/*width*/ 44);
+    let lines = reflowed
+        .lines
+        .iter()
+        .map(rendered_line_text)
+        .collect::<Vec<_>>();
+    let mut expected = new_proposed_plan(source.to_string(), cwd.as_path())
+        .display_lines(/*width*/ 44)
+        .iter()
+        .map(rendered_line_text)
+        .collect::<Vec<_>>();
+    expected.pop();
+    expected.push("  newer emitted plan row".to_string());
+
+    assert_eq!(
+        lines, expected,
+        "resize reflow must rebuild proposed-plan stream tables from source and append newer unsourced plan cells",
+    );
+}
+
+#[tokio::test]
+async fn table_resize_lifecycle_stream_reflow_does_not_drop_newer_unsourced_tail() {
     let (mut app, _rx, _op_rx) = make_test_app_with_channels().await;
     enable_terminal_resize_reflow(&mut app);
     app.config.terminal_resize_reflow.max_rows = TerminalResizeReflowMaxRows::Disabled;
