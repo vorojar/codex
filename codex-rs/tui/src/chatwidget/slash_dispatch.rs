@@ -455,10 +455,11 @@ impl ChatWidget {
     /// path as well would make a single command appear twice during Up-arrow navigation.
     pub(super) fn dispatch_command_with_args(
         &mut self,
-        cmd: SlashCommandAction,
+        cmd: impl Into<SlashCommandAction>,
         args: String,
         text_elements: Vec<TextElement>,
     ) {
+        let cmd = cmd.into();
         if !self.ensure_slash_command_allowed_in_side_conversation(&cmd) {
             return;
         }
