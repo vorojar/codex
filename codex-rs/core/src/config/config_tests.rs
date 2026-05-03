@@ -6724,11 +6724,7 @@ async fn test_precedence_fixture_with_gpt3_profile() -> std::io::Result<()> {
         tui_status_line_use_colors: true,
         tui_terminal_title: None,
         tui_theme: None,
-<<<<<<< HEAD
-=======
         tui_session_picker_view: SessionPickerViewMode::Comfortable,
-        tui_keymap: TuiKeymap::default(),
->>>>>>> e0539767be (feat(tui): persist session picker view mode)
         otel: OtelConfig::default(),
     };
 
@@ -6885,11 +6881,7 @@ async fn test_precedence_fixture_with_zdr_profile() -> std::io::Result<()> {
         tui_status_line_use_colors: true,
         tui_terminal_title: None,
         tui_theme: None,
-<<<<<<< HEAD
-=======
         tui_session_picker_view: SessionPickerViewMode::Comfortable,
-        tui_keymap: TuiKeymap::default(),
->>>>>>> e0539767be (feat(tui): persist session picker view mode)
         otel: OtelConfig::default(),
     };
 
@@ -7031,11 +7023,7 @@ async fn test_precedence_fixture_with_gpt5_profile() -> std::io::Result<()> {
         tui_status_line_use_colors: true,
         tui_terminal_title: None,
         tui_theme: None,
-<<<<<<< HEAD
-=======
         tui_session_picker_view: SessionPickerViewMode::Comfortable,
-        tui_keymap: TuiKeymap::default(),
->>>>>>> e0539767be (feat(tui): persist session picker view mode)
         otel: OtelConfig::default(),
     };
 
