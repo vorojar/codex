@@ -8,6 +8,7 @@ use codex_protocol::openai_models::ReasoningEffort;
 use codex_protocol::protocol::EventMsg;
 use codex_protocol::protocol::Op;
 use codex_protocol::protocol::SessionSource;
+use codex_state::Phase2JobClaimOutcome;
 use core_test_support::responses::ResponseMock;
 use core_test_support::responses::ResponsesRequest;
 use core_test_support::responses::ev_assistant_message;
@@ -88,6 +89,7 @@ async fn memories_startup_phase2_tracks_workspace_diff_across_runs() -> anyhow::
         "expected workspace diff file in prompt: {prompt}"
     );
 
+    wait_for_phase2_job_succeeded(db.as_ref()).await?;
     wait_for_phase2_workspace_reset(&memory_root).await?;
     let raw_memories = tokio::fs::read_to_string(memory_root.join("raw_memories.md")).await?;
     assert!(raw_memories.contains("raw memory B"));
@@ -169,6 +171,7 @@ async fn memories_startup_phase2_prunes_old_extension_resources() -> anyhow::Res
         "expected workspace diff file in prompt: {prompt}"
     );
 
+    wait_for_phase2_job_succeeded(db.as_ref()).await?;
     wait_for_phase2_workspace_reset(&home.path().join("memories")).await?;
     wait_for_file_removed(&old_file).await?;
     assert!(
@@ -228,6 +231,7 @@ async fn memories_startup_phase2_prunes_old_extension_resources_without_stage1_i
         "expected workspace diff file in prompt: {prompt}"
     );
 
+    wait_for_phase2_job_succeeded(db.as_ref()).await?;
     wait_for_file_removed(&old_file).await?;
     wait_for_phase2_workspace_reset(&home.path().join("memories")).await?;
 
@@ -431,6 +435,30 @@ async fn wait_for_phase2_workspace_reset(memory_root: &Path) -> anyhow::Result<(
         assert!(
             Instant::now() < deadline,
             "timed out waiting for clean memory workspace baseline"
+        );
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+}
+
+async fn wait_for_phase2_job_succeeded(db: &codex_state::StateRuntime) -> anyhow::Result<()> {
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        let outcome = db
+            .try_claim_global_phase2_job(ThreadId::new(), /*lease_seconds*/ 3_600)
+            .await?;
+        match outcome {
+            Phase2JobClaimOutcome::SkippedCooldown => return Ok(()),
+            Phase2JobClaimOutcome::SkippedRunning => {}
+            Phase2JobClaimOutcome::SkippedRetryUnavailable => {
+                anyhow::bail!("phase2 job failed before the test observed completion");
+            }
+            Phase2JobClaimOutcome::Claimed { .. } => {
+                anyhow::bail!("phase2 job was claimable before the test observed completion");
+            }
+        }
+        assert!(
+            Instant::now() < deadline,
+            "timed out waiting for phase2 job to succeed"
         );
         tokio::time::sleep(Duration::from_millis(50)).await;
     }
