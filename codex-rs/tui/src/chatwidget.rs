@@ -345,16 +345,17 @@ mod reasoning_shortcuts;
 mod side;
 mod status_surfaces;
 use self::status_surfaces::CachedProjectRootName;
-pub(crate) use self::status_surfaces::StatusLineGitSummary;
 use self::status_surfaces::TerminalTitleStatusKind;
 mod user_messages;
 use self::user_messages::PendingSteerCompareKey;
 use self::user_messages::UserMessageDisplay;
+pub(crate) use crate::branch_summary::StatusLineGitSummary;
 use crate::streaming::chunking::AdaptiveChunkingPolicy;
 use crate::streaming::commit_tick::CommitTickScope;
 use crate::streaming::commit_tick::run_commit_tick;
 use crate::streaming::controller::PlanStreamController;
 use crate::streaming::controller::StreamController;
+use crate::workspace_command::WorkspaceCommandRunner;
 
 use chrono::Local;
 use codex_app_server_protocol::AskForApproval;
@@ -555,6 +556,7 @@ pub(crate) struct ChatWidgetInit {
     pub(crate) config: Config,
     pub(crate) frame_requester: FrameRequester,
     pub(crate) app_event_tx: AppEventSender,
+    pub(crate) workspace_command_runner: Option<WorkspaceCommandRunner>,
     pub(crate) initial_user_message: Option<UserMessage>,
     pub(crate) enhanced_keys_supported: bool,
     pub(crate) has_chatgpt_account: bool,
@@ -973,6 +975,8 @@ pub(crate) struct ChatWidget {
     current_rollout_path: Option<PathBuf>,
     // Current working directory (if known)
     current_cwd: Option<PathBuf>,
+    // App-server-backed command runner for workspace metadata lookups.
+    workspace_command_runner: Option<WorkspaceCommandRunner>,
     // Instruction source files loaded for the current session, supplied by app-server.
     instruction_source_paths: Vec<AbsolutePathBuf>,
     // Runtime network proxy bind addresses from SessionConfigured.
@@ -4800,6 +4804,7 @@ impl ChatWidget {
             config,
             frame_requester,
             app_event_tx,
+            workspace_command_runner,
             initial_user_message,
             enhanced_keys_supported,
             has_chatgpt_account,
@@ -4992,6 +4997,7 @@ impl ChatWidget {
             feedback,
             current_rollout_path: None,
             current_cwd,
+            workspace_command_runner,
             instruction_source_paths: Vec::new(),
             session_network_proxy: None,
             status_line_invalid_items_warned,

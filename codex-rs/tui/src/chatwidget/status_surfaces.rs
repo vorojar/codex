@@ -5,11 +5,8 @@
 
 use super::*;
 use crate::bottom_pane::status_line_from_segments;
+use crate::branch_summary;
 use crate::status::format_tokens_compact;
-use codex_git_utils::GitBranchDiffStats;
-use codex_git_utils::branch_diff_stats_to_default_branch;
-use serde::Deserialize;
-use tokio::process::Command;
 
 /// Items shown in the terminal title when the user has not configured a
 /// custom selection. Intentionally minimal: activity indicator + project name.
@@ -82,18 +79,6 @@ impl StatusSurfaceSelections {
 pub(super) struct CachedProjectRootName {
     pub(super) cwd: PathBuf,
     pub(super) root_name: Option<String>,
-}
-
-#[derive(Clone, Debug, Default)]
-pub(crate) struct StatusLineGitSummary {
-    pub(crate) pull_request: Option<StatusLinePullRequest>,
-    pub(crate) branch_change_stats: Option<GitBranchDiffStats>,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) struct StatusLinePullRequest {
-    pub(crate) number: u64,
-    pub(crate) url: String,
 }
 
 impl ChatWidget {
@@ -543,10 +528,14 @@ impl ChatWidget {
         if self.status_line_branch_pending {
             return;
         }
+        let Some(runner) = self.workspace_command_runner.clone() else {
+            self.status_line_branch_lookup_complete = true;
+            return;
+        };
         self.status_line_branch_pending = true;
         let tx = self.app_event_tx.clone();
         tokio::spawn(async move {
-            let branch = current_branch_name(&cwd).await;
+            let branch = branch_summary::current_branch_name(runner.as_ref(), &cwd).await;
             tx.send(AppEvent::StatusLineBranchUpdated { cwd, branch });
         });
     }
@@ -555,10 +544,14 @@ impl ChatWidget {
         if self.status_line_git_summary_pending {
             return;
         }
+        let Some(runner) = self.workspace_command_runner.clone() else {
+            self.status_line_git_summary_lookup_complete = true;
+            return;
+        };
         self.status_line_git_summary_pending = true;
         let tx = self.app_event_tx.clone();
         tokio::spawn(async move {
-            let summary = status_line_git_summary(&cwd).await;
+            let summary = branch_summary::status_line_git_summary(runner.as_ref(), &cwd).await;
             tx.send(AppEvent::StatusLineGitSummaryUpdated { cwd, summary });
         });
     }
@@ -893,178 +886,6 @@ impl ChatWidget {
         truncated.push_str("...");
         truncated
     }
-}
-
-#[derive(Deserialize)]
-struct GhPullRequestView {
-    number: u64,
-    url: String,
-    state: String,
-}
-
-#[derive(Deserialize)]
-struct GhPullRequestApiItem {
-    number: u64,
-    #[serde(rename = "html_url")]
-    url: String,
-    state: String,
-}
-
-#[derive(Deserialize)]
-struct GhRepoView {
-    #[serde(rename = "nameWithOwner")]
-    name_with_owner: Option<String>,
-    parent: Option<GhRepoParent>,
-}
-
-#[derive(Deserialize)]
-struct GhRepoParent {
-    #[serde(rename = "nameWithOwner")]
-    name_with_owner: String,
-}
-
-async fn status_line_git_summary(cwd: &Path) -> StatusLineGitSummary {
-    let (pull_request, branch_change_stats) = tokio::join!(
-        open_pull_request(cwd),
-        branch_diff_stats_to_default_branch(cwd),
-    );
-    StatusLineGitSummary {
-        pull_request,
-        branch_change_stats,
-    }
-}
-
-async fn open_pull_request(cwd: &Path) -> Option<StatusLinePullRequest> {
-    if let Some(pull_request) = open_pull_request_for_current_branch(cwd).await {
-        return Some(pull_request);
-    }
-
-    open_pull_request_for_head_commit(cwd).await
-}
-
-async fn open_pull_request_for_current_branch(cwd: &Path) -> Option<StatusLinePullRequest> {
-    let output = Command::new("gh")
-        .env("GH_PROMPT_DISABLED", "1")
-        .env("GIT_TERMINAL_PROMPT", "0")
-        .args(["pr", "view", "--json", "number,url,state"])
-        .current_dir(cwd)
-        .kill_on_drop(true)
-        .output()
-        .await
-        .ok()?;
-    if !output.status.success() {
-        return None;
-    }
-    pull_request_from_view_output(&output.stdout)
-}
-
-async fn open_pull_request_for_head_commit(cwd: &Path) -> Option<StatusLinePullRequest> {
-    let head_sha = current_head_sha(cwd).await?;
-    for repo in gh_repo_search_order(cwd).await? {
-        let endpoint = format!("repos/{repo}/commits/{head_sha}/pulls");
-        let output = Command::new("gh")
-            .env("GH_PROMPT_DISABLED", "1")
-            .env("GIT_TERMINAL_PROMPT", "0")
-            .args([
-                "api",
-                "-H",
-                "Accept: application/vnd.github+json",
-                &endpoint,
-            ])
-            .current_dir(cwd)
-            .kill_on_drop(true)
-            .output()
-            .await
-            .ok()?;
-        if output.status.success()
-            && let Some(pull_request) = pull_request_from_api_output(&output.stdout)
-        {
-            return Some(pull_request);
-        }
-    }
-
-    None
-}
-
-async fn current_head_sha(cwd: &Path) -> Option<String> {
-    let output = Command::new("git")
-        .env("GIT_OPTIONAL_LOCKS", "0")
-        .args(["rev-parse", "HEAD"])
-        .current_dir(cwd)
-        .kill_on_drop(true)
-        .output()
-        .await
-        .ok()?;
-    if !output.status.success() {
-        return None;
-    }
-
-    String::from_utf8(output.stdout)
-        .ok()
-        .map(|sha| sha.trim().to_string())
-        .filter(|sha| !sha.is_empty())
-}
-
-async fn gh_repo_search_order(cwd: &Path) -> Option<Vec<String>> {
-    let output = Command::new("gh")
-        .env("GH_PROMPT_DISABLED", "1")
-        .env("GIT_TERMINAL_PROMPT", "0")
-        .args(["repo", "view", "--json", "nameWithOwner,parent"])
-        .current_dir(cwd)
-        .kill_on_drop(true)
-        .output()
-        .await
-        .ok()?;
-    if !output.status.success() {
-        return None;
-    }
-
-    repo_search_order_from_output(&output.stdout)
-}
-
-fn repo_search_order_from_output(stdout: &[u8]) -> Option<Vec<String>> {
-    let repo = serde_json::from_slice::<GhRepoView>(stdout).ok()?;
-    let mut repos = Vec::new();
-    if let Some(parent) = repo.parent {
-        repos.push(parent.name_with_owner);
-    }
-    if let Some(name_with_owner) = repo.name_with_owner
-        && !repos.iter().any(|repo| repo == &name_with_owner)
-    {
-        repos.push(name_with_owner);
-    }
-    if repos.is_empty() {
-        return None;
-    }
-
-    Some(repos)
-}
-
-pub(super) fn pull_request_from_view_output(stdout: &[u8]) -> Option<StatusLinePullRequest> {
-    let pull_request = serde_json::from_slice::<GhPullRequestView>(stdout).ok()?;
-    pull_request
-        .state
-        .eq_ignore_ascii_case("open")
-        .then_some(StatusLinePullRequest {
-            number: pull_request.number,
-            url: pull_request.url,
-        })
-}
-
-pub(super) fn pull_request_from_api_output(stdout: &[u8]) -> Option<StatusLinePullRequest> {
-    serde_json::from_slice::<Vec<GhPullRequestApiItem>>(stdout)
-        .ok()?
-        .into_iter()
-        .find(|pull_request| pull_request.state.eq_ignore_ascii_case("open"))
-        .map(|pull_request| StatusLinePullRequest {
-            number: pull_request.number,
-            url: pull_request.url,
-        })
-}
-
-#[cfg(test)]
-pub(super) fn repo_search_order_from_gh_output(stdout: &[u8]) -> Option<Vec<String>> {
-    repo_search_order_from_output(stdout)
 }
 
 fn parse_items_with_invalids<T>(ids: impl IntoIterator<Item = String>) -> (Vec<T>, Vec<String>)

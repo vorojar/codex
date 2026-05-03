@@ -136,7 +136,7 @@ async fn token_usage_update_uses_runtime_context_window() {
 async fn status_line_git_summary_items_render_values() {
     let (mut chat, _rx, _ops) = make_chatwidget_manual(/*model_override*/ None).await;
     chat.status_line_git_summary = Some(StatusLineGitSummary {
-        pull_request: Some(crate::chatwidget::status_surfaces::StatusLinePullRequest {
+        pull_request: Some(crate::branch_summary::StatusLinePullRequest {
             number: 20_252,
             url: "https://github.com/openai/codex/pull/20252".to_string(),
         }),
@@ -173,49 +173,6 @@ async fn status_line_branch_changes_render_no_changes() {
     );
 }
 
-#[test]
-fn status_line_pr_view_parser_requires_open_pr() {
-    assert_eq!(
-        crate::chatwidget::status_surfaces::pull_request_from_view_output(
-            br#"{"number":20252,"url":"https://github.com/openai/codex/pull/20252","state":"OPEN"}"#
-        ),
-        Some(crate::chatwidget::status_surfaces::StatusLinePullRequest {
-            number: 20_252,
-            url: "https://github.com/openai/codex/pull/20252".to_string(),
-        })
-    );
-
-    assert_eq!(
-        crate::chatwidget::status_surfaces::pull_request_from_view_output(
-            br#"{"number":20252,"url":"https://github.com/openai/codex/pull/20252","state":"MERGED"}"#
-        ),
-        None
-    );
-}
-
-#[test]
-fn status_line_commit_pr_parser_uses_open_rest_result() {
-    assert_eq!(
-        crate::chatwidget::status_surfaces::pull_request_from_api_output(
-            br#"[{"number":20251,"html_url":"https://github.com/openai/codex/pull/20251","state":"closed"},{"number":20252,"html_url":"https://github.com/openai/codex/pull/20252","state":"open"}]"#
-        ),
-        Some(crate::chatwidget::status_surfaces::StatusLinePullRequest {
-            number: 20_252,
-            url: "https://github.com/openai/codex/pull/20252".to_string(),
-        })
-    );
-}
-
-#[test]
-fn status_line_pr_fallback_searches_parent_repo_first() {
-    assert_eq!(
-        crate::chatwidget::status_surfaces::repo_search_order_from_gh_output(
-            br#"{"nameWithOwner":"fcoury/codex","parent":{"nameWithOwner":"openai/codex"}}"#
-        ),
-        Some(vec!["openai/codex".to_string(), "fcoury/codex".to_string(),])
-    );
-}
-
 #[tokio::test]
 async fn stale_status_line_git_summary_update_is_ignored() {
     let (mut chat, _rx, _ops) = make_chatwidget_manual(/*model_override*/ None).await;
@@ -225,7 +182,7 @@ async fn stale_status_line_git_summary_update_is_ignored() {
     chat.set_status_line_git_summary(
         PathBuf::from("/other"),
         StatusLineGitSummary {
-            pull_request: Some(crate::chatwidget::status_surfaces::StatusLinePullRequest {
+            pull_request: Some(crate::branch_summary::StatusLinePullRequest {
                 number: 20_252,
                 url: "https://github.com/openai/codex/pull/20252".to_string(),
             }),
@@ -250,6 +207,7 @@ async fn helpers_are_available_and_do_not_panic() {
         config: cfg.clone(),
         frame_requester: FrameRequester::test_dummy(),
         app_event_tx: tx,
+        workspace_command_runner: None,
         initial_user_message: None,
         enhanced_keys_supported: false,
         has_chatgpt_account: false,
@@ -1418,6 +1376,7 @@ async fn status_line_branch_state_resets_when_git_branch_disabled() {
 #[tokio::test]
 async fn status_line_branch_refreshes_after_turn_complete() {
     let (mut chat, _rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
+    install_noop_workspace_command_runner(&mut chat);
     chat.config.tui_status_line = Some(vec!["git-branch".to_string()]);
     chat.status_line_branch_lookup_complete = true;
     chat.status_line_branch_pending = false;
@@ -1430,6 +1389,7 @@ async fn status_line_branch_refreshes_after_turn_complete() {
 #[tokio::test]
 async fn status_line_branch_refreshes_after_interrupt() {
     let (mut chat, _rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
+    install_noop_workspace_command_runner(&mut chat);
     chat.config.tui_status_line = Some(vec!["git-branch".to_string()]);
     chat.status_line_branch_lookup_complete = true;
     chat.status_line_branch_pending = false;
@@ -1437,6 +1397,37 @@ async fn status_line_branch_refreshes_after_interrupt() {
     handle_turn_interrupted(&mut chat, "turn-1");
 
     assert!(chat.status_line_branch_pending);
+}
+
+fn install_noop_workspace_command_runner(chat: &mut ChatWidget) {
+    chat.workspace_command_runner = Some(std::sync::Arc::new(NoopWorkspaceCommandRunner));
+}
+
+struct NoopWorkspaceCommandRunner;
+
+impl crate::workspace_command::WorkspaceCommandExecutor for NoopWorkspaceCommandRunner {
+    fn run(
+        &self,
+        _command: crate::workspace_command::WorkspaceCommand,
+    ) -> std::pin::Pin<
+        Box<
+            dyn std::future::Future<
+                    Output = Result<
+                        crate::workspace_command::WorkspaceCommandOutput,
+                        crate::workspace_command::WorkspaceCommandError,
+                    >,
+                > + Send
+                + '_,
+        >,
+    > {
+        Box::pin(async {
+            Ok(crate::workspace_command::WorkspaceCommandOutput {
+                exit_code: 1,
+                stdout: String::new(),
+                stderr: String::new(),
+            })
+        })
+    }
 }
 
 #[tokio::test]
