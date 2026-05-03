@@ -16,6 +16,7 @@ use crate::bottom_pane::slash_commands::command_available_during_task;
 use crate::bottom_pane::slash_commands::command_available_in_side_conversation;
 use crate::bottom_pane::slash_commands::command_name;
 use crate::bottom_pane::slash_commands::command_supports_inline_args;
+use codex_protocol::protocol::ReviewRequest;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum SlashCommandDispatchSource {
