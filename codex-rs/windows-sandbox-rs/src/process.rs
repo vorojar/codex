@@ -4,26 +4,26 @@ use crate::proc_thread_attr::ProcThreadAttributeList;
 use crate::winutil::argv_to_command_line;
 use crate::winutil::format_last_error;
 use crate::winutil::to_wide;
-use anyhow::anyhow;
 use anyhow::Result;
+use anyhow::anyhow;
 use std::collections::HashMap;
 use std::ffi::c_void;
 use std::path::Path;
 use std::ptr;
-use windows_sys::Win32::Foundation::GetLastError;
 use windows_sys::Win32::Foundation::CloseHandle;
-use windows_sys::Win32::Foundation::SetHandleInformation;
+use windows_sys::Win32::Foundation::GetLastError;
 use windows_sys::Win32::Foundation::HANDLE;
 use windows_sys::Win32::Foundation::HANDLE_FLAG_INHERIT;
 use windows_sys::Win32::Foundation::INVALID_HANDLE_VALUE;
+use windows_sys::Win32::Foundation::SetHandleInformation;
 use windows_sys::Win32::Storage::FileSystem::ReadFile;
 use windows_sys::Win32::System::Console::GetStdHandle;
 use windows_sys::Win32::System::Console::STD_ERROR_HANDLE;
 use windows_sys::Win32::System::Console::STD_INPUT_HANDLE;
 use windows_sys::Win32::System::Console::STD_OUTPUT_HANDLE;
 use windows_sys::Win32::System::Pipes::CreatePipe;
-use windows_sys::Win32::System::Threading::CreateProcessAsUserW;
 use windows_sys::Win32::System::Threading::CREATE_UNICODE_ENVIRONMENT;
+use windows_sys::Win32::System::Threading::CreateProcessAsUserW;
 use windows_sys::Win32::System::Threading::EXTENDED_STARTUPINFO_PRESENT;
 use windows_sys::Win32::System::Threading::PROCESS_INFORMATION;
 use windows_sys::Win32::System::Threading::STARTF_USESTDHANDLES;
@@ -53,6 +53,34 @@ pub fn make_env_block(env: &HashMap<String, String>) -> Vec<u16> {
     }
     w.push(0);
     w
+}
+
+pub(crate) fn format_create_process_as_user_error(
+    err: i32,
+    cwd: &Path,
+    cmdline: &str,
+    env_block_len: usize,
+    si_flags: u32,
+    creation_flags: u32,
+    use_private_desktop: bool,
+) -> String {
+    let mut msg = format!(
+        "CreateProcessAsUserW failed: {} ({}) | cwd={} | cmd={} | env_u16_len={} | si_flags={} | creation_flags={}",
+        err,
+        format_last_error(err),
+        cwd.display(),
+        cmdline,
+        env_block_len,
+        si_flags,
+        creation_flags,
+    );
+    if use_private_desktop {
+        msg.push_str(" | private_desktop=true");
+        msg.push_str(
+            " | hint=try setting `windows.sandbox_private_desktop = false` if this machine cannot launch sandboxed processes on a private desktop",
+        );
+    }
+    msg
 }
 
 unsafe fn ensure_inheritable_stdio(si: &mut STARTUPINFOW) -> Result<()> {
@@ -135,18 +163,17 @@ pub unsafe fn create_process_as_user(
             );
             if ok == 0 {
                 let err = GetLastError() as i32;
-                let msg = format!(
-                    "CreateProcessAsUserW failed: {} ({}) | cwd={} | cmd={} | env_u16_len={} | si_flags={} | creation_flags={}",
+                let msg = format_create_process_as_user_error(
                     err,
-                    format_last_error(err),
-                    cwd.display(),
-                    cmdline_str,
+                    cwd,
+                    &cmdline_str,
                     env_block_len,
                     si.StartupInfo.dwFlags,
                     creation_flags,
+                    use_private_desktop,
                 );
                 logging::debug_log(&msg, logs_base_dir);
-                return Err(anyhow!("CreateProcessAsUserW failed: {err}"));
+                return Err(anyhow!(msg));
             }
             Ok(CreatedProcess {
                 process_info: pi,
@@ -176,18 +203,17 @@ pub unsafe fn create_process_as_user(
             );
             if ok == 0 {
                 let err = GetLastError() as i32;
-                let msg = format!(
-                    "CreateProcessAsUserW failed: {} ({}) | cwd={} | cmd={} | env_u16_len={} | si_flags={} | creation_flags={}",
+                let msg = format_create_process_as_user_error(
                     err,
-                    format_last_error(err),
-                    cwd.display(),
-                    cmdline_str,
+                    cwd,
+                    &cmdline_str,
                     env_block_len,
                     si.dwFlags,
                     creation_flags,
+                    use_private_desktop,
                 );
                 logging::debug_log(&msg, logs_base_dir);
-                return Err(anyhow!("CreateProcessAsUserW failed: {err}"));
+                return Err(anyhow!(msg));
             }
             Ok(CreatedProcess {
                 process_info: pi,
@@ -195,6 +221,44 @@ pub unsafe fn create_process_as_user(
                 _desktop: desktop,
             })
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::format_create_process_as_user_error;
+    use std::path::Path;
+
+    #[test]
+    fn create_process_error_includes_private_desktop_hint() {
+        let message = format_create_process_as_user_error(
+            5,
+            Path::new("C:\\workspace"),
+            "cmd /c dir",
+            42,
+            256,
+            1024,
+            true,
+        );
+
+        assert!(message.contains("private_desktop=true"));
+        assert!(message.contains("windows.sandbox_private_desktop = false"));
+    }
+
+    #[test]
+    fn create_process_error_omits_private_desktop_hint_when_disabled() {
+        let message = format_create_process_as_user_error(
+            5,
+            Path::new("C:\\workspace"),
+            "cmd /c dir",
+            42,
+            256,
+            1024,
+            false,
+        );
+
+        assert!(!message.contains("private_desktop=true"));
+        assert!(!message.contains("windows.sandbox_private_desktop = false"));
     }
 }
 

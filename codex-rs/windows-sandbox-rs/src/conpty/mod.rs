@@ -8,7 +8,6 @@
 
 use crate::desktop::LaunchDesktop;
 use crate::proc_thread_attr::ProcThreadAttributeList;
-use crate::winutil::format_last_error;
 use crate::winutil::quote_windows_arg;
 use crate::winutil::to_wide;
 use anyhow::Result;
@@ -28,6 +27,7 @@ use windows_sys::Win32::System::Threading::PROCESS_INFORMATION;
 use windows_sys::Win32::System::Threading::STARTF_USESTDHANDLES;
 use windows_sys::Win32::System::Threading::STARTUPINFOEXW;
 
+use crate::process::format_create_process_as_user_error;
 use crate::process::make_env_block;
 
 /// Owns a ConPTY handle and its backing pipe handles.
@@ -138,14 +138,15 @@ pub fn spawn_conpty_process_as_user(
     };
     if ok == 0 {
         let err = unsafe { GetLastError() } as i32;
-        return Err(anyhow::anyhow!(
-            "CreateProcessAsUserW failed: {} ({}) | cwd={} | cmd={} | env_u16_len={}",
+        return Err(anyhow::anyhow!(format_create_process_as_user_error(
             err,
-            format_last_error(err),
-            cwd.display(),
-            cmdline_str,
-            env_block.len()
-        ));
+            cwd,
+            &cmdline_str,
+            env_block.len(),
+            si.StartupInfo.dwFlags,
+            EXTENDED_STARTUPINFO_PRESENT | CREATE_UNICODE_ENVIRONMENT,
+            use_private_desktop,
+        )));
     }
     Ok((pi, conpty))
 }
