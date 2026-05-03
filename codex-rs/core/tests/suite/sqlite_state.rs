@@ -148,6 +148,7 @@ async fn backfill_scans_existing_rollouts() -> Result<()> {
                     agent_nickname: None,
                     agent_role: None,
                     model_provider: None,
+                    context_mode: codex_protocol::config_types::ContextMode::Default,
                     base_instructions: None,
                     dynamic_tools: Some(dynamic_tools_for_hook),
                     memory_mode: None,

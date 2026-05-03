@@ -533,6 +533,13 @@
         }
       ]
     },
+    "ContextMode": {
+      "enum": [
+        "default",
+        "vanilla"
+      ],
+      "type": "string"
+    },
     "DeviceKeyCreateParams": {
       "description": "Create a controller-local device key with a random key id.",
       "properties": {
@@ -3457,6 +3464,16 @@
             "null"
           ]
         },
+        "contextMode": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/ContextMode"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
         "cwd": {
           "type": [
             "string",
@@ -3861,6 +3878,16 @@
             "null"
           ]
         },
+        "contextMode": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/ContextMode"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
         "cwd": {
           "type": [
             "string",
@@ -4037,6 +4064,16 @@
           "type": [
             "object",
             "null"
+          ]
+        },
+        "contextMode": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/ContextMode"
+            },
+            {
+              "type": "null"
+            }
           ]
         },
         "cwd": {

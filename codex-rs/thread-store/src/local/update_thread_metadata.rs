@@ -523,6 +523,7 @@ mod tests {
         ThreadPersistenceMetadata {
             cwd: Some(std::env::current_dir().expect("cwd")),
             model_provider: "test-provider".to_string(),
+            context_mode: codex_protocol::config_types::ContextMode::Default,
             memory_mode: ThreadMemoryMode::Enabled,
         }
     }

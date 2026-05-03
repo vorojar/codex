@@ -4852,6 +4852,47 @@ async fn cli_override_sets_compact_prompt() -> std::io::Result<()> {
 }
 
 #[tokio::test]
+async fn vanilla_context_mode_disables_context_enrichment_config() -> std::io::Result<()> {
+    let codex_home = TempDir::new()?;
+    let cfg = toml::from_str::<ConfigToml>(
+        r#"
+instructions = "CFG_BASE_INSTRUCTIONS_MARKER"
+developer_instructions = "CFG_DEVELOPER_INSTRUCTIONS_MARKER"
+include_apps_instructions = true
+include_environment_context = true
+
+[skills]
+include_instructions = true
+"#,
+    )
+    .expect("config TOML should parse");
+
+    let config = Config::load_from_base_config_with_overrides(
+        cfg,
+        ConfigOverrides {
+            base_instructions: Some("OVERRIDE_BASE_INSTRUCTIONS_MARKER".to_string()),
+            developer_instructions: Some("OVERRIDE_DEVELOPER_INSTRUCTIONS_MARKER".to_string()),
+            context_mode: Some(ContextMode::Vanilla),
+            personality: Some(Personality::Pragmatic),
+            ..Default::default()
+        },
+        codex_home.abs(),
+    )
+    .await?;
+
+    assert_eq!(config.context_mode, ContextMode::Vanilla);
+    assert_eq!(config.base_instructions, None);
+    assert_eq!(config.developer_instructions, None);
+    assert_eq!(config.personality, None);
+    assert!(config.include_permissions_instructions);
+    assert!(!config.include_apps_instructions);
+    assert!(!config.include_skill_instructions);
+    assert!(!config.include_environment_context);
+
+    Ok(())
+}
+
+#[tokio::test]
 async fn loads_compact_prompt_from_file() -> std::io::Result<()> {
     let codex_home = TempDir::new()?;
     let workspace = codex_home.path().join("workspace");
@@ -6422,6 +6463,7 @@ async fn test_precedence_fixture_with_o3_profile() -> std::io::Result<()> {
             experimental_thread_store: ThreadStoreConfig::Local,
             base_instructions: None,
             developer_instructions: None,
+            context_mode: ContextMode::Default,
             guardian_policy_config: None,
             include_permissions_instructions: true,
             include_apps_instructions: true,
@@ -6624,6 +6666,7 @@ async fn test_precedence_fixture_with_gpt3_profile() -> std::io::Result<()> {
         experimental_thread_store: ThreadStoreConfig::Local,
         base_instructions: None,
         developer_instructions: None,
+        context_mode: ContextMode::Default,
         guardian_policy_config: None,
         include_permissions_instructions: true,
         include_apps_instructions: true,
@@ -6780,6 +6823,7 @@ async fn test_precedence_fixture_with_zdr_profile() -> std::io::Result<()> {
         experimental_thread_store: ThreadStoreConfig::Local,
         base_instructions: None,
         developer_instructions: None,
+        context_mode: ContextMode::Default,
         guardian_policy_config: None,
         include_permissions_instructions: true,
         include_apps_instructions: true,
@@ -6921,6 +6965,7 @@ async fn test_precedence_fixture_with_gpt5_profile() -> std::io::Result<()> {
         experimental_thread_store: ThreadStoreConfig::Local,
         base_instructions: None,
         developer_instructions: None,
+        context_mode: ContextMode::Default,
         guardian_policy_config: None,
         include_permissions_instructions: true,
         include_apps_instructions: true,

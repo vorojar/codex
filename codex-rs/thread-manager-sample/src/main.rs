@@ -159,6 +159,7 @@ fn new_config(model: Option<String>, arg0_paths: Arg0DispatchPaths) -> anyhow::R
         model_auto_compact_token_limit: None,
         model_provider_id,
         model_provider,
+        context_mode: Default::default(),
         personality: None,
         permissions: Permissions {
             approval_policy: Constrained::allow_any(AskForApproval::Never),

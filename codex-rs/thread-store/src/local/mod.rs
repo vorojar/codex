@@ -216,7 +216,7 @@ impl ThreadStore for LocalThreadStore {
             return read_thread::read_thread_by_rollout_path(
                 self,
                 rollout_path,
-                /*include_archived*/ true,
+                params.include_archived,
                 /*include_history*/ true,
             )
             .await?
@@ -533,6 +533,7 @@ mod tests {
                 metadata: ThreadPersistenceMetadata {
                     cwd: None,
                     model_provider: "test-provider".to_string(),
+                    context_mode: codex_protocol::config_types::ContextMode::Default,
                     memory_mode: ThreadMemoryMode::Enabled,
                 },
                 event_persistence_mode: ThreadEventPersistenceMode::Limited,
@@ -762,6 +763,7 @@ mod tests {
         ThreadPersistenceMetadata {
             cwd: Some(std::env::current_dir().expect("cwd")),
             model_provider: "test-provider".to_string(),
+            context_mode: codex_protocol::config_types::ContextMode::Default,
             memory_mode: ThreadMemoryMode::Enabled,
         }
     }

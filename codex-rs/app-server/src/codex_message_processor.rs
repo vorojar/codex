@@ -262,6 +262,7 @@ use codex_core::ThreadConfigSnapshot;
 use codex_core::ThreadManager;
 use codex_core::config::Config;
 use codex_core::config::ConfigOverrides;
+use codex_core::config::ContextMode as CoreContextMode;
 use codex_core::config::NetworkProxyAuditMetadata;
 use codex_core::config::edit::ConfigEdit;
 use codex_core::config::edit::ConfigEditsBuilder;
@@ -706,6 +707,9 @@ fn environment_selection_error_message(err: CodexErr) -> String {
 
 impl CodexMessageProcessor {
     async fn instruction_sources_from_config(config: &Config) -> Vec<AbsolutePathBuf> {
+        if !config.context_mode.includes_context_enrichment() {
+            return Vec::new();
+        }
         codex_core::AgentsMdManager::new(config)
             .instruction_sources(LOCAL_FS.as_ref())
             .await
@@ -2510,6 +2514,7 @@ impl CodexMessageProcessor {
             service_name,
             base_instructions,
             developer_instructions,
+            context_mode,
             dynamic_tools,
             mock_experimental_field: _mock_experimental_field,
             experimental_raw_events,
@@ -2546,6 +2551,7 @@ impl CodexMessageProcessor {
             permissions,
             base_instructions,
             developer_instructions,
+            context_mode,
             personality,
         );
         typesafe_overrides.ephemeral = ephemeral;
@@ -2605,6 +2611,7 @@ impl CodexMessageProcessor {
             /*permissions*/ None,
             /*base_instructions*/ None,
             /*developer_instructions*/ None,
+            /*context_mode*/ None,
             /*personality*/ None,
         );
         let config = self
@@ -2975,6 +2982,7 @@ impl CodexMessageProcessor {
         permissions: Option<PermissionProfileSelectionParams>,
         base_instructions: Option<String>,
         developer_instructions: Option<String>,
+        context_mode: Option<codex_app_server_protocol::ContextMode>,
         personality: Option<Personality>,
     ) -> ConfigOverrides {
         let mut overrides = ConfigOverrides {
@@ -2991,6 +2999,7 @@ impl CodexMessageProcessor {
             main_execve_wrapper_exe: self.arg0_paths.main_execve_wrapper_exe.clone(),
             base_instructions,
             developer_instructions,
+            context_mode: context_mode.map(core_context_mode),
             personality,
             ..Default::default()
         };
@@ -4355,6 +4364,7 @@ impl CodexMessageProcessor {
             config: mut request_overrides,
             base_instructions,
             developer_instructions,
+            context_mode,
             personality,
             exclude_turns,
             persist_extended_history,
@@ -4389,6 +4399,7 @@ impl CodexMessageProcessor {
             permissions,
             base_instructions,
             developer_instructions,
+            context_mode,
             personality,
         );
         self.load_and_apply_persisted_resume_metadata(
@@ -4397,6 +4408,7 @@ impl CodexMessageProcessor {
             &mut typesafe_overrides,
         )
         .await;
+        apply_context_mode_from_history(&thread_history, &mut typesafe_overrides);
 
         // Derive a Config using the same logic as new conversation, honoring overrides if provided.
         let config = match self
@@ -4599,7 +4611,7 @@ impl CodexMessageProcessor {
                 if let (Some(requested_path), Some(active_path)) = (
                     params.path.as_ref(),
                     existing_thread.rollout_path().as_ref(),
-                ) && requested_path != active_path
+                ) && !path_utils::paths_match_after_normalization(requested_path, active_path)
                 {
                     return Err(invalid_request(format!(
                         "cannot resume running thread {existing_thread_id} with stale path: requested `{}`, active `{}`",
@@ -4957,6 +4969,7 @@ impl CodexMessageProcessor {
             config: cli_overrides,
             base_instructions,
             developer_instructions,
+            context_mode,
             ephemeral,
             exclude_turns,
             persist_extended_history,
@@ -5021,9 +5034,11 @@ impl CodexMessageProcessor {
                 permissions,
                 base_instructions,
                 developer_instructions,
+                context_mode,
                 /*personality*/ None,
             );
             typesafe_overrides.ephemeral = ephemeral.then_some(true);
+            apply_context_mode_from_items(&history_items, &mut typesafe_overrides);
             // Derive a Config using the same logic as new conversation, honoring overrides if provided.
             let config = self
                 .config_manager
@@ -8748,6 +8763,10 @@ fn collect_resume_override_mismatches(
             "developerInstructions override was provided and ignored while running".to_string(),
         );
     }
+    if request.context_mode.is_some() {
+        mismatch_details
+            .push("contextMode override was provided and ignored while running".to_string());
+    }
     if request.persist_extended_history {
         mismatch_details.push(
             "persistExtendedHistory override was provided and ignored while running".to_string(),
@@ -8774,6 +8793,44 @@ fn merge_persisted_resume_metadata(
             "model_reasoning_effort".to_string(),
             serde_json::Value::String(reasoning_effort.to_string()),
         );
+    }
+}
+
+fn apply_context_mode_from_history(
+    thread_history: &InitialHistory,
+    typesafe_overrides: &mut ConfigOverrides,
+) {
+    if typesafe_overrides.context_mode.is_none()
+        && let Some(context_mode) = thread_history.get_context_mode()
+    {
+        typesafe_overrides.context_mode = Some(core_context_mode_from_protocol(context_mode));
+    }
+}
+
+fn apply_context_mode_from_items(
+    history_items: &[RolloutItem],
+    typesafe_overrides: &mut ConfigOverrides,
+) {
+    if typesafe_overrides.context_mode.is_none()
+        && let Some(context_mode) = history_items.iter().find_map(|item| match item {
+            RolloutItem::SessionMeta(meta_line) => Some(meta_line.meta.context_mode),
+            _ => None,
+        })
+    {
+        typesafe_overrides.context_mode = Some(core_context_mode_from_protocol(context_mode));
+    }
+}
+
+fn core_context_mode(mode: codex_app_server_protocol::ContextMode) -> CoreContextMode {
+    core_context_mode_from_protocol(mode.to_core())
+}
+
+fn core_context_mode_from_protocol(
+    mode: codex_protocol::config_types::ContextMode,
+) -> CoreContextMode {
+    match mode {
+        codex_protocol::config_types::ContextMode::Default => CoreContextMode::Default,
+        codex_protocol::config_types::ContextMode::Vanilla => CoreContextMode::Vanilla,
     }
 }
 
@@ -10537,6 +10594,7 @@ mod tests {
             config: None,
             base_instructions: None,
             developer_instructions: None,
+            context_mode: None,
             personality: None,
             exclude_turns: false,
             persist_extended_history: false,
@@ -10553,6 +10611,7 @@ mod tests {
             ephemeral: false,
             reasoning_effort: None,
             personality: None,
+            context_mode: CoreContextMode::Default,
             session_source: SessionSource::Cli,
         };
 
@@ -10560,6 +10619,95 @@ mod tests {
             collect_resume_override_mismatches(&request, &config_snapshot),
             vec!["service_tier requested=Some(Fast) active=Some(Flex)".to_string()]
         );
+    }
+
+    #[test]
+    fn collect_resume_override_mismatches_includes_context_mode() {
+        let cwd = test_path_buf("/tmp").abs();
+        let request = ThreadResumeParams {
+            thread_id: "thread-1".to_string(),
+            context_mode: Some(codex_app_server_protocol::ContextMode::Vanilla),
+            ..ThreadResumeParams::default()
+        };
+        let config_snapshot = ThreadConfigSnapshot {
+            model: "gpt-5".to_string(),
+            model_provider_id: "openai".to_string(),
+            service_tier: None,
+            approval_policy: codex_protocol::protocol::AskForApproval::OnRequest,
+            approvals_reviewer: codex_protocol::config_types::ApprovalsReviewer::User,
+            permission_profile: codex_protocol::models::PermissionProfile::Disabled,
+            active_permission_profile: None,
+            cwd,
+            ephemeral: false,
+            reasoning_effort: None,
+            personality: None,
+            context_mode: CoreContextMode::Default,
+            session_source: SessionSource::Cli,
+        };
+
+        assert_eq!(
+            collect_resume_override_mismatches(&request, &config_snapshot),
+            vec!["contextMode override was provided and ignored while running".to_string()]
+        );
+    }
+
+    #[test]
+    fn apply_context_mode_from_history_uses_stored_mode_when_omitted() {
+        let thread_id = ThreadId::new();
+        let thread_history = InitialHistory::Resumed(codex_protocol::protocol::ResumedHistory {
+            conversation_id: thread_id,
+            history: vec![session_meta_item(
+                codex_protocol::config_types::ContextMode::Vanilla,
+            )],
+            rollout_path: None,
+        });
+        let mut overrides = ConfigOverrides::default();
+
+        apply_context_mode_from_history(&thread_history, &mut overrides);
+
+        assert_eq!(overrides.context_mode, Some(CoreContextMode::Vanilla));
+    }
+
+    #[test]
+    fn apply_context_mode_from_history_preserves_explicit_mode() {
+        let thread_id = ThreadId::new();
+        let thread_history = InitialHistory::Resumed(codex_protocol::protocol::ResumedHistory {
+            conversation_id: thread_id,
+            history: vec![session_meta_item(
+                codex_protocol::config_types::ContextMode::Vanilla,
+            )],
+            rollout_path: None,
+        });
+        let mut overrides = ConfigOverrides {
+            context_mode: Some(CoreContextMode::Default),
+            ..Default::default()
+        };
+
+        apply_context_mode_from_history(&thread_history, &mut overrides);
+
+        assert_eq!(overrides.context_mode, Some(CoreContextMode::Default));
+    }
+
+    #[test]
+    fn apply_context_mode_from_items_uses_stored_mode_when_omitted() {
+        let history_items = vec![session_meta_item(
+            codex_protocol::config_types::ContextMode::Vanilla,
+        )];
+        let mut overrides = ConfigOverrides::default();
+
+        apply_context_mode_from_items(&history_items, &mut overrides);
+
+        assert_eq!(overrides.context_mode, Some(CoreContextMode::Vanilla));
+    }
+
+    fn session_meta_item(context_mode: codex_protocol::config_types::ContextMode) -> RolloutItem {
+        RolloutItem::SessionMeta(SessionMetaLine {
+            meta: SessionMeta {
+                context_mode,
+                ..SessionMeta::default()
+            },
+            git: None,
+        })
     }
 
     fn test_thread_metadata(

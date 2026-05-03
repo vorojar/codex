@@ -18,6 +18,7 @@ use crate::ThreadId;
 use crate::approvals::ElicitationRequestEvent;
 use crate::config_types::ApprovalsReviewer;
 use crate::config_types::CollaborationMode;
+use crate::config_types::ContextMode;
 use crate::config_types::ModeKind;
 use crate::config_types::Personality;
 use crate::config_types::ReasoningSummary as ReasoningSummaryConfig;
@@ -2526,6 +2527,22 @@ impl InitialHistory {
             }),
         }
     }
+
+    pub fn get_context_mode(&self) -> Option<ContextMode> {
+        match self {
+            InitialHistory::New | InitialHistory::Cleared => None,
+            InitialHistory::Resumed(resumed) => {
+                resumed.history.iter().find_map(|item| match item {
+                    RolloutItem::SessionMeta(meta_line) => Some(meta_line.meta.context_mode),
+                    _ => None,
+                })
+            }
+            InitialHistory::Forked(items) => items.iter().find_map(|item| match item {
+                RolloutItem::SessionMeta(meta_line) => Some(meta_line.meta.context_mode),
+                _ => None,
+            }),
+        }
+    }
 }
 
 fn session_cwd_from_items(items: &[RolloutItem]) -> Option<PathBuf> {
@@ -2731,6 +2748,8 @@ pub struct SessionMeta {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub agent_path: Option<String>,
     pub model_provider: Option<String>,
+    #[serde(default, skip_serializing_if = "ContextMode::is_default")]
+    pub context_mode: ContextMode,
     /// base_instructions for the session. This *should* always be present when creating a new session,
     /// but may be missing for older sessions. If not present, fall back to rendering the base_instructions
     /// from ModelsManager.
@@ -2755,6 +2774,7 @@ impl Default for SessionMeta {
             agent_role: None,
             agent_path: None,
             model_provider: None,
+            context_mode: ContextMode::Default,
             base_instructions: None,
             dynamic_tools: None,
             memory_mode: None,

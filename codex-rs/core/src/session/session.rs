@@ -1,6 +1,7 @@
 use super::*;
 use crate::goals::GoalRuntimeState;
 use codex_otel::LEGACY_NOTIFY_CONFIGURED_METRIC;
+use codex_protocol::config_types::ContextMode as ProtocolContextMode;
 use codex_protocol::permissions::FileSystemPath;
 use codex_protocol::permissions::FileSystemSpecialPath;
 use codex_protocol::protocol::TurnEnvironmentSelection;
@@ -50,6 +51,9 @@ pub(crate) struct SessionConfiguration {
 
     /// Personality preference for the model.
     pub(super) personality: Option<Personality>,
+
+    /// Controls whether Codex loads project/user context into the model prompt.
+    pub(super) context_mode: crate::config::ContextMode,
 
     /// Base instructions for the session.
     pub(super) base_instructions: String,
@@ -141,6 +145,7 @@ impl SessionConfiguration {
             ephemeral: self.original_config_do_not_use.ephemeral,
             reasoning_effort: self.collaboration_mode.reasoning_effort(),
             personality: self.personality,
+            context_mode: self.context_mode,
             session_source: self.session_source.clone(),
         }
     }
@@ -400,6 +405,9 @@ impl Session {
                                 metadata: ThreadPersistenceMetadata {
                                     cwd: Some(config.cwd.to_path_buf()),
                                     model_provider: config.model_provider_id.clone(),
+                                    context_mode: ProtocolContextMode::from(
+                                        session_configuration.context_mode,
+                                    ),
                                     memory_mode: if config.memories.generate_memories {
                                         ThreadMemoryMode::Enabled
                                     } else {
@@ -422,6 +430,9 @@ impl Session {
                                 metadata: ThreadPersistenceMetadata {
                                     cwd: Some(config.cwd.to_path_buf()),
                                     model_provider: config.model_provider_id.clone(),
+                                    context_mode: ProtocolContextMode::from(
+                                        session_configuration.context_mode,
+                                    ),
                                     memory_mode: if config.memories.generate_memories {
                                         ThreadMemoryMode::Enabled
                                     } else {

@@ -1182,6 +1182,7 @@ stream_max_retries = 0
         agent_nickname: None,
         agent_role: None,
         model_provider: Some("mock_provider".to_string()),
+        context_mode: codex_protocol::config_types::ContextMode::Default,
         base_instructions: None,
         dynamic_tools: None,
         memory_mode: None,

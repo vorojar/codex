@@ -35,6 +35,7 @@ pub(super) async fn create_thread(
             params.forked_from_id,
             params.source,
             params.base_instructions,
+            params.metadata.context_mode,
             params.dynamic_tools,
             event_persistence_mode(params.event_persistence_mode),
         ),

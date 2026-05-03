@@ -4318,6 +4318,13 @@
       "title": "ContextCompactedNotification",
       "type": "object"
     },
+    "ContextMode": {
+      "enum": [
+        "default",
+        "vanilla"
+      ],
+      "type": "string"
+    },
     "CreditsSnapshot": {
       "properties": {
         "balance": {
@@ -13009,6 +13016,16 @@
             "null"
           ]
         },
+        "contextMode": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/ContextMode"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
         "cwd": {
           "type": [
             "string",
@@ -14509,6 +14526,16 @@
             "null"
           ]
         },
+        "contextMode": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/ContextMode"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
         "cwd": {
           "type": [
             "string",
@@ -14796,6 +14823,16 @@
           "type": [
             "object",
             "null"
+          ]
+        },
+        "contextMode": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/ContextMode"
+            },
+            {
+              "type": "null"
+            }
           ]
         },
         "cwd": {

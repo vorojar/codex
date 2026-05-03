@@ -350,6 +350,7 @@ mod tests {
         let metadata = ThreadPersistenceMetadata {
             cwd: Some(PathBuf::from("/workspace")),
             model_provider: "test-provider".to_string(),
+            context_mode: codex_protocol::config_types::ContextMode::Default,
             memory_mode: ThreadMemoryMode::Enabled,
         };
 
@@ -382,6 +383,7 @@ mod tests {
         let metadata = ThreadPersistenceMetadata {
             cwd: Some(PathBuf::from("/workspace")),
             model_provider: "test-provider".to_string(),
+            context_mode: codex_protocol::config_types::ContextMode::Default,
             memory_mode: ThreadMemoryMode::Disabled,
         };
 

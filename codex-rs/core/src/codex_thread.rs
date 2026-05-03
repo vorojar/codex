@@ -1,5 +1,6 @@
 use crate::agent::AgentStatus;
 use crate::config::ConstraintResult;
+use crate::config::ContextMode;
 use crate::file_watcher::WatchRegistration;
 use crate::goals::GoalRuntimeEvent;
 use crate::session::Codex;
@@ -58,6 +59,7 @@ pub struct ThreadConfigSnapshot {
     pub ephemeral: bool,
     pub reasoning_effort: Option<ReasoningEffort>,
     pub personality: Option<Personality>,
+    pub context_mode: ContextMode,
     pub session_source: SessionSource,
 }
 

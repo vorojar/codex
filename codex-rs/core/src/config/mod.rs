@@ -78,6 +78,7 @@ use codex_model_provider_info::built_in_model_providers;
 use codex_model_provider_info::merge_configured_model_providers;
 use codex_models_manager::ModelsManagerConfig;
 use codex_protocol::config_types::AltScreenMode;
+use codex_protocol::config_types::ContextMode as ProtocolContextMode;
 use codex_protocol::config_types::ForcedLoginMethod;
 use codex_protocol::config_types::Personality;
 use codex_protocol::config_types::ReasoningSummary;
@@ -451,6 +452,9 @@ pub struct Config {
     /// Developer instructions override injected as a separate message.
     pub developer_instructions: Option<String>,
 
+    /// Controls whether Codex loads project/user context into the model prompt.
+    pub context_mode: ContextMode,
+
     /// Guardian-specific policy config override from requirements.toml or config.toml.
     /// This is inserted into the fixed guardian prompt template under the
     /// `# Policy Configuration` section rather than replacing the whole
@@ -810,6 +814,28 @@ pub struct Config {
 
     /// OTEL configuration (exporter type, endpoint, headers, etc.).
     pub otel: codex_config::types::OtelConfig,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ContextMode {
+    #[default]
+    Default,
+    Vanilla,
+}
+
+impl ContextMode {
+    pub fn includes_context_enrichment(self) -> bool {
+        self == ContextMode::Default
+    }
+}
+
+impl From<ContextMode> for ProtocolContextMode {
+    fn from(value: ContextMode) -> Self {
+        match value {
+            ContextMode::Default => ProtocolContextMode::Default,
+            ContextMode::Vanilla => ProtocolContextMode::Vanilla,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -1796,6 +1822,7 @@ pub struct ConfigOverrides {
     pub zsh_path: Option<PathBuf>,
     pub base_instructions: Option<String>,
     pub developer_instructions: Option<String>,
+    pub context_mode: Option<ContextMode>,
     pub personality: Option<Personality>,
     pub compact_prompt: Option<String>,
     pub include_apply_patch_tool: Option<bool>,
@@ -2038,8 +2065,6 @@ impl Config {
             guardian_policy_config_source: _,
         } = config_layer_stack.requirements().clone();
 
-        let user_instructions = AgentsMdManager::load_global_instructions(Some(&codex_home))
-            .map(|loaded| loaded.contents);
         let mut startup_warnings = config_layer_stack
             .startup_warnings()
             .unwrap_or_default()
@@ -2064,6 +2089,7 @@ impl Config {
             zsh_path: zsh_path_override,
             base_instructions,
             developer_instructions,
+            context_mode,
             personality,
             compact_prompt,
             include_apply_patch_tool: include_apply_patch_tool_override,
@@ -2085,6 +2111,14 @@ impl Config {
                 "`sandbox_mode` and `default_permissions` overrides cannot both be set",
             ));
         }
+        let context_mode = context_mode.unwrap_or_default();
+        let includes_context_enrichment = context_mode.includes_context_enrichment();
+        let user_instructions = includes_context_enrichment
+            .then(|| {
+                AgentsMdManager::load_global_instructions(Some(&codex_home))
+                    .map(|loaded| loaded.contents)
+            })
+            .flatten();
         if permission_profile.is_some() && default_permissions_override.is_some() {
             return Err(std::io::Error::new(
                 std::io::ErrorKind::InvalidInput,
@@ -2681,37 +2715,46 @@ impl Config {
         // Load base instructions override from a file if specified. If the
         // path is relative, resolve it against the effective cwd so the
         // behaviour matches other path-like config values.
-        let model_instructions_path = config_profile
-            .model_instructions_file
-            .as_ref()
-            .or(cfg.model_instructions_file.as_ref());
-        let file_base_instructions = Self::try_read_non_empty_file(
-            fs,
-            model_instructions_path,
-            "model instructions file",
-        )
-        .await?;
-        let base_instructions = base_instructions
-            .or(file_base_instructions)
-            .or(cfg.instructions.clone());
-        let developer_instructions = developer_instructions.or(cfg.developer_instructions);
+        let base_instructions = if includes_context_enrichment {
+            let model_instructions_path = config_profile
+                .model_instructions_file
+                .as_ref()
+                .or(cfg.model_instructions_file.as_ref());
+            let file_base_instructions = Self::try_read_non_empty_file(
+                fs,
+                model_instructions_path,
+                "model instructions file",
+            )
+            .await?;
+            base_instructions
+                .or(file_base_instructions)
+                .or(cfg.instructions.clone())
+        } else {
+            None
+        };
+        let developer_instructions = includes_context_enrichment
+            .then(|| developer_instructions.or(cfg.developer_instructions))
+            .flatten();
         let include_permissions_instructions = config_profile
             .include_permissions_instructions
             .or(cfg.include_permissions_instructions)
             .unwrap_or(true);
-        let include_apps_instructions = config_profile
-            .include_apps_instructions
-            .or(cfg.include_apps_instructions)
-            .unwrap_or(true);
-        let include_skill_instructions = cfg
-            .skills
-            .as_ref()
-            .and_then(|skills| skills.include_instructions)
-            .unwrap_or(true);
-        let include_environment_context = config_profile
-            .include_environment_context
-            .or(cfg.include_environment_context)
-            .unwrap_or(true);
+        let include_apps_instructions = includes_context_enrichment
+            && config_profile
+                .include_apps_instructions
+                .or(cfg.include_apps_instructions)
+                .unwrap_or(true);
+        let include_skill_instructions = includes_context_enrichment
+            && cfg
+                .skills
+                .as_ref()
+                .and_then(|skills| skills.include_instructions)
+                .unwrap_or(true);
+        let include_environment_context = includes_context_enrichment
+            && config_profile
+                .include_environment_context
+                .or(cfg.include_environment_context)
+                .unwrap_or(true);
         let guardian_policy_config =
             guardian_policy_config_from_requirements(config_layer_stack.requirements_toml())
                 .or_else(|| {
@@ -2721,14 +2764,18 @@ impl Config {
                             auto_review.policy.as_deref(),
                         ))
                 });
-        let personality = personality
-            .or(config_profile.personality)
-            .or(cfg.personality)
-            .or_else(|| {
-                features
-                    .enabled(Feature::Personality)
-                    .then_some(Personality::Pragmatic)
-            });
+        let personality = includes_context_enrichment
+            .then(|| {
+                personality
+                    .or(config_profile.personality)
+                    .or(cfg.personality)
+                    .or_else(|| {
+                        features
+                            .enabled(Feature::Personality)
+                            .then_some(Personality::Pragmatic)
+                    })
+            })
+            .flatten();
 
         let experimental_compact_prompt_path = config_profile
             .experimental_compact_prompt_file
@@ -2919,6 +2966,7 @@ impl Config {
             base_instructions,
             personality,
             developer_instructions,
+            context_mode,
             compact_prompt,
             commit_attribution,
             include_permissions_instructions,

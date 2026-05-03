@@ -21,6 +21,7 @@ use codex_protocol::approvals::NetworkPolicyRuleAction as CoreNetworkPolicyRuleA
 use codex_protocol::config_types::ApprovalsReviewer as CoreApprovalsReviewer;
 use codex_protocol::config_types::CollaborationMode;
 use codex_protocol::config_types::CollaborationModeMask as CoreCollaborationModeMask;
+use codex_protocol::config_types::ContextMode as CoreContextMode;
 use codex_protocol::config_types::ForcedLoginMethod;
 use codex_protocol::config_types::ModeKind;
 use codex_protocol::config_types::Personality;
@@ -413,6 +414,13 @@ impl From<CoreSandboxMode> for SandboxMode {
         }
     }
 }
+
+v2_enum_from_core!(
+    pub enum ContextMode from CoreContextMode {
+        Default,
+        Vanilla
+    }
+);
 
 v2_enum_from_core!(
     pub enum ReviewDelivery from codex_protocol::protocol::ReviewDelivery {
@@ -3584,6 +3592,8 @@ pub struct ThreadStartParams {
     #[ts(optional = nullable)]
     pub developer_instructions: Option<String>,
     #[ts(optional = nullable)]
+    pub context_mode: Option<ContextMode>,
+    #[ts(optional = nullable)]
     pub personality: Option<Personality>,
     #[ts(optional = nullable)]
     pub ephemeral: Option<bool>,
@@ -3735,6 +3745,8 @@ pub struct ThreadResumeParams {
     #[ts(optional = nullable)]
     pub developer_instructions: Option<String>,
     #[ts(optional = nullable)]
+    pub context_mode: Option<ContextMode>,
+    #[ts(optional = nullable)]
     pub personality: Option<Personality>,
     /// When true, return only thread metadata and live-resume state without
     /// populating `thread.turns`. This is useful when the client plans to call
@@ -3839,6 +3851,8 @@ pub struct ThreadForkParams {
     pub base_instructions: Option<String>,
     #[ts(optional = nullable)]
     pub developer_instructions: Option<String>,
+    #[ts(optional = nullable)]
+    pub context_mode: Option<ContextMode>,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub ephemeral: bool,
     /// When true, return only thread metadata and live fork state without

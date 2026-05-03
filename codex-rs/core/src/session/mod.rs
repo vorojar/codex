@@ -474,9 +474,13 @@ impl Codex {
         let fs = environment_selections.primary_filesystem();
         let plugins_input = config.plugins_config_input();
         let plugin_outcome = plugins_manager.plugins_for_config(&plugins_input).await;
-        let effective_skill_roots = plugin_outcome.effective_skill_roots();
-        let skills_input = skills_load_input_from_config(&config, effective_skill_roots);
-        let loaded_skills = skills_manager.skills_for_config(&skills_input, fs).await;
+        let loaded_skills = if config.context_mode.includes_context_enrichment() {
+            let effective_skill_roots = plugin_outcome.effective_skill_roots();
+            let skills_input = skills_load_input_from_config(&config, effective_skill_roots);
+            skills_manager.skills_for_config(&skills_input, fs).await
+        } else {
+            SkillLoadOutcome::default()
+        };
 
         for err in &loaded_skills.errors {
             error!(
@@ -495,9 +499,13 @@ impl Codex {
         }
 
         let primary_environment = environment_selections.primary_environment();
-        let user_instructions = AgentsMdManager::new(&config)
-            .user_instructions(primary_environment.as_deref())
-            .await;
+        let user_instructions = if config.context_mode.includes_context_enrichment() {
+            AgentsMdManager::new(&config)
+                .user_instructions(primary_environment.as_deref())
+                .await
+        } else {
+            None
+        };
 
         let exec_policy = if crate::guardian::is_guardian_reviewer_source(&session_source) {
             // Guardian review should rely on the built-in shell safety checks,
@@ -598,6 +606,7 @@ impl Codex {
             developer_instructions: config.developer_instructions.clone(),
             user_instructions,
             personality: config.personality,
+            context_mode: config.context_mode,
             base_instructions,
             compact_prompt: config.compact_prompt.clone(),
             approval_policy: config.permissions.approval_policy.clone(),
@@ -2578,16 +2587,22 @@ impl Session {
         }
         let separate_guardian_developer_message =
             crate::guardian::is_guardian_reviewer_source(&session_source);
+        let includes_context_enrichment = turn_context
+            .config
+            .context_mode
+            .includes_context_enrichment();
         // Keep the guardian policy prompt out of the aggregated developer bundle so it
         // stays isolated as its own top-level developer message for guardian subagents.
-        if !separate_guardian_developer_message
+        if includes_context_enrichment
+            && !separate_guardian_developer_message
             && let Some(developer_instructions) = turn_context.developer_instructions.as_deref()
             && !developer_instructions.is_empty()
         {
             developer_sections.push(developer_instructions.to_string());
         }
         // Add developer instructions for memories.
-        if turn_context.features.enabled(Feature::MemoryTool)
+        if includes_context_enrichment
+            && turn_context.features.enabled(Feature::MemoryTool)
             && turn_context.config.memories.use_memories
             && let Some(memory_prompt) =
                 build_memory_tool_developer_instructions(&turn_context.config.codex_home).await
@@ -2595,8 +2610,9 @@ impl Session {
             developer_sections.push(memory_prompt);
         }
         // Add developer instructions from collaboration_mode if they exist and are non-empty
-        if let Some(collab_instructions) =
-            CollaborationModeInstructions::from_collaboration_mode(&collaboration_mode)
+        if includes_context_enrichment
+            && let Some(collab_instructions) =
+                CollaborationModeInstructions::from_collaboration_mode(&collaboration_mode)
         {
             developer_sections.push(collab_instructions.render());
         }
@@ -2607,7 +2623,8 @@ impl Session {
         ) {
             developer_sections.push(realtime_update);
         }
-        if self.features.enabled(Feature::Personality)
+        if includes_context_enrichment
+            && self.features.enabled(Feature::Personality)
             && let Some(personality) = turn_context.personality
         {
             let model_info = turn_context.model_info.clone();
@@ -2624,7 +2641,10 @@ impl Session {
                     .push(PersonalitySpecInstructions::new(personality_message).render());
             }
         }
-        if turn_context.config.include_apps_instructions && turn_context.apps_enabled() {
+        if includes_context_enrichment
+            && turn_context.config.include_apps_instructions
+            && turn_context.apps_enabled()
+        {
             let mcp_connection_manager = self.services.mcp_connection_manager.read().await;
             let accessible_and_enabled_connectors =
                 connectors::list_accessible_and_enabled_connectors_from_manager(
@@ -2638,7 +2658,7 @@ impl Session {
                 developer_sections.push(apps_instructions.render());
             }
         }
-        if turn_context.config.include_skill_instructions {
+        if includes_context_enrichment && turn_context.config.include_skill_instructions {
             let available_skills = build_available_skills(
                 &turn_context.turn_skills.outcome,
                 default_skill_metadata_budget(turn_context.model_info.context_window),
@@ -2661,24 +2681,29 @@ impl Session {
                 developer_sections.push(skills_instructions.render());
             }
         }
-        let loaded_plugins = self
-            .services
-            .plugins_manager
-            .plugins_for_config(&turn_context.config.plugins_config_input())
-            .await;
-        if let Some(plugin_instructions) =
-            AvailablePluginsInstructions::from_plugins(loaded_plugins.capability_summaries())
-        {
-            developer_sections.push(plugin_instructions.render());
+        if includes_context_enrichment {
+            let loaded_plugins = self
+                .services
+                .plugins_manager
+                .plugins_for_config(&turn_context.config.plugins_config_input())
+                .await;
+            if let Some(plugin_instructions) =
+                AvailablePluginsInstructions::from_plugins(loaded_plugins.capability_summaries())
+            {
+                developer_sections.push(plugin_instructions.render());
+            }
         }
-        if turn_context.features.enabled(Feature::CodexGitCommit)
+        if includes_context_enrichment
+            && turn_context.features.enabled(Feature::CodexGitCommit)
             && let Some(commit_message_instruction) = commit_message_trailer_instruction(
                 turn_context.config.commit_attribution.as_deref(),
             )
         {
             developer_sections.push(commit_message_instruction);
         }
-        if let Some(user_instructions) = turn_context.user_instructions.as_deref() {
+        if includes_context_enrichment
+            && let Some(user_instructions) = turn_context.user_instructions.as_deref()
+        {
             contextual_user_sections.push(
                 UserInstructions {
                     text: user_instructions.to_string(),
@@ -2687,7 +2712,7 @@ impl Session {
                 .render(),
             );
         }
-        if turn_context.config.include_environment_context {
+        if includes_context_enrichment && turn_context.config.include_environment_context {
             let subagents = self
                 .services
                 .agent_control

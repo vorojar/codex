@@ -54,6 +54,7 @@ async fn write_rollout_with_user_event(dir: &Path, thread_id: ThreadId) -> io::R
             agent_nickname: None,
             agent_role: None,
             model_provider: None,
+            context_mode: codex_protocol::config_types::ContextMode::Default,
             base_instructions: None,
             dynamic_tools: None,
             memory_mode: None,

@@ -412,6 +412,7 @@ pub async fn run_main(cli: Cli, arg0_paths: Arg0DispatchPaths) -> anyhow::Result
         zsh_path: None,
         base_instructions: None,
         developer_instructions: None,
+        context_mode: None,
         personality: None,
         compact_prompt: None,
         include_apply_patch_tool: None,

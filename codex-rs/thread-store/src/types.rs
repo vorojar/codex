@@ -3,6 +3,7 @@ use std::path::PathBuf;
 use chrono::DateTime;
 use chrono::Utc;
 use codex_protocol::ThreadId;
+use codex_protocol::config_types::ContextMode;
 use codex_protocol::dynamic_tools::DynamicToolSpec;
 use codex_protocol::models::BaseInstructions;
 use codex_protocol::openai_models::ReasoningEffort;
@@ -35,6 +36,8 @@ pub struct ThreadPersistenceMetadata {
     pub cwd: Option<PathBuf>,
     /// Model provider associated with the thread.
     pub model_provider: String,
+    /// Context mode associated with the thread.
+    pub context_mode: ContextMode,
     /// Memory mode associated with the live thread.
     pub memory_mode: MemoryMode,
 }

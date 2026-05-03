@@ -138,6 +138,13 @@
         }
       ]
     },
+    "ContextMode": {
+      "enum": [
+        "default",
+        "vanilla"
+      ],
+      "type": "string"
+    },
     "FunctionCallOutputBody": {
       "anyOf": [
         {
@@ -1031,6 +1038,16 @@
       "type": [
         "object",
         "null"
+      ]
+    },
+    "contextMode": {
+      "anyOf": [
+        {
+          "$ref": "#/definitions/ContextMode"
+        },
+        {
+          "type": "null"
+        }
       ]
     },
     "cwd": {

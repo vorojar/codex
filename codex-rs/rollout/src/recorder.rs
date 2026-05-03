@@ -12,6 +12,7 @@ use std::sync::Mutex;
 use chrono::SecondsFormat;
 use chrono::Utc;
 use codex_protocol::ThreadId;
+use codex_protocol::config_types::ContextMode;
 use codex_protocol::dynamic_tools::DynamicToolSpec;
 use codex_protocol::models::BaseInstructions;
 use codex_utils_string::truncate_middle_chars;
@@ -90,6 +91,7 @@ pub enum RolloutRecorderParams {
         forked_from_id: Option<ThreadId>,
         source: SessionSource,
         base_instructions: BaseInstructions,
+        context_mode: ContextMode,
         dynamic_tools: Vec<DynamicToolSpec>,
         event_persistence_mode: EventPersistenceMode,
     },
@@ -166,6 +168,7 @@ impl RolloutRecorderParams {
         forked_from_id: Option<ThreadId>,
         source: SessionSource,
         base_instructions: BaseInstructions,
+        context_mode: ContextMode,
         dynamic_tools: Vec<DynamicToolSpec>,
         event_persistence_mode: EventPersistenceMode,
     ) -> Self {
@@ -174,6 +177,7 @@ impl RolloutRecorderParams {
             forked_from_id,
             source,
             base_instructions,
+            context_mode,
             dynamic_tools,
             event_persistence_mode,
         }
@@ -661,6 +665,7 @@ impl RolloutRecorder {
                     forked_from_id,
                     source,
                     base_instructions,
+                    context_mode,
                     dynamic_tools,
                     event_persistence_mode,
                 } => {
@@ -689,6 +694,7 @@ impl RolloutRecorder {
                         agent_path: source.get_agent_path().map(Into::into),
                         source,
                         model_provider: Some(config.model_provider_id().to_string()),
+                        context_mode,
                         base_instructions: Some(base_instructions),
                         dynamic_tools: if dynamic_tools.is_empty() {
                             None

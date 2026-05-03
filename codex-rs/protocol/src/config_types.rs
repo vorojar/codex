@@ -77,6 +77,20 @@ pub enum SandboxMode {
     DangerFullAccess,
 }
 
+#[derive(Debug, Serialize, Deserialize, Default, Clone, Copy, PartialEq, Eq, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+pub enum ContextMode {
+    #[default]
+    Default,
+    Vanilla,
+}
+
+impl ContextMode {
+    pub fn is_default(&self) -> bool {
+        *self == ContextMode::Default
+    }
+}
+
 #[derive(Deserialize, Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Display, TS)]
 #[strum(serialize_all = "snake_case")]
 #[ts(type = r#""user" | "auto_review" | "guardian_subagent""#)]

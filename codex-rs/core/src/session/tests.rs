@@ -2354,6 +2354,7 @@ async fn set_rate_limits_retains_previous_credits() {
         user_instructions: config.user_instructions.clone(),
         service_tier: None,
         personality: config.personality,
+        context_mode: config.context_mode,
         base_instructions: config
             .base_instructions
             .clone()
@@ -2457,6 +2458,7 @@ async fn set_rate_limits_updates_plan_type_when_present() {
         user_instructions: config.user_instructions.clone(),
         service_tier: None,
         personality: config.personality,
+        context_mode: config.context_mode,
         base_instructions: config
             .base_instructions
             .clone()
@@ -2733,6 +2735,7 @@ async fn attach_thread_persistence(session: &mut Session) -> PathBuf {
             metadata: ThreadPersistenceMetadata {
                 cwd: Some(config.cwd.to_path_buf()),
                 model_provider: config.model_provider_id.clone(),
+                context_mode: codex_protocol::config_types::ContextMode::Default,
                 memory_mode: if config.memories.generate_memories {
                     ThreadMemoryMode::Enabled
                 } else {
@@ -2915,6 +2918,7 @@ pub(crate) async fn make_session_configuration_for_tests() -> SessionConfigurati
         user_instructions: config.user_instructions.clone(),
         service_tier: None,
         personality: config.personality,
+        context_mode: config.context_mode,
         base_instructions: config
             .base_instructions
             .clone()
@@ -3438,6 +3442,7 @@ async fn session_new_fails_when_zsh_fork_enabled_without_zsh_path() {
         user_instructions: config.user_instructions.clone(),
         service_tier: None,
         personality: config.personality,
+        context_mode: config.context_mode,
         base_instructions: config
             .base_instructions
             .clone()
@@ -3543,6 +3548,7 @@ pub(crate) async fn make_session_and_context() -> (Session, TurnContext) {
         user_instructions: config.user_instructions.clone(),
         service_tier: None,
         personality: config.personality,
+        context_mode: config.context_mode,
         base_instructions: config
             .base_instructions
             .clone()
@@ -3755,6 +3761,7 @@ async fn make_session_with_config_and_rx(
         user_instructions: config.user_instructions.clone(),
         service_tier: None,
         personality: config.personality,
+        context_mode: config.context_mode,
         base_instructions: config
             .base_instructions
             .clone()
@@ -4726,6 +4733,7 @@ async fn shutdown_complete_does_not_append_to_thread_store_after_shutdown() {
             metadata: ThreadPersistenceMetadata {
                 cwd: Some(config.cwd.to_path_buf()),
                 model_provider: config.model_provider_id.clone(),
+                context_mode: codex_protocol::config_types::ContextMode::Default,
                 memory_mode: if config.memories.generate_memories {
                     ThreadMemoryMode::Enabled
                 } else {
@@ -5025,6 +5033,7 @@ where
         user_instructions: config.user_instructions.clone(),
         service_tier: None,
         personality: config.personality,
+        context_mode: config.context_mode,
         base_instructions: config
             .base_instructions
             .clone()
@@ -5806,6 +5815,45 @@ async fn build_initial_context_trims_skill_metadata_from_context_window_budget()
             .all(|text| !text.contains("- admin-skill:") && !text.contains("- repo-skill:")),
         "expected no skill metadata entries to fit the tiny budget, got {developer_texts:?}"
     );
+}
+
+#[tokio::test]
+async fn build_initial_context_omits_context_enrichment_in_vanilla_mode() {
+    let (session, mut turn_context) = make_session_and_context().await;
+    let mut config = (*turn_context.config).clone();
+    config.context_mode = crate::config::ContextMode::Vanilla;
+    config.include_apps_instructions = true;
+    config.include_skill_instructions = true;
+    config.include_environment_context = true;
+    turn_context.config = Arc::new(config);
+    turn_context.developer_instructions = Some("VANILLA_DEVELOPER_INSTRUCTIONS_MARKER".to_string());
+    turn_context.user_instructions = Some("VANILLA_USER_INSTRUCTIONS_MARKER".to_string());
+    turn_context.personality = Some(codex_protocol::config_types::Personality::Pragmatic);
+    let mut outcome = SkillLoadOutcome::default();
+    outcome.skills = vec![SkillMetadata {
+        name: "vanilla-repo-skill".to_string(),
+        description: "VANILLA_SKILL_DESCRIPTION_MARKER".to_string(),
+        short_description: None,
+        interface: None,
+        dependencies: None,
+        policy: None,
+        path_to_skills_md: test_path_buf("/tmp/vanilla-repo-skill/SKILL.md").abs(),
+        scope: SkillScope::Repo,
+    }];
+    turn_context.turn_skills = TurnSkillsContext::new(Arc::new(outcome));
+
+    let initial_context = session.build_initial_context(&turn_context).await;
+    let visible_text = developer_input_texts(&initial_context)
+        .into_iter()
+        .chain(user_input_texts(&initial_context))
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    assert!(!visible_text.contains("VANILLA_DEVELOPER_INSTRUCTIONS_MARKER"));
+    assert!(!visible_text.contains("VANILLA_USER_INSTRUCTIONS_MARKER"));
+    assert!(!visible_text.contains("vanilla-repo-skill"));
+    assert!(!visible_text.contains("VANILLA_SKILL_DESCRIPTION_MARKER"));
+    assert!(!visible_text.contains("<environment_context>"));
 }
 
 #[test]
