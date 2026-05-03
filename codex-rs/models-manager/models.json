@@ -173,6 +173,11 @@
           "id": "priority",
           "name": "Fast",
           "description": "Fast tier"
+        },
+        {
+          "id": "ultrafast",
+          "name": "Ultrafast",
+          "description": "The fastest available responses for latency-sensitive work."
         }
       ],
       "supports_reasoning_summaries": true
