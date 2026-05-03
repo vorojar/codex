@@ -492,7 +492,7 @@ v2_enum_from_core!(
 
 v2_enum_from_core!(
     pub enum HookOutputEntryKind from CoreHookOutputEntryKind {
-        Warning, Stop, Feedback, Context, Error
+        Warning, Stop, Feedback, Reason, Context, Error
     }
 );
 

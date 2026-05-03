@@ -2231,6 +2231,34 @@ async fn blocked_and_failed_hooks_render_feedback_and_errors() {
 }
 
 #[tokio::test]
+async fn completed_hook_renders_reason_output() {
+    let (mut chat, mut rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
+
+    handle_hook_completed(
+        &mut chat,
+        hook_completed_run(
+            "pre-tool-use:0:/tmp/hooks.json",
+            codex_app_server_protocol::HookEventName::PreToolUse,
+            codex_app_server_protocol::HookRunStatus::Completed,
+            vec![codex_app_server_protocol::HookOutputEntry {
+                kind: codex_app_server_protocol::HookOutputEntryKind::Reason,
+                text: "approved by policy".to_string(),
+            }],
+        ),
+    );
+
+    let rendered = drain_insert_history(&mut rx)
+        .iter()
+        .map(|lines| lines_to_single_string(lines))
+        .collect::<String>();
+    assert_chatwidget_snapshot!("hook_completed_reason_history_snapshot", rendered);
+    assert!(
+        rendered.contains("PreToolUse hook (completed)\n  reason: approved by policy"),
+        "expected completed hook reason: {rendered:?}"
+    );
+}
+
+#[tokio::test]
 async fn completed_hook_with_output_flushes_immediately() {
     let (mut chat, mut rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
 

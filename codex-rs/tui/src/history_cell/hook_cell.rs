@@ -701,6 +701,7 @@ fn hook_output_prefix(kind: HookOutputEntryKind) -> &'static str {
         HookOutputEntryKind::Warning => "warning: ",
         HookOutputEntryKind::Stop => "stop: ",
         HookOutputEntryKind::Feedback => "feedback: ",
+        HookOutputEntryKind::Reason => "reason: ",
         HookOutputEntryKind::Context => "hook context: ",
         HookOutputEntryKind::Error => "error: ",
     }

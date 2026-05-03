@@ -356,17 +356,19 @@ fn unsupported_pre_tool_use_hook_specific_output(
     if output.updated_input.is_some() {
         Some("PreToolUse hook returned unsupported updatedInput".to_string())
     } else {
-        match output.permission_decision {
-            Some(PreToolUsePermissionDecisionWire::Allow)
-            | Some(PreToolUsePermissionDecisionWire::Ask) => None,
-            Some(PreToolUsePermissionDecisionWire::Deny) => {
+        match output.permission_decision.as_ref() {
+            Some(
+                decision @ (PreToolUsePermissionDecisionWire::Allow
+                | PreToolUsePermissionDecisionWire::Ask
+                | PreToolUsePermissionDecisionWire::Deny),
+            ) => {
                 if output
                     .permission_decision_reason
                     .as_deref()
                     .and_then(trimmed_reason)
                     .is_none()
                 {
-                    Some(invalid_pre_tool_use_reason_message())
+                    Some(invalid_pre_tool_use_reason_message(decision))
                 } else {
                     None
                 }
@@ -410,9 +412,17 @@ fn unsupported_pre_tool_use_legacy_decision(
     }
 }
 
-fn invalid_pre_tool_use_reason_message() -> String {
-    "PreToolUse hook returned permissionDecision:deny without a non-empty permissionDecisionReason"
-        .to_string()
+fn invalid_pre_tool_use_reason_message(decision: &PreToolUsePermissionDecisionWire) -> String {
+    let decision = match decision {
+        PreToolUsePermissionDecisionWire::Allow => "allow",
+        PreToolUsePermissionDecisionWire::Deny => "deny",
+        PreToolUsePermissionDecisionWire::Ask => "ask",
+        PreToolUsePermissionDecisionWire::Defer => "defer",
+    };
+    format!(
+        "PreToolUse hook returned permissionDecision:{} without a non-empty permissionDecisionReason",
+        decision
+    )
 }
 
 fn pre_tool_use_permission_decision(
@@ -453,6 +463,7 @@ mod tests {
     use serde_json::json;
 
     use super::parse_permission_request;
+    use super::parse_pre_tool_use;
 
     #[test]
     fn permission_request_rejects_reserved_updated_input_field() {
@@ -521,5 +532,28 @@ mod tests {
             parsed.invalid_reason,
             Some("PermissionRequest hook returned unsupported interrupt:true".to_string())
         );
+    }
+
+    #[test]
+    fn pre_tool_use_permission_decisions_require_reason() {
+        for decision in ["allow", "ask", "deny"] {
+            let parsed = parse_pre_tool_use(
+                &json!({
+                    "hookSpecificOutput": {
+                        "hookEventName": "PreToolUse",
+                        "permissionDecision": decision
+                    }
+                })
+                .to_string(),
+            )
+            .expect("pre tool use hook output should parse");
+
+            assert_eq!(
+                parsed.invalid_reason,
+                Some(format!(
+                    "PreToolUse hook returned permissionDecision:{decision} without a non-empty permissionDecisionReason"
+                ))
+            );
+        }
     }
 }

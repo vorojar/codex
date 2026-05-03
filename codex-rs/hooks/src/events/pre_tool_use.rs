@@ -264,7 +264,7 @@ fn parse_completed(
                             };
                             if let Some(reason) = reason {
                                 entries.push(HookOutputEntry {
-                                    kind: HookOutputEntryKind::Feedback,
+                                    kind: HookOutputEntryKind::Reason,
                                     text: reason,
                                 });
                             }
@@ -497,7 +497,7 @@ mod tests {
         assert_eq!(
             parsed.completed.run.entries,
             vec![HookOutputEntry {
-                kind: HookOutputEntryKind::Feedback,
+                kind: HookOutputEntryKind::Reason,
                 text: "please confirm".to_string(),
             }]
         );
@@ -530,7 +530,7 @@ mod tests {
         assert_eq!(
             parsed.completed.run.entries,
             vec![HookOutputEntry {
-                kind: HookOutputEntryKind::Feedback,
+                kind: HookOutputEntryKind::Reason,
                 text: "approved by policy".to_string(),
             }]
         );

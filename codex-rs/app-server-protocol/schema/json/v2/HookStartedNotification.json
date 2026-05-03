@@ -51,6 +51,7 @@
         "warning",
         "stop",
         "feedback",
+        "reason",
         "context",
         "error"
       ],

@@ -52,7 +52,7 @@ pub(crate) struct NetworkApprovalSpec {
     pub mode: NetworkApprovalMode,
     pub trigger: GuardianNetworkAccessTrigger,
     pub command: String,
-    pub pre_tool_use_permission_decision: Option<codex_hooks::PreToolUsePermissionDecision>,
+    pub pre_tool_use_permission_decision: Option<PreToolUsePermissionDecision>,
 }
 
 #[derive(Clone, Debug)]
@@ -226,7 +226,7 @@ struct ActiveNetworkApprovalCall {
     turn_id: String,
     trigger: GuardianNetworkAccessTrigger,
     command: String,
-    pre_tool_use_permission_decision: Option<codex_hooks::PreToolUsePermissionDecision>,
+    pre_tool_use_permission_decision: Option<PreToolUsePermissionDecision>,
     cancellation_token: CancellationToken,
 }
 
@@ -270,7 +270,7 @@ impl NetworkApprovalService {
         turn_id: String,
         trigger: GuardianNetworkAccessTrigger,
         command: String,
-        pre_tool_use_permission_decision: Option<codex_hooks::PreToolUsePermissionDecision>,
+        pre_tool_use_permission_decision: Option<PreToolUsePermissionDecision>,
         cancellation_token: CancellationToken,
     ) {
         let mut calls = self.calls.lock().await;

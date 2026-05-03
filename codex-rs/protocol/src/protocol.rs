@@ -1590,6 +1590,7 @@ pub enum HookOutputEntryKind {
     Warning,
     Stop,
     Feedback,
+    Reason,
     Context,
     Error,
 }
