@@ -4690,6 +4690,7 @@ impl CodexMessageProcessor {
             };
             let mut config_for_instruction_sources = self.config.as_ref().clone();
             config_for_instruction_sources.cwd = config_snapshot.cwd.clone();
+            config_for_instruction_sources.context_mode = config_snapshot.context_mode;
             let instruction_sources =
                 Self::instruction_sources_from_config(&config_for_instruction_sources).await;
 
