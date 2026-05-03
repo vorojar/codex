@@ -1395,21 +1395,107 @@ model_instructions_file = "child.txt"
 }
 
 #[tokio::test]
-async fn cli_override_model_instructions_file_sets_base_instructions() -> std::io::Result<()> {
+async fn user_config_model_instructions_file_resolves_relative_to_codex_home() -> std::io::Result<()>
+{
+    let tmp = tempdir()?;
+    let codex_home = tmp.path().join("home");
+    tokio::fs::create_dir_all(&codex_home).await?;
+    tokio::fs::write(
+        codex_home.join(CONFIG_TOML_FILE),
+        r#"model_instructions_file = "instructions.md""#,
+    )
+    .await?;
+    tokio::fs::write(
+        codex_home.join("instructions.md"),
+        "user config instructions",
+    )
+    .await?;
+
+    let cwd = tmp.path().join("work");
+    tokio::fs::create_dir_all(&cwd).await?;
+    tokio::fs::write(cwd.join("instructions.md"), "cwd instructions").await?;
+
+    let config = ConfigBuilder::default()
+        .codex_home(codex_home)
+        .harness_overrides(ConfigOverrides {
+            cwd: Some(cwd),
+            ..ConfigOverrides::default()
+        })
+        .build()
+        .await?;
+
+    assert_eq!(
+        config.base_instructions.as_deref(),
+        Some("user config instructions")
+    );
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn profile_model_instructions_file_resolves_relative_to_config_file() -> std::io::Result<()> {
+    let tmp = tempdir()?;
+    let codex_home = tmp.path().join("home");
+    tokio::fs::create_dir_all(&codex_home).await?;
+    tokio::fs::write(
+        codex_home.join(CONFIG_TOML_FILE),
+        r#"
+[profiles.relpath]
+model_instructions_file = "profile-instructions.md"
+"#,
+    )
+    .await?;
+    tokio::fs::write(
+        codex_home.join("profile-instructions.md"),
+        "profile instructions",
+    )
+    .await?;
+
+    let cwd = tmp.path().join("work");
+    tokio::fs::create_dir_all(&cwd).await?;
+    tokio::fs::write(
+        cwd.join("profile-instructions.md"),
+        "cwd profile instructions",
+    )
+    .await?;
+
+    let config = ConfigBuilder::default()
+        .codex_home(codex_home)
+        .harness_overrides(ConfigOverrides {
+            config_profile: Some("relpath".to_string()),
+            cwd: Some(cwd),
+            ..ConfigOverrides::default()
+        })
+        .build()
+        .await?;
+
+    assert_eq!(
+        config.base_instructions.as_deref(),
+        Some("profile instructions")
+    );
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn cli_override_model_instructions_file_resolves_relative_to_cwd() -> std::io::Result<()> {
     let tmp = tempdir()?;
     let codex_home = tmp.path().join("home");
     tokio::fs::create_dir_all(&codex_home).await?;
     tokio::fs::write(codex_home.join(CONFIG_TOML_FILE), "").await?;
+    tokio::fs::write(
+        codex_home.join("instructions.md"),
+        "codex home instructions",
+    )
+    .await?;
 
     let cwd = tmp.path().join("work");
     tokio::fs::create_dir_all(&cwd).await?;
-
-    let instructions_path = tmp.path().join("instr.md");
-    tokio::fs::write(&instructions_path, "cli override instructions").await?;
+    tokio::fs::write(cwd.join("instructions.md"), "cli override instructions").await?;
 
     let cli_overrides = vec![(
         "model_instructions_file".to_string(),
-        TomlValue::String(instructions_path.to_string_lossy().to_string()),
+        TomlValue::String("instructions.md".to_string()),
     )];
 
     let config = ConfigBuilder::default()

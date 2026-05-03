@@ -2678,9 +2678,10 @@ impl Config {
 
         let commit_attribution = cfg.commit_attribution;
 
-        // Load base instructions override from a file if specified. If the
-        // path is relative, resolve it against the effective cwd so the
-        // behaviour matches other path-like config values.
+        // Load base instructions override from a file if specified. Relative
+        // paths have already been resolved by the config layer loader:
+        // config.toml values resolve against the config file directory, while
+        // CLI overrides resolve against the effective cwd.
         let model_instructions_path = config_profile
             .model_instructions_file
             .as_ref()
