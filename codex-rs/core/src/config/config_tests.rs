@@ -6582,6 +6582,29 @@ async fn deprecated_fast_service_tier_maps_to_priority_id() -> std::io::Result<(
 }
 
 #[tokio::test]
+async fn legacy_fast_service_tier_id_maps_to_priority_id() -> std::io::Result<()> {
+    let fixture = create_test_fixture()?;
+    let mut cfg = fixture.cfg.clone();
+    cfg.service_tier_id = Some(ServiceTier::from(SERVICE_TIER_FAST_LEGACY));
+
+    let config = Config::load_from_base_config_with_overrides(
+        cfg,
+        ConfigOverrides {
+            cwd: Some(fixture.cwd_path()),
+            ..Default::default()
+        },
+        fixture.codex_home(),
+    )
+    .await?;
+
+    assert_eq!(
+        config.service_tier,
+        Some(ServiceTier::from(SERVICE_TIER_PRIORITY))
+    );
+    Ok(())
+}
+
+#[tokio::test]
 async fn fast_default_opt_out_notice_config_is_respected() -> std::io::Result<()> {
     let fixture = create_test_fixture()?;
     let mut cfg = fixture.cfg.clone();

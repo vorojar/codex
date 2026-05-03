@@ -1992,7 +1992,7 @@ pub(crate) fn resolve_web_search_mode_for_turn(
     WebSearchMode::Disabled
 }
 
-fn normalize_deprecated_service_tier(service_tier: ServiceTier) -> ServiceTier {
+fn normalize_service_tier(service_tier: ServiceTier) -> ServiceTier {
     if service_tier.as_ref() == SERVICE_TIER_FAST_LEGACY {
         SERVICE_TIER_PRIORITY.into()
     } else {
@@ -2662,21 +2662,21 @@ impl Config {
         let deprecated_profile_service_tier = config_profile
             .service_tier
             .clone()
-            .map(normalize_deprecated_service_tier);
+            .map(normalize_service_tier);
         #[allow(deprecated)]
-        let deprecated_config_service_tier =
-            cfg.service_tier.clone().map(normalize_deprecated_service_tier);
+        let deprecated_config_service_tier = cfg.service_tier.clone().map(normalize_service_tier);
+        let profile_service_tier_id = config_profile.service_tier_id.map(normalize_service_tier);
+        let config_service_tier_id = cfg.service_tier_id.map(normalize_service_tier);
         let service_tier = match service_tier_override {
-            Some(Some(service_tier)) => Some(normalize_deprecated_service_tier(service_tier)),
+            Some(Some(service_tier)) => Some(normalize_service_tier(service_tier)),
             Some(None) => {
                 // Preserve explicit standard/clear intent after the nested override
                 // collapses into `Config.service_tier = None`.
                 notices.fast_default_opt_out = Some(true);
                 None
             }
-            None => config_profile
-                .service_tier_id
-                .or(cfg.service_tier_id)
+            None => profile_service_tier_id
+                .or(config_service_tier_id)
                 .or(deprecated_profile_service_tier)
                 .or(deprecated_config_service_tier),
         };
