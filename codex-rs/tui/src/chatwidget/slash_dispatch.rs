@@ -16,7 +16,6 @@ use crate::bottom_pane::slash_commands::command_available_during_task;
 use crate::bottom_pane::slash_commands::command_available_in_side_conversation;
 use crate::bottom_pane::slash_commands::command_name;
 use crate::bottom_pane::slash_commands::command_supports_inline_args;
-use codex_protocol::protocol::ReviewRequest;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum SlashCommandDispatchSource {
@@ -725,9 +724,8 @@ impl ChatWidget {
                 self.request_side_conversation(parent_thread_id, Some(user_message));
             }
             SlashCommandAction::Builtin(SlashCommand::Review) if !trimmed.is_empty() => {
-                self.submit_op(AppCommand::review(ReviewRequest {
-                    target: ReviewTarget::Custom { instructions: args },
-                    user_facing_hint: None,
+                self.submit_op(AppCommand::review(ReviewTarget::Custom {
+                    instructions: args,
                 }));
             }
             SlashCommandAction::Builtin(SlashCommand::Resume) if !trimmed.is_empty() => {
