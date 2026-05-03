@@ -31,6 +31,9 @@ use codex_app_server_protocol::FileChangeRequestApprovalParams;
 use codex_app_server_protocol::FileChangeRequestApprovalResponse;
 use codex_app_server_protocol::GrantedPermissionProfile as V2GrantedPermissionProfile;
 use codex_app_server_protocol::GuardianWarningNotification;
+use codex_app_server_protocol::HookAutoReviewCompletedNotification;
+use codex_app_server_protocol::HookAutoReviewDangerousHook;
+use codex_app_server_protocol::HookAutoReviewStartedNotification;
 use codex_app_server_protocol::HookCompletedNotification;
 use codex_app_server_protocol::HookStartedNotification;
 use codex_app_server_protocol::ItemCompletedNotification;
@@ -1009,6 +1012,45 @@ pub(crate) async fn apply_bespoke_event_handling(
             };
             outgoing
                 .send_server_notification(ServerNotification::HookCompleted(notification))
+                .await;
+        }
+        EventMsg::HookAutoReviewStarted(event) => {
+            thread_watch_manager
+                .note_hook_auto_review_started(&conversation_id.to_string())
+                .await;
+            let notification = HookAutoReviewStartedNotification {
+                thread_id: conversation_id.to_string(),
+                turn_id: event.turn_id,
+                hook_count: event.hook_count,
+            };
+            outgoing
+                .send_server_notification(ServerNotification::HookAutoReviewStarted(notification))
+                .await;
+        }
+        EventMsg::HookAutoReviewCompleted(event) => {
+            thread_watch_manager
+                .note_hook_auto_review_completed(&conversation_id.to_string())
+                .await;
+            let notification = HookAutoReviewCompletedNotification {
+                thread_id: conversation_id.to_string(),
+                turn_id: event.turn_id,
+                reviewed_count: event.reviewed_count,
+                trusted_count: event.trusted_count,
+                dangerous_count: event.dangerous_count,
+                skipped_count: event.skipped_count,
+                failed_count: event.failed_count,
+                dangerous_hooks: event
+                    .dangerous_hooks
+                    .into_iter()
+                    .map(|hook| HookAutoReviewDangerousHook {
+                        key: hook.key,
+                        source_path: hook.source_path,
+                        reason: hook.reason,
+                    })
+                    .collect(),
+            };
+            outgoing
+                .send_server_notification(ServerNotification::HookAutoReviewCompleted(notification))
                 .await;
         }
         EventMsg::ExitedReviewMode(review_event) => {

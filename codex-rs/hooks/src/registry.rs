@@ -81,6 +81,10 @@ impl Hooks {
         self.engine.warnings()
     }
 
+    pub fn hook_entries(&self) -> &[HookListEntry] {
+        self.engine.hook_entries()
+    }
+
     fn hooks_for_event(&self, hook_event: &HookEvent) -> &[Hook] {
         match hook_event {
             HookEvent::AfterAgent { .. } => &self.after_agent,

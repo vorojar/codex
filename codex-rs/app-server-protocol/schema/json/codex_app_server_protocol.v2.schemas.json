@@ -6305,6 +6305,102 @@
       "title": "GuardianWarningNotification",
       "type": "object"
     },
+    "HookAutoReviewCompletedNotification": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "properties": {
+        "dangerousCount": {
+          "format": "uint32",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "dangerousHooks": {
+          "items": {
+            "$ref": "#/definitions/HookAutoReviewDangerousHook"
+          },
+          "type": "array"
+        },
+        "failedCount": {
+          "format": "uint32",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "reviewedCount": {
+          "format": "uint32",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "skippedCount": {
+          "format": "uint32",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "threadId": {
+          "type": "string"
+        },
+        "trustedCount": {
+          "format": "uint32",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "turnId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "dangerousCount",
+        "dangerousHooks",
+        "failedCount",
+        "reviewedCount",
+        "skippedCount",
+        "threadId",
+        "trustedCount",
+        "turnId"
+      ],
+      "title": "HookAutoReviewCompletedNotification",
+      "type": "object"
+    },
+    "HookAutoReviewDangerousHook": {
+      "properties": {
+        "key": {
+          "type": "string"
+        },
+        "reason": {
+          "type": "string"
+        },
+        "sourcePath": {
+          "$ref": "#/definitions/AbsolutePathBuf"
+        }
+      },
+      "required": [
+        "key",
+        "reason",
+        "sourcePath"
+      ],
+      "type": "object"
+    },
+    "HookAutoReviewStartedNotification": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "properties": {
+        "hookCount": {
+          "format": "uint32",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "threadId": {
+          "type": "string"
+        },
+        "turnId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "hookCount",
+        "threadId",
+        "turnId"
+      ],
+      "title": "HookAutoReviewStartedNotification",
+      "type": "object"
+    },
     "HookCompletedNotification": {
       "$schema": "http://json-schema.org/draft-07/schema#",
       "properties": {
@@ -6380,6 +6476,18 @@
         "currentHash": {
           "type": "string"
         },
+        "dangerousHash": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "dangerousReason": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "displayOrder": {
           "format": "int64",
           "type": "integer"
@@ -6411,6 +6519,12 @@
             "null"
           ]
         },
+        "reviewedBy": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "source": {
           "$ref": "#/definitions/HookSource"
         },
@@ -6430,6 +6544,12 @@
         },
         "trustStatus": {
           "$ref": "#/definitions/HookTrustStatus"
+        },
+        "trustedHash": {
+          "type": [
+            "string",
+            "null"
+          ]
         }
       },
       "required": [
@@ -6638,7 +6758,8 @@
         "managed",
         "untrusted",
         "trusted",
-        "modified"
+        "modified",
+        "dangerous"
       ],
       "type": "string"
     },
@@ -11191,6 +11312,46 @@
           "properties": {
             "method": {
               "enum": [
+                "hook/autoReview/started"
+              ],
+              "title": "Hook/autoReview/startedNotificationMethod",
+              "type": "string"
+            },
+            "params": {
+              "$ref": "#/definitions/HookAutoReviewStartedNotification"
+            }
+          },
+          "required": [
+            "method",
+            "params"
+          ],
+          "title": "Hook/autoReview/startedNotification",
+          "type": "object"
+        },
+        {
+          "properties": {
+            "method": {
+              "enum": [
+                "hook/autoReview/completed"
+              ],
+              "title": "Hook/autoReview/completedNotificationMethod",
+              "type": "string"
+            },
+            "params": {
+              "$ref": "#/definitions/HookAutoReviewCompletedNotification"
+            }
+          },
+          "required": [
+            "method",
+            "params"
+          ],
+          "title": "Hook/autoReview/completedNotification",
+          "type": "object"
+        },
+        {
+          "properties": {
+            "method": {
+              "enum": [
                 "turn/diff/updated"
               ],
               "title": "Turn/diff/updatedNotificationMethod",
@@ -12900,7 +13061,8 @@
     "ThreadActiveFlag": {
       "enum": [
         "waitingOnApproval",
-        "waitingOnUserInput"
+        "waitingOnUserInput",
+        "reviewingHooks"
       ],
       "type": "string"
     },

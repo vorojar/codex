@@ -61,6 +61,9 @@ pub(super) use codex_app_server_protocol::GuardianCommandSource as AppServerGuar
 pub(super) use codex_app_server_protocol::GuardianRiskLevel as AppServerGuardianRiskLevel;
 pub(super) use codex_app_server_protocol::GuardianUserAuthorization as AppServerGuardianUserAuthorization;
 pub(super) use codex_app_server_protocol::GuardianWarningNotification;
+pub(super) use codex_app_server_protocol::HookAutoReviewCompletedNotification as AppServerHookAutoReviewCompletedNotification;
+pub(super) use codex_app_server_protocol::HookAutoReviewDangerousHook as AppServerHookAutoReviewDangerousHook;
+pub(super) use codex_app_server_protocol::HookAutoReviewStartedNotification as AppServerHookAutoReviewStartedNotification;
 pub(super) use codex_app_server_protocol::HookCompletedNotification as AppServerHookCompletedNotification;
 pub(super) use codex_app_server_protocol::HookEventName as AppServerHookEventName;
 pub(super) use codex_app_server_protocol::HookExecutionMode as AppServerHookExecutionMode;

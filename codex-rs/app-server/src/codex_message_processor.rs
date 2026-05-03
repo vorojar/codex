@@ -8852,6 +8852,10 @@ fn hooks_to_info(hooks: &[codex_hooks::HookListEntry]) -> Vec<HookMetadata> {
             enabled: hook.enabled,
             is_managed: hook.is_managed,
             current_hash: hook.current_hash.clone(),
+            trusted_hash: hook.trusted_hash.clone(),
+            reviewed_by: hook.reviewed_by.clone(),
+            dangerous_hash: hook.dangerous_hash.clone(),
+            dangerous_reason: hook.dangerous_reason.clone(),
             trust_status: hook.trust_status.into(),
         })
         .collect()

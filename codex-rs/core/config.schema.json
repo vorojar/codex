@@ -994,8 +994,17 @@
     },
     "HookStateToml": {
       "properties": {
+        "dangerous_hash": {
+          "type": "string"
+        },
+        "dangerous_reason": {
+          "type": "string"
+        },
         "enabled": {
           "type": "boolean"
+        },
+        "reviewed_by": {
+          "type": "string"
         },
         "trusted_hash": {
           "type": "string"

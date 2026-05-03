@@ -363,7 +363,7 @@ When `nextCursor` is `null`, you’ve reached the final page.
 `thread/status/changed` is emitted whenever a loaded thread's status changes after it has already been introduced to the client:
 
 - Includes `threadId` and the new `status`.
-- Status can be `notLoaded`, `idle`, `systemError`, or `active` (with `activeFlags`; `active` implies running).
+- Status can be `notLoaded`, `idle`, `systemError`, or `active` (with `activeFlags`; `active` implies running). Active flags include `waitingOnApproval`, `waitingOnUserInput`, and `reviewingHooks`.
 - `thread/start`, `thread/fork`, and detached review threads do not emit a separate initial `thread/status/changed`; their `thread/started` notification already carries the current `thread.status`.
 
 ```json
@@ -1129,6 +1129,8 @@ The app-server streams JSON-RPC notifications while a turn is running. Each turn
 - `turn/plan/updated` — `{ turnId, explanation?, plan }` whenever the agent shares or changes its plan; each `plan` entry is `{ step, status }` with `status` in `pending`, `inProgress`, or `completed`.
 - `model/rerouted` — `{ threadId, turnId, fromModel, toModel, reason }` when the backend reroutes a request to a different model (for example, due to high-risk cyber safety checks).
 - `model/verification` — `{ threadId, turnId, verifications }` when the backend flags additional account verification, such as `trustedAccessForCyber`.
+- `hook/autoReview/started` — `{ threadId, turnId, hookCount }` when Codex is blocking startup to scan new or modified hooks in auto-review mode.
+- `hook/autoReview/completed` — `{ threadId, turnId, reviewedCount, trustedCount, dangerousCount, skippedCount, failedCount, dangerousHooks }` when hook auto-review finishes. `dangerousHooks` entries include `{ key, sourcePath, reason }`.
 
 Today both notifications carry an empty `items` array even when item events were streamed; rely on `item/*` notifications for the canonical item list until this is fixed.
 

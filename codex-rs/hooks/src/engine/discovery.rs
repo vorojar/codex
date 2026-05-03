@@ -424,8 +424,15 @@ fn append_matcher_groups(
                     let state = source.hook_states.get(&key);
                     let enabled = hook_enabled(source.is_managed, state);
                     let trusted_hash = hook_trusted_hash(source.is_managed, state);
-                    let trust_status =
-                        hook_trust_status(source.is_managed, &current_hash, trusted_hash);
+                    let reviewed_by = hook_reviewed_by(source.is_managed, state);
+                    let dangerous_hash = hook_dangerous_hash(source.is_managed, state);
+                    let dangerous_reason = hook_dangerous_reason(source.is_managed, state);
+                    let trust_status = hook_trust_status(
+                        source.is_managed,
+                        &current_hash,
+                        trusted_hash,
+                        dangerous_hash,
+                    );
                     hook_entries.push(HookListEntry {
                         key,
                         event_name,
@@ -441,6 +448,10 @@ fn append_matcher_groups(
                         enabled,
                         is_managed: source.is_managed,
                         current_hash,
+                        trusted_hash: trusted_hash.map(ToOwned::to_owned),
+                        reviewed_by: reviewed_by.map(ToOwned::to_owned),
+                        dangerous_hash: dangerous_hash.map(ToOwned::to_owned),
+                        dangerous_reason: dangerous_reason.map(ToOwned::to_owned),
                         trust_status,
                     });
                     if enabled
@@ -534,14 +545,18 @@ fn hook_trust_status(
     is_managed: bool,
     current_hash: &str,
     trusted_hash: Option<&str>,
+    dangerous_hash: Option<&str>,
 ) -> HookTrustStatus {
     if is_managed {
         HookTrustStatus::Managed
     } else {
-        match trusted_hash {
-            Some(trusted_hash) if trusted_hash == current_hash => HookTrustStatus::Trusted,
-            Some(_) => HookTrustStatus::Modified,
-            None => HookTrustStatus::Untrusted,
+        match (trusted_hash, dangerous_hash) {
+            (Some(trusted_hash), _) if trusted_hash == current_hash => HookTrustStatus::Trusted,
+            (_, Some(dangerous_hash)) if dangerous_hash == current_hash => {
+                HookTrustStatus::Dangerous
+            }
+            (Some(_), _) | (_, Some(_)) => HookTrustStatus::Modified,
+            (None, None) => HookTrustStatus::Untrusted,
         }
     }
 }
@@ -553,6 +568,24 @@ fn hook_enabled(is_managed: bool, state: Option<&HookStateToml>) -> bool {
 fn hook_trusted_hash(is_managed: bool, state: Option<&HookStateToml>) -> Option<&str> {
     (!is_managed)
         .then(|| state.and_then(|state| state.trusted_hash.as_deref()))
+        .flatten()
+}
+
+fn hook_reviewed_by(is_managed: bool, state: Option<&HookStateToml>) -> Option<&str> {
+    (!is_managed)
+        .then(|| state.and_then(|state| state.reviewed_by.as_deref()))
+        .flatten()
+}
+
+fn hook_dangerous_hash(is_managed: bool, state: Option<&HookStateToml>) -> Option<&str> {
+    (!is_managed)
+        .then(|| state.and_then(|state| state.dangerous_hash.as_deref()))
+        .flatten()
+}
+
+fn hook_dangerous_reason(is_managed: bool, state: Option<&HookStateToml>) -> Option<&str> {
+    (!is_managed)
+        .then(|| state.and_then(|state| state.dangerous_reason.as_deref()))
         .flatten()
 }
 

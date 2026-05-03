@@ -3245,6 +3245,16 @@ impl Session {
         state.take_pending_session_start_source()
     }
 
+    pub(crate) async fn should_run_hook_auto_review(&self) -> bool {
+        let state = self.state.lock().await;
+        state.has_pending_session_start_source() && !state.hook_auto_review_completed()
+    }
+
+    pub(crate) async fn mark_hook_auto_review_completed(&self) {
+        let mut state = self.state.lock().await;
+        state.mark_hook_auto_review_completed();
+    }
+
     fn show_raw_agent_reasoning(&self) -> bool {
         self.services.show_raw_agent_reasoning
     }

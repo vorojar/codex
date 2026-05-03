@@ -648,7 +648,9 @@ impl StatusIndicatorState {
     }
 
     fn is_guardian_review(&self) -> bool {
-        self.header == "Reviewing approval request" || self.header.starts_with("Reviewing ")
+        self.header == "Reviewing approval request"
+            || (self.header.starts_with("Reviewing ")
+                && self.header.ends_with(" approval requests"))
     }
 }
 
@@ -861,6 +863,7 @@ pub(crate) struct ChatWidget {
     // footer summary from one or more in-flight review events.
     pending_guardian_review_status: PendingGuardianReviewStatus,
     recent_auto_review_denials: RecentAutoReviewDenials,
+    hook_auto_review_running: bool,
     // Active hook runs render in a dedicated live cell so they can run alongside tools.
     active_hook_cell: Option<HookCell>,
     // Semantic status used for terminal-title status rendering.
@@ -1684,8 +1687,11 @@ impl ChatWidget {
     /// The bottom pane only has one running flag, but this module treats it as a derived state of
     /// both the agent turn lifecycle and MCP startup lifecycle.
     fn update_task_running_state(&mut self) {
-        self.bottom_pane
-            .set_task_running(self.agent_turn_running || self.mcp_startup_status.is_some());
+        self.bottom_pane.set_task_running(
+            self.agent_turn_running
+                || self.mcp_startup_status.is_some()
+                || self.hook_auto_review_running,
+        );
         self.refresh_plan_mode_nudge();
         self.refresh_status_surfaces();
     }
@@ -2504,6 +2510,7 @@ impl ChatWidget {
         self.pending_status_indicator_restore = false;
         self.user_turn_pending_start = false;
         self.agent_turn_running = false;
+        self.hook_auto_review_running = false;
         self.goal_status_active_turn_started_at = None;
         self.turn_sleep_inhibitor
             .set_turn_running(/*turn_running*/ false);
@@ -2941,6 +2948,7 @@ impl ChatWidget {
         // Reset running state and clear streaming buffers.
         self.user_turn_pending_start = false;
         self.agent_turn_running = false;
+        self.hook_auto_review_running = false;
         self.goal_status_active_turn_started_at = None;
         self.turn_sleep_inhibitor
             .set_turn_running(/*turn_running*/ false);
@@ -4057,6 +4065,72 @@ impl ChatWidget {
         self.request_redraw();
     }
 
+    fn on_hook_auto_review_started(
+        &mut self,
+        notification: codex_app_server_protocol::HookAutoReviewStartedNotification,
+    ) {
+        self.hook_auto_review_running = true;
+        self.bottom_pane.ensure_status_indicator();
+        self.bottom_pane
+            .set_interrupt_hint_visible(/*visible*/ true);
+        let noun = if notification.hook_count == 1 {
+            "hook"
+        } else {
+            "hooks"
+        };
+        self.set_status(
+            String::from("Reviewing hooks"),
+            Some(format!(
+                "Scanning {} new or modified {noun} before startup",
+                notification.hook_count
+            )),
+            StatusDetailsCapitalization::Preserve,
+            /*details_max_lines*/ 1,
+        );
+        self.update_task_running_state();
+        self.request_redraw();
+    }
+
+    fn on_hook_auto_review_completed(
+        &mut self,
+        notification: codex_app_server_protocol::HookAutoReviewCompletedNotification,
+    ) {
+        self.hook_auto_review_running = false;
+        if self.current_status.header == "Reviewing hooks" {
+            self.set_status_header(String::from("Working"));
+        }
+        self.update_task_running_state();
+
+        if notification.dangerous_count > 0 {
+            let noun = if notification.dangerous_count == 1 {
+                "hook"
+            } else {
+                "hooks"
+            };
+            let detail = notification
+                .dangerous_hooks
+                .first()
+                .map(|hook| format!(" {}", hook.reason.trim()))
+                .unwrap_or_default();
+            self.on_warning(format!(
+                "Auto-review marked {} {noun} dangerous and disabled them.{detail}",
+                notification.dangerous_count
+            ));
+        }
+        if notification.failed_count > 0 {
+            let noun = if notification.failed_count == 1 {
+                "hook"
+            } else {
+                "hooks"
+            };
+            self.on_warning(format!(
+                "Auto-review could not scan {} {noun}; they remain blocked until reviewed.",
+                notification.failed_count
+            ));
+        }
+        self.request_redraw();
+    }
+
     fn flush_completed_hook_output(&mut self) {
         let Some(completed_cell) = self
             .active_hook_cell
@@ -4908,6 +4982,7 @@ impl ChatWidget {
             current_status: StatusIndicatorState::working(),
             pending_guardian_review_status: PendingGuardianReviewStatus::default(),
             recent_auto_review_denials: RecentAutoReviewDenials::default(),
+            hook_auto_review_running: false,
             active_hook_cell: None,
             terminal_title_status_kind: TerminalTitleStatusKind::Working,
             retry_status_header: None,
@@ -6233,6 +6308,12 @@ impl ChatWidget {
             }
             ServerNotification::HookCompleted(notification) => {
                 self.on_hook_completed(notification.run);
+            }
+            ServerNotification::HookAutoReviewStarted(notification) => {
+                self.on_hook_auto_review_started(notification);
+            }
+            ServerNotification::HookAutoReviewCompleted(notification) => {
+                self.on_hook_auto_review_completed(notification);
             }
             ServerNotification::Error(notification) => {
                 if notification.will_retry {

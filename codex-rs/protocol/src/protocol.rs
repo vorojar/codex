@@ -1482,6 +1482,8 @@ pub enum EventMsg {
     ItemCompleted(ItemCompletedEvent),
     HookStarted(HookStartedEvent),
     HookCompleted(HookCompletedEvent),
+    HookAutoReviewStarted(HookAutoReviewStartedEvent),
+    HookAutoReviewCompleted(HookAutoReviewCompletedEvent),
 
     AgentMessageContentDelta(AgentMessageContentDeltaEvent),
     PlanDelta(PlanDeltaEvent),
@@ -1566,6 +1568,7 @@ pub enum HookTrustStatus {
     Untrusted,
     Trusted,
     Modified,
+    Dangerous,
 }
 
 #[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq, JsonSchema, TS)]
@@ -1630,6 +1633,33 @@ pub struct HookStartedEvent {
 pub struct HookCompletedEvent {
     pub turn_id: Option<String>,
     pub run: HookRunSummary,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq, JsonSchema, TS)]
+#[serde(rename_all = "snake_case")]
+pub struct HookAutoReviewStartedEvent {
+    pub turn_id: String,
+    pub hook_count: u32,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq, JsonSchema, TS)]
+#[serde(rename_all = "snake_case")]
+pub struct HookAutoReviewDangerousHook {
+    pub key: String,
+    pub source_path: AbsolutePathBuf,
+    pub reason: String,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq, JsonSchema, TS)]
+#[serde(rename_all = "snake_case")]
+pub struct HookAutoReviewCompletedEvent {
+    pub turn_id: String,
+    pub reviewed_count: u32,
+    pub trusted_count: u32,
+    pub dangerous_count: u32,
+    pub skipped_count: u32,
+    pub failed_count: u32,
+    pub dangerous_hooks: Vec<HookAutoReviewDangerousHook>,
 }
 
 #[derive(Debug, Clone, Copy, Default, Deserialize, Serialize, PartialEq, Eq, JsonSchema, TS)]

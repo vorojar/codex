@@ -202,6 +202,10 @@ impl HooksBrowserView {
         }
 
         let enable = !hook.enabled;
+        hook.trusted_hash = Some(hook.current_hash.clone());
+        hook.reviewed_by = Some("user".to_string());
+        hook.dangerous_hash = None;
+        hook.dangerous_reason = None;
         hook.trust_status = HookTrustStatus::Trusted;
         if enable {
             hook.enabled = true;
@@ -378,6 +382,9 @@ impl HooksBrowserView {
                         format!("[{marker}] {} · modified", hook_title(idx))
                     }
                     HookTrustStatus::Untrusted => format!("[{marker}] {} · new", hook_title(idx)),
+                    HookTrustStatus::Dangerous => {
+                        format!("[{marker}] {} · dangerous", hook_title(idx))
+                    }
                     HookTrustStatus::Managed | HookTrustStatus::Trusted => {
                         format!("[{marker}] {}", hook_title(idx))
                     }
@@ -420,6 +427,19 @@ impl HooksBrowserView {
         ));
         lines.push(detail_line("Timeout", &format!("{}s", hook.timeout_sec)));
         lines.push(detail_line("Trust", hook_trust_label(hook.trust_status)));
+        if let Some(reviewed_by) = hook.reviewed_by.as_deref() {
+            lines.push(detail_line("Reviewer", reviewed_by));
+        }
+        if let Some(reason) = hook.dangerous_reason.as_deref()
+            && !reason.trim().is_empty()
+        {
+            lines.extend(detail_wrapped_lines(
+                "Danger",
+                reason,
+                width,
+                Some(/*max_lines*/ 3),
+            ));
+        }
         lines
     }
 
@@ -649,7 +669,7 @@ struct EventRow {
 fn hook_needs_review(hook: &HookMetadata) -> bool {
     matches!(
         hook.trust_status,
-        HookTrustStatus::Untrusted | HookTrustStatus::Modified
+        HookTrustStatus::Untrusted | HookTrustStatus::Modified | HookTrustStatus::Dangerous
     )
 }
 
@@ -659,6 +679,7 @@ fn hook_trust_label(status: HookTrustStatus) -> &'static str {
         HookTrustStatus::Trusted => "Trusted",
         HookTrustStatus::Untrusted => "New hook - review required",
         HookTrustStatus::Modified => "Modified since last trusted - review required",
+        HookTrustStatus::Dangerous => "Dangerous - disabled by auto-review",
     }
 }
 
@@ -853,7 +874,11 @@ mod tests {
             plugin_id: plugin_id.map(str::to_string),
             display_order,
             enabled,
-            current_hash,
+            current_hash: current_hash.clone(),
+            trusted_hash: (!is_managed).then_some(current_hash),
+            reviewed_by: None,
+            dangerous_hash: None,
+            dangerous_reason: None,
             trust_status: if is_managed {
                 HookTrustStatus::Managed
             } else {
@@ -1224,6 +1249,39 @@ mod tests {
 
         assert_snapshot!(
             "hooks_browser_review_needed_handler",
+            render_lines(&view, /*width*/ 112)
+        );
+    }
+
+    #[test]
+    fn renders_dangerous_handler() {
+        let (tx_raw, _rx) = unbounded_channel::<AppEvent>();
+        let mut dangerous_hook = hook(
+            "path:dangerous",
+            HookEventName::PreToolUse,
+            HookSource::User,
+            /*plugin_id*/ None,
+            "/tmp/pre-tool-use-check.sh",
+            /*enabled*/ false,
+            /*is_managed*/ false,
+            /*display_order*/ 0,
+        );
+        dangerous_hook.trusted_hash = None;
+        dangerous_hook.reviewed_by = Some("hook_auto_review".to_string());
+        dangerous_hook.dangerous_hash = Some(dangerous_hook.current_hash.clone());
+        dangerous_hook.dangerous_reason =
+            Some("reads SSH keys and posts them to a remote host".to_string());
+        dangerous_hook.trust_status = HookTrustStatus::Dangerous;
+        let mut view = HooksBrowserView::new(
+            vec![dangerous_hook],
+            Vec::new(),
+            Vec::new(),
+            AppEventSender::new(tx_raw),
+        );
+        view.handle_key_event(KeyEvent::from(KeyCode::Enter));
+
+        assert_snapshot!(
+            "hooks_browser_dangerous_handler",
             render_lines(&view, /*width*/ 112)
         );
     }

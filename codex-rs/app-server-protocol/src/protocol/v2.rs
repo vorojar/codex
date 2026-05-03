@@ -483,7 +483,7 @@ v2_enum_from_core!(
 
 v2_enum_from_core!(
     pub enum HookTrustStatus from CoreHookTrustStatus {
-        Managed, Untrusted, Trusted, Modified
+        Managed, Untrusted, Trusted, Modified, Dangerous
     }
 );
 
@@ -4411,6 +4411,7 @@ pub enum ThreadStatus {
 pub enum ThreadActiveFlag {
     WaitingOnApproval,
     WaitingOnUserInput,
+    ReviewingHooks,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, JsonSchema, TS)]
@@ -4807,6 +4808,10 @@ pub struct HookMetadata {
     pub enabled: bool,
     pub is_managed: bool,
     pub current_hash: String,
+    pub trusted_hash: Option<String>,
+    pub reviewed_by: Option<String>,
+    pub dangerous_hash: Option<String>,
+    pub dangerous_reason: Option<String>,
     pub trust_status: HookTrustStatus,
 }
 
@@ -6821,6 +6826,38 @@ pub struct HookCompletedNotification {
     pub thread_id: String,
     pub turn_id: Option<String>,
     pub run: HookRunSummary,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "v2/")]
+pub struct HookAutoReviewStartedNotification {
+    pub thread_id: String,
+    pub turn_id: String,
+    pub hook_count: u32,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "v2/")]
+pub struct HookAutoReviewDangerousHook {
+    pub key: String,
+    pub source_path: AbsolutePathBuf,
+    pub reason: String,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "v2/")]
+pub struct HookAutoReviewCompletedNotification {
+    pub thread_id: String,
+    pub turn_id: String,
+    pub reviewed_count: u32,
+    pub trusted_count: u32,
+    pub dangerous_count: u32,
+    pub skipped_count: u32,
+    pub failed_count: u32,
+    pub dangerous_hooks: Vec<HookAutoReviewDangerousHook>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, JsonSchema, TS)]

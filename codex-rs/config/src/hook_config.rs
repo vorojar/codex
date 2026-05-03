@@ -27,6 +27,12 @@ pub struct HookStateToml {
     pub enabled: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub trusted_hash: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reviewed_by: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub dangerous_hash: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub dangerous_reason: Option<String>,
 }
 
 #[derive(Debug, Default, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]

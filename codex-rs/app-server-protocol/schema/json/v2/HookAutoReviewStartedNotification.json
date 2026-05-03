@@ -1,0 +1,23 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "properties": {
+    "hookCount": {
+      "format": "uint32",
+      "minimum": 0.0,
+      "type": "integer"
+    },
+    "threadId": {
+      "type": "string"
+    },
+    "turnId": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "hookCount",
+    "threadId",
+    "turnId"
+  ],
+  "title": "HookAutoReviewStartedNotification",
+  "type": "object"
+}

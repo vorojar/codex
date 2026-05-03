@@ -1,0 +1,79 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "definitions": {
+    "AbsolutePathBuf": {
+      "description": "A path that is guaranteed to be absolute and normalized (though it is not guaranteed to be canonicalized or exist on the filesystem).\n\nIMPORTANT: When deserializing an `AbsolutePathBuf`, a base path must be set using [AbsolutePathBufGuard::new]. If no base path is set, the deserialization will fail unless the path being deserialized is already absolute.",
+      "type": "string"
+    },
+    "HookAutoReviewDangerousHook": {
+      "properties": {
+        "key": {
+          "type": "string"
+        },
+        "reason": {
+          "type": "string"
+        },
+        "sourcePath": {
+          "$ref": "#/definitions/AbsolutePathBuf"
+        }
+      },
+      "required": [
+        "key",
+        "reason",
+        "sourcePath"
+      ],
+      "type": "object"
+    }
+  },
+  "properties": {
+    "dangerousCount": {
+      "format": "uint32",
+      "minimum": 0.0,
+      "type": "integer"
+    },
+    "dangerousHooks": {
+      "items": {
+        "$ref": "#/definitions/HookAutoReviewDangerousHook"
+      },
+      "type": "array"
+    },
+    "failedCount": {
+      "format": "uint32",
+      "minimum": 0.0,
+      "type": "integer"
+    },
+    "reviewedCount": {
+      "format": "uint32",
+      "minimum": 0.0,
+      "type": "integer"
+    },
+    "skippedCount": {
+      "format": "uint32",
+      "minimum": 0.0,
+      "type": "integer"
+    },
+    "threadId": {
+      "type": "string"
+    },
+    "trustedCount": {
+      "format": "uint32",
+      "minimum": 0.0,
+      "type": "integer"
+    },
+    "turnId": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "dangerousCount",
+    "dangerousHooks",
+    "failedCount",
+    "reviewedCount",
+    "skippedCount",
+    "threadId",
+    "trustedCount",
+    "turnId"
+  ],
+  "title": "HookAutoReviewCompletedNotification",
+  "type": "object"
+}

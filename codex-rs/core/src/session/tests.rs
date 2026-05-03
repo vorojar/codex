@@ -96,6 +96,7 @@ use codex_protocol::protocol::CompactedItem;
 use codex_protocol::protocol::ConversationAudioParams;
 use codex_protocol::protocol::CreditsSnapshot;
 use codex_protocol::protocol::GranularApprovalConfig;
+use codex_protocol::protocol::HookEventName;
 use codex_protocol::protocol::InitialHistory;
 use codex_protocol::protocol::InterAgentCommunication;
 use codex_protocol::protocol::NetworkApprovalProtocol;
@@ -463,25 +464,21 @@ async fn write_project_trust_config(
     .await
 }
 
-async fn preview_session_start_hooks(
+async fn session_start_hook_entries(
     config: &crate::config::Config,
-) -> std::io::Result<Vec<codex_protocol::protocol::HookRunSummary>> {
+) -> std::io::Result<Vec<codex_hooks::HookListEntry>> {
     let hooks = Hooks::new(HooksConfig {
         feature_enabled: true,
         config_layer_stack: Some(config.config_layer_stack.clone()),
         ..HooksConfig::default()
     });
 
-    Ok(
-        hooks.preview_session_start(&codex_hooks::SessionStartRequest {
-            session_id: ThreadId::new(),
-            cwd: config.cwd.clone(),
-            transcript_path: None,
-            model: "gpt-5.2".to_string(),
-            permission_mode: "default".to_string(),
-            source: codex_hooks::SessionStartSource::Startup,
-        }),
-    )
+    Ok(hooks
+        .hook_entries()
+        .iter()
+        .filter(|hook| hook.event_name == HookEventName::SessionStart)
+        .cloned()
+        .collect())
 }
 
 fn test_tool_runtime(session: Arc<Session>, turn_context: Arc<TurnContext>) -> ToolCallRuntime {
@@ -1229,6 +1226,247 @@ async fn reload_user_config_layer_refreshes_hooks() -> anyhow::Result<()> {
     session.reload_user_config_layer().await;
 
     assert_eq!(session.hooks().preview_session_start(&request).len(), 1);
+    Ok(())
+}
+
+#[tokio::test]
+async fn hook_auto_review_persists_verdicts_before_session_start_hooks() -> anyhow::Result<()> {
+    const INITIAL_HOOK_CONFIG: &str = r#"
+[hooks]
+
+[[hooks.SessionStart]]
+hooks = [
+  { type = "command", command = "echo safe startup hook" },
+  { type = "command", command = "echo dangerous startup hook" },
+]
+"#;
+
+    let server = start_mock_server().await;
+    let review_responses = mount_sse_sequence(
+        &server,
+        vec![
+            sse(vec![
+                ev_response_created("resp-safe"),
+                ev_assistant_message(
+                    "msg-safe",
+                    &serde_json::json!({
+                        "verdict": "safe",
+                        "reason": "benign startup context",
+                    })
+                    .to_string(),
+                ),
+                ev_completed("resp-safe"),
+            ]),
+            sse(vec![
+                ev_response_created("resp-dangerous"),
+                ev_assistant_message(
+                    "msg-dangerous",
+                    &serde_json::json!({
+                        "verdict": "dangerous",
+                        "reason": "reads SSH keys and posts them to a remote host",
+                    })
+                    .to_string(),
+                ),
+                ev_completed("resp-dangerous"),
+            ]),
+        ],
+    )
+    .await;
+
+    let server_url = server.uri();
+    let (session, rx) = make_session_with_config_and_rx(move |config| {
+        config
+            .features
+            .enable(Feature::CodexHooks)
+            .expect("enable Codex hooks");
+        config.approvals_reviewer = codex_config::types::ApprovalsReviewer::AutoReview;
+        config.model_provider.base_url = Some(format!("{server_url}/v1"));
+
+        let config_toml_path = config.codex_home.join(CONFIG_TOML_FILE);
+        let user_config: codex_config::TomlValue =
+            toml::from_str(INITIAL_HOOK_CONFIG).expect("config TOML should deserialize");
+        std::fs::write(&config_toml_path, INITIAL_HOOK_CONFIG).expect("write initial hook config");
+        config.config_layer_stack = config
+            .config_layer_stack
+            .with_user_config(&config_toml_path, user_config);
+    })
+    .await?;
+
+    let config_toml_path = session.codex_home().await.join(CONFIG_TOML_FILE);
+    std::fs::create_dir_all(
+        config_toml_path
+            .parent()
+            .expect("config.toml should have a parent directory"),
+    )?;
+    std::fs::write(&config_toml_path, INITIAL_HOOK_CONFIG)?;
+
+    let entries = session.hooks().hook_entries().to_vec();
+    assert_eq!(entries.len(), 2);
+    let safe_hook = entries
+        .iter()
+        .find(|hook| hook.command.as_deref() == Some("echo safe startup hook"))
+        .expect("safe hook should be discovered")
+        .clone();
+    let dangerous_hook = entries
+        .iter()
+        .find(|hook| hook.command.as_deref() == Some("echo dangerous startup hook"))
+        .expect("dangerous hook should be discovered")
+        .clone();
+    assert_eq!(
+        safe_hook.trust_status,
+        codex_protocol::protocol::HookTrustStatus::Untrusted
+    );
+    assert_eq!(
+        dangerous_hook.trust_status,
+        codex_protocol::protocol::HookTrustStatus::Untrusted
+    );
+
+    let turn_context = session.new_default_turn().await;
+    let should_stop = timeout(
+        Duration::from_secs(30),
+        crate::hook_runtime::run_pending_session_start_hooks(&session, &turn_context),
+    )
+    .await
+    .expect("hook auto-review should complete");
+    assert!(
+        !should_stop,
+        "reviewed SessionStart hooks should not stop the turn"
+    );
+
+    let mut events = Vec::new();
+    while let Ok(event) = rx.try_recv() {
+        events.push(event.msg);
+    }
+    let refreshed_entries = session.hooks().hook_entries().to_vec();
+    let auto_review_started_idx = events
+        .iter()
+        .position(|event| matches!(event, EventMsg::HookAutoReviewStarted(_)))
+        .expect("hook auto-review should emit started event");
+    let auto_review_completed_idx = events
+        .iter()
+        .position(|event| matches!(event, EventMsg::HookAutoReviewCompleted(_)))
+        .expect("hook auto-review should emit completed event");
+    let session_start_started_idx = events
+        .iter()
+        .position(|event| {
+            matches!(
+                event,
+                EventMsg::HookStarted(event)
+                    if event.run.event_name == HookEventName::SessionStart
+            )
+        })
+        .expect("trusted SessionStart hook should start after auto-review");
+    assert!(auto_review_started_idx < auto_review_completed_idx);
+    assert!(auto_review_completed_idx < session_start_started_idx);
+
+    let started = events
+        .iter()
+        .find_map(|event| match event {
+            EventMsg::HookAutoReviewStarted(event) => Some(event),
+            _ => None,
+        })
+        .expect("started event");
+    assert_eq!(started.hook_count, 2);
+
+    let completed = events
+        .iter()
+        .find_map(|event| match event {
+            EventMsg::HookAutoReviewCompleted(event) => Some(event),
+            _ => None,
+        })
+        .expect("completed event");
+    assert_eq!(completed.reviewed_count, 2);
+    assert_eq!(completed.trusted_count, 1);
+    assert_eq!(completed.dangerous_count, 1);
+    assert_eq!(completed.skipped_count, 0);
+    assert_eq!(completed.failed_count, 0);
+    assert_eq!(
+        completed.dangerous_hooks,
+        vec![codex_protocol::protocol::HookAutoReviewDangerousHook {
+            key: dangerous_hook.key.clone(),
+            source_path: dangerous_hook.source_path.clone(),
+            reason: "reads SSH keys and posts them to a remote host".to_string(),
+        }]
+    );
+
+    let completed_session_start_hooks = events
+        .iter()
+        .filter_map(|event| match event {
+            EventMsg::HookCompleted(event)
+                if event.run.event_name == HookEventName::SessionStart =>
+            {
+                Some(event)
+            }
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(completed_session_start_hooks.len(), 1);
+    assert_eq!(
+        completed_session_start_hooks[0].run.status,
+        codex_protocol::protocol::HookRunStatus::Completed
+    );
+    assert_eq!(
+        completed_session_start_hooks[0].run.source_path,
+        safe_hook.source_path
+    );
+
+    let persisted_config: ConfigToml = toml::from_str(&std::fs::read_to_string(config_toml_path)?)?;
+    let hook_state = persisted_config
+        .hooks
+        .expect("persisted config should contain hooks")
+        .state;
+    let safe_state = hook_state
+        .get(&safe_hook.key)
+        .expect("safe hook state should be persisted");
+    assert_eq!(
+        safe_state.trusted_hash.as_deref(),
+        Some(safe_hook.current_hash.as_str())
+    );
+    assert_eq!(safe_state.reviewed_by.as_deref(), Some("hook_auto_review"));
+    assert_eq!(safe_state.dangerous_hash, None);
+    assert_eq!(safe_state.dangerous_reason, None);
+
+    let dangerous_state = hook_state
+        .get(&dangerous_hook.key)
+        .expect("dangerous hook state should be persisted");
+    assert_eq!(dangerous_state.enabled, Some(false));
+    assert_eq!(
+        dangerous_state.dangerous_hash.as_deref(),
+        Some(dangerous_hook.current_hash.as_str())
+    );
+    assert_eq!(
+        dangerous_state.dangerous_reason.as_deref(),
+        Some("reads SSH keys and posts them to a remote host")
+    );
+    assert_eq!(
+        dangerous_state.reviewed_by.as_deref(),
+        Some("hook_auto_review")
+    );
+    assert_eq!(dangerous_state.trusted_hash, None);
+
+    assert_eq!(
+        refreshed_entries
+            .iter()
+            .find(|hook| hook.key == safe_hook.key)
+            .expect("safe hook should remain discovered")
+            .trust_status,
+        codex_protocol::protocol::HookTrustStatus::Trusted
+    );
+    assert_eq!(
+        refreshed_entries
+            .iter()
+            .find(|hook| hook.key == dangerous_hook.key)
+            .expect("dangerous hook should remain discovered")
+            .trust_status,
+        codex_protocol::protocol::HookTrustStatus::Dangerous
+    );
+
+    let requests = review_responses.requests();
+    assert_eq!(requests.len(), 2);
+    assert!(requests[0].body_contains_text("echo safe startup hook"));
+    assert!(requests[0].body_contains_text("SessionStart"));
+    assert!(requests[1].body_contains_text("echo dangerous startup hook"));
+    assert!(requests[1].body_contains_text("Inspect referenced source files when needed"));
     Ok(())
 }
 
@@ -8528,14 +8766,14 @@ async fn session_start_hooks_only_load_from_trusted_project_layers() -> std::io:
         .build()
         .await?;
 
-    let preview = preview_session_start_hooks(&config).await?;
+    let entries = session_start_hook_entries(&config).await?;
     let expected_source_path = codex_utils_absolute_path::AbsolutePathBuf::from_absolute_path(
         nested_dot_codex.join("hooks.json"),
     )?;
     assert_eq!(
-        preview
+        entries
             .iter()
-            .map(|run| &run.source_path)
+            .map(|hook| &hook.source_path)
             .collect::<Vec<_>>(),
         vec![&expected_source_path],
     );
@@ -8579,7 +8817,7 @@ async fn session_start_hooks_require_project_trust_without_config_toml() -> std:
             .await?;
 
         assert_eq!(
-            preview_session_start_hooks(&config).await?.len(),
+            session_start_hook_entries(&config).await?.len(),
             expected_hooks,
             "unexpected hook count for {name}",
         );

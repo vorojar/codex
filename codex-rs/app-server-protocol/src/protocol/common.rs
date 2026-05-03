@@ -1388,6 +1388,8 @@ server_notification_definitions! {
     HookStarted => "hook/started" (v2::HookStartedNotification),
     TurnCompleted => "turn/completed" (v2::TurnCompletedNotification),
     HookCompleted => "hook/completed" (v2::HookCompletedNotification),
+    HookAutoReviewStarted => "hook/autoReview/started" (v2::HookAutoReviewStartedNotification),
+    HookAutoReviewCompleted => "hook/autoReview/completed" (v2::HookAutoReviewCompletedNotification),
     TurnDiffUpdated => "turn/diff/updated" (v2::TurnDiffUpdatedNotification),
     TurnPlanUpdated => "turn/plan/updated" (v2::TurnPlanUpdatedNotification),
     ItemStarted => "item/started" (v2::ItemStartedNotification),

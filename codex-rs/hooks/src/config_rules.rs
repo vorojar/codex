@@ -63,6 +63,15 @@ pub(crate) fn hook_states_from_stack(
             if let Some(trusted_hash) = state.trusted_hash {
                 effective_state.trusted_hash = Some(trusted_hash);
             }
+            if let Some(reviewed_by) = state.reviewed_by {
+                effective_state.reviewed_by = Some(reviewed_by);
+            }
+            if let Some(dangerous_hash) = state.dangerous_hash {
+                effective_state.dangerous_hash = Some(dangerous_hash);
+            }
+            if let Some(dangerous_reason) = state.dangerous_reason {
+                effective_state.dangerous_reason = Some(dangerous_reason);
+            }
         }
     }
 
@@ -107,6 +116,9 @@ mod tests {
                 HookStateToml {
                     enabled: Some(true),
                     trusted_hash: None,
+                    reviewed_by: None,
+                    dangerous_hash: None,
+                    dangerous_reason: None,
                 },
             )])
         );
@@ -126,6 +138,9 @@ mod tests {
                         HookStateToml {
                             enabled: Some(/*enabled*/ false),
                             trusted_hash: None,
+                            reviewed_by: Some("user".to_string()),
+                            dangerous_hash: None,
+                            dangerous_reason: None,
                         },
                     ),
                 ),
@@ -136,6 +151,9 @@ mod tests {
                         HookStateToml {
                             enabled: None,
                             trusted_hash: Some("sha256:trusted".to_string()),
+                            reviewed_by: None,
+                            dangerous_hash: Some("sha256:dangerous".to_string()),
+                            dangerous_reason: Some("leaks secrets".to_string()),
                         },
                     ),
                 ),
@@ -152,6 +170,9 @@ mod tests {
                 HookStateToml {
                     enabled: Some(false),
                     trusted_hash: Some("sha256:trusted".to_string()),
+                    reviewed_by: Some("user".to_string()),
+                    dangerous_hash: Some("sha256:dangerous".to_string()),
+                    dangerous_reason: Some("leaks secrets".to_string()),
                 },
             )])
         );
@@ -190,6 +211,9 @@ mod tests {
                 HookStateToml {
                     enabled: Some(false),
                     trusted_hash: None,
+                    reviewed_by: None,
+                    dangerous_hash: None,
+                    dangerous_reason: None,
                 },
             )])
         );
@@ -230,6 +254,9 @@ mod tests {
                 HookStateToml {
                     enabled: Some(false),
                     trusted_hash: None,
+                    reviewed_by: None,
+                    dangerous_hash: None,
+                    dangerous_reason: None,
                 },
             )])
         );
@@ -241,6 +268,9 @@ mod tests {
             HookStateToml {
                 enabled,
                 trusted_hash: None,
+                reviewed_by: None,
+                dangerous_hash: None,
+                dangerous_reason: None,
             },
         )
     }

@@ -1450,7 +1450,8 @@
     "ThreadActiveFlag": {
       "enum": [
         "waitingOnApproval",
-        "waitingOnUserInput"
+        "waitingOnUserInput",
+        "reviewingHooks"
       ],
       "type": "string"
     },

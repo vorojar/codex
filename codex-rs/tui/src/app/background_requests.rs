@@ -114,7 +114,9 @@ impl App {
                         .filter(|hook| {
                             matches!(
                                 hook.trust_status,
-                                HookTrustStatus::Untrusted | HookTrustStatus::Modified
+                                HookTrustStatus::Untrusted
+                                    | HookTrustStatus::Modified
+                                    | HookTrustStatus::Dangerous
                             )
                         })
                         .count()
@@ -877,12 +879,14 @@ pub(super) async fn write_hook_trust(
             key: {
                 "enabled": true,
                 "trusted_hash": current_hash,
+                "reviewed_by": "user",
             }
         })
     } else {
         serde_json::json!({
             key: {
                 "trusted_hash": current_hash,
+                "reviewed_by": "user",
             }
         })
     };

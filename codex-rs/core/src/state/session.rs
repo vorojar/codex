@@ -32,6 +32,7 @@ pub(crate) struct SessionState {
     pub(crate) startup_prewarm: Option<SessionStartupPrewarmHandle>,
     pub(crate) active_connector_selection: HashSet<String>,
     pub(crate) pending_session_start_source: Option<codex_hooks::SessionStartSource>,
+    hook_auto_review_completed: bool,
     granted_permissions: Option<AdditionalPermissionProfile>,
     next_turn_is_first: bool,
 }
@@ -51,6 +52,7 @@ impl SessionState {
             startup_prewarm: None,
             active_connector_selection: HashSet::new(),
             pending_session_start_source: None,
+            hook_auto_review_completed: false,
             granted_permissions: None,
             next_turn_is_first: true,
         }
@@ -216,6 +218,18 @@ impl SessionState {
         &mut self,
     ) -> Option<codex_hooks::SessionStartSource> {
         self.pending_session_start_source.take()
+    }
+
+    pub(crate) fn has_pending_session_start_source(&self) -> bool {
+        self.pending_session_start_source.is_some()
+    }
+
+    pub(crate) fn hook_auto_review_completed(&self) -> bool {
+        self.hook_auto_review_completed
+    }
+
+    pub(crate) fn mark_hook_auto_review_completed(&mut self) {
+        self.hook_auto_review_completed = true;
     }
 
     pub(crate) fn record_granted_permissions(&mut self, permissions: AdditionalPermissionProfile) {

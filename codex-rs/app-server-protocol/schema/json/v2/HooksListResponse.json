@@ -50,6 +50,18 @@
         "currentHash": {
           "type": "string"
         },
+        "dangerousHash": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "dangerousReason": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "displayOrder": {
           "format": "int64",
           "type": "integer"
@@ -81,6 +93,12 @@
             "null"
           ]
         },
+        "reviewedBy": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "source": {
           "$ref": "#/definitions/HookSource"
         },
@@ -100,6 +118,12 @@
         },
         "trustStatus": {
           "$ref": "#/definitions/HookTrustStatus"
+        },
+        "trustedHash": {
+          "type": [
+            "string",
+            "null"
+          ]
         }
       },
       "required": [
@@ -137,7 +161,8 @@
         "managed",
         "untrusted",
         "trusted",
-        "modified"
+        "modified",
+        "dangerous"
       ],
       "type": "string"
     },

@@ -12,6 +12,7 @@
 //! 4. Apply the guardian's explicit allow/deny outcome.
 
 mod approval_request;
+mod hook_review;
 mod prompt;
 mod review;
 mod review_session;
@@ -27,6 +28,11 @@ pub(crate) use approval_request::GuardianApprovalRequest;
 pub(crate) use approval_request::GuardianMcpAnnotations;
 pub(crate) use approval_request::GuardianNetworkAccessTrigger;
 pub(crate) use approval_request::guardian_approval_request_to_json;
+pub(crate) use hook_review::HookSecurityReview;
+pub(crate) use hook_review::HookSecurityReviewRequest;
+pub(crate) use hook_review::HookSecurityVerdict;
+pub(crate) use hook_review::hook_reviewer_name;
+pub(crate) use hook_review::review_hook_for_security;
 pub(crate) use review::guardian_rejection_message;
 pub(crate) use review::guardian_timeout_message;
 pub(crate) use review::is_guardian_reviewer_source;

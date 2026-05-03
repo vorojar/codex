@@ -85,12 +85,17 @@ pub struct HookListEntry {
     pub enabled: bool,
     pub is_managed: bool,
     pub current_hash: String,
+    pub trusted_hash: Option<String>,
+    pub reviewed_by: Option<String>,
+    pub dangerous_hash: Option<String>,
+    pub dangerous_reason: Option<String>,
     pub trust_status: HookTrustStatus,
 }
 
 #[derive(Clone)]
 pub(crate) struct ClaudeHooksEngine {
     handlers: Vec<ConfiguredHandler>,
+    hook_entries: Vec<HookListEntry>,
     warnings: Vec<String>,
     shell: CommandShell,
 }
@@ -106,6 +111,7 @@ impl ClaudeHooksEngine {
         if !enabled {
             return Self {
                 handlers: Vec::new(),
+                hook_entries: Vec::new(),
                 warnings: Vec::new(),
                 shell,
             };
@@ -119,9 +125,14 @@ impl ClaudeHooksEngine {
         );
         Self {
             handlers: discovered.handlers,
+            hook_entries: discovered.hook_entries,
             warnings: discovered.warnings,
             shell,
         }
+    }
+
+    pub(crate) fn hook_entries(&self) -> &[HookListEntry] {
+        &self.hook_entries
     }
 
     pub(crate) fn warnings(&self) -> &[String] {

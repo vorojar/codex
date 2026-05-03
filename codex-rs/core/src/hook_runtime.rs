@@ -104,6 +104,11 @@ pub(crate) async fn run_pending_session_start_hooks(
     sess: &Arc<Session>,
     turn_context: &Arc<TurnContext>,
 ) -> bool {
+    if sess.should_run_hook_auto_review().await {
+        crate::hook_auto_review::maybe_run_hook_auto_review(sess, turn_context).await;
+        sess.mark_hook_auto_review_completed().await;
+    }
+
     let Some(session_start_source) = sess.take_pending_session_start_source().await else {
         return false;
     };

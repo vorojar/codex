@@ -2066,6 +2066,55 @@ async fn user_prompt_submit_app_server_hook_notifications_render_snapshot() {
 }
 
 #[tokio::test]
+async fn hook_auto_review_notifications_drive_status_and_warning() {
+    let (mut chat, mut rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
+    let thread_id = ThreadId::new().to_string();
+
+    chat.handle_server_notification(
+        ServerNotification::HookAutoReviewStarted(AppServerHookAutoReviewStartedNotification {
+            thread_id: thread_id.clone(),
+            turn_id: "turn-1".to_string(),
+            hook_count: 2,
+        }),
+        /*replay_kind*/ None,
+    );
+
+    assert!(chat.bottom_pane.is_task_running());
+    assert!(chat.bottom_pane.status_indicator_visible());
+    assert_eq!(chat.current_status.header, "Reviewing hooks");
+    assert_eq!(
+        chat.current_status.details.as_deref(),
+        Some("Scanning 2 new or modified hooks before startup")
+    );
+
+    chat.handle_server_notification(
+        ServerNotification::HookAutoReviewCompleted(AppServerHookAutoReviewCompletedNotification {
+            thread_id,
+            turn_id: "turn-1".to_string(),
+            reviewed_count: 2,
+            trusted_count: 1,
+            dangerous_count: 1,
+            skipped_count: 0,
+            failed_count: 0,
+            dangerous_hooks: vec![AppServerHookAutoReviewDangerousHook {
+                key: "file:/tmp/hooks.json:pre_tool_use:0:0".to_string(),
+                source_path: PathBuf::from(test_path_display("/tmp/hooks.json")).abs(),
+                reason: "reads ~/.ssh/id_rsa and posts it to a remote host".to_string(),
+            }],
+        }),
+        /*replay_kind*/ None,
+    );
+
+    assert!(!chat.bottom_pane.is_task_running());
+    assert_eq!(chat.current_status.header, "Working");
+    let cells = drain_insert_history(&mut rx);
+    assert_eq!(cells.len(), 1);
+    let rendered = lines_to_single_string(&cells[0]);
+    assert!(rendered.contains("Auto-review marked 1 hook dangerous"));
+    assert!(rendered.contains("reads ~/.ssh/id_rsa"));
+}
+
+#[tokio::test]
 async fn pre_tool_use_hook_events_render_snapshot() {
     assert_hook_events_snapshot(
         codex_app_server_protocol::HookEventName::PreToolUse,

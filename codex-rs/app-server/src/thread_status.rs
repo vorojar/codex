@@ -164,6 +164,7 @@ impl ThreadWatchManager {
             runtime.running = false;
             runtime.pending_permission_requests = 0;
             runtime.pending_user_input_requests = 0;
+            runtime.pending_hook_auto_reviews = 0;
             runtime.is_loaded = false;
         })
         .await;
@@ -174,6 +175,7 @@ impl ThreadWatchManager {
             runtime.running = false;
             runtime.pending_permission_requests = 0;
             runtime.pending_user_input_requests = 0;
+            runtime.pending_hook_auto_reviews = 0;
             runtime.has_system_error = true;
         })
         .await;
@@ -184,6 +186,22 @@ impl ThreadWatchManager {
             runtime.running = false;
             runtime.pending_permission_requests = 0;
             runtime.pending_user_input_requests = 0;
+            runtime.pending_hook_auto_reviews = 0;
+        })
+        .await;
+    }
+
+    pub(crate) async fn note_hook_auto_review_started(&self, thread_id: &str) {
+        self.update_runtime_for_thread(thread_id, |runtime| {
+            runtime.is_loaded = true;
+            runtime.pending_hook_auto_reviews = runtime.pending_hook_auto_reviews.saturating_add(1);
+        })
+        .await;
+    }
+
+    pub(crate) async fn note_hook_auto_review_completed(&self, thread_id: &str) {
+        self.update_runtime_for_thread(thread_id, |runtime| {
+            runtime.pending_hook_auto_reviews = runtime.pending_hook_auto_reviews.saturating_sub(1);
         })
         .await;
     }
@@ -423,6 +441,7 @@ struct RuntimeFacts {
     running: bool,
     pending_permission_requests: u32,
     pending_user_input_requests: u32,
+    pending_hook_auto_reviews: u32,
     has_system_error: bool,
 }
 
@@ -437,6 +456,9 @@ fn loaded_thread_status(runtime: &RuntimeFacts) -> ThreadStatus {
     }
     if runtime.pending_user_input_requests > 0 {
         active_flags.push(ThreadActiveFlag::WaitingOnUserInput);
+    }
+    if runtime.pending_hook_auto_reviews > 0 {
+        active_flags.push(ThreadActiveFlag::ReviewingHooks);
     }
 
     if runtime.running || !active_flags.is_empty() {
@@ -493,6 +515,39 @@ mod tests {
             ThreadStatus::Active {
                 active_flags: vec![],
             },
+        );
+    }
+
+    #[tokio::test]
+    async fn hook_auto_review_sets_active_flag() {
+        let manager = ThreadWatchManager::new();
+        manager
+            .upsert_thread(test_thread(
+                INTERACTIVE_THREAD_ID,
+                codex_app_server_protocol::SessionSource::Cli,
+            ))
+            .await;
+
+        manager
+            .note_hook_auto_review_started(INTERACTIVE_THREAD_ID)
+            .await;
+        assert_eq!(
+            manager
+                .loaded_status_for_thread(INTERACTIVE_THREAD_ID)
+                .await,
+            ThreadStatus::Active {
+                active_flags: vec![ThreadActiveFlag::ReviewingHooks],
+            },
+        );
+
+        manager
+            .note_hook_auto_review_completed(INTERACTIVE_THREAD_ID)
+            .await;
+        assert_eq!(
+            manager
+                .loaded_status_for_thread(INTERACTIVE_THREAD_ID)
+                .await,
+            ThreadStatus::Idle,
         );
     }
 

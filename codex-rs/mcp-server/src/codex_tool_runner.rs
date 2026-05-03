@@ -365,6 +365,8 @@ async fn run_codex_tool_session_inner(
                     | EventMsg::ItemCompleted(_)
                     | EventMsg::HookStarted(_)
                     | EventMsg::HookCompleted(_)
+                    | EventMsg::HookAutoReviewStarted(_)
+                    | EventMsg::HookAutoReviewCompleted(_)
                     | EventMsg::AgentMessageContentDelta(_)
                     | EventMsg::ReasoningContentDelta(_)
                     | EventMsg::ReasoningRawContentDelta(_)
