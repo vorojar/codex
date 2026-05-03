@@ -222,17 +222,10 @@ fn command_token_conflicts(candidate: &str, reserved_names: &HashSet<String>) ->
 
 fn normalize_service_tier_command_token(name: &str) -> Option<String> {
     let mut normalized = String::new();
-    let mut pending_dash = false;
 
     for ch in name.chars() {
         if ch.is_ascii_alphanumeric() {
-            if pending_dash && !normalized.is_empty() {
-                normalized.push('-');
-            }
             normalized.push(ch.to_ascii_lowercase());
-            pending_dash = false;
-        } else if !normalized.is_empty() {
-            pending_dash = true;
         }
     }
 
@@ -424,6 +417,42 @@ mod tests {
                     description: "Express tier".to_string(),
                 },
             ]
+        );
+    }
+
+    #[test]
+    fn service_tier_command_compacts_name_separators() {
+        let model = ModelPreset {
+            id: "test".to_string(),
+            model: "test".to_string(),
+            display_name: "Test".to_string(),
+            description: String::new(),
+            default_reasoning_effort: codex_protocol::openai_models::ReasoningEffort::Medium,
+            supported_reasoning_efforts: Vec::new(),
+            supports_personality: false,
+            service_tiers: vec![ModelServiceTier {
+                id: ServiceTier::from("priorityboost"),
+                name: "Priority Boost".to_string(),
+                description: "Priority tier".to_string(),
+            }],
+            is_default: false,
+            upgrade: None,
+            show_in_picker: true,
+            availability_nux: None,
+            supported_in_api: true,
+            input_modalities: Vec::new(),
+        };
+
+        let commands = service_tier_commands_for_model(&model);
+
+        assert_eq!(
+            commands,
+            vec![ServiceTierCommand {
+                service_tier: ServiceTier::from("priorityboost"),
+                command: "priorityboost".to_string(),
+                name: "Priority Boost".to_string(),
+                description: "Priority tier".to_string(),
+            }]
         );
     }
 }
