@@ -54,6 +54,12 @@ pub(crate) enum SlashCommandAction {
     ServiceTier(ServiceTierCommand),
 }
 
+impl From<SlashCommand> for SlashCommandAction {
+    fn from(command: SlashCommand) -> Self {
+        Self::Builtin(command)
+    }
+}
+
 pub(crate) fn command_name(action: &SlashCommandAction) -> &str {
     match action {
         SlashCommandAction::Builtin(command) => command.command(),

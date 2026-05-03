@@ -111,7 +111,8 @@ impl ChatWidget {
         self.request_side_conversation(parent_thread_id, /*user_message*/ None);
     }
 
-    pub(super) fn dispatch_command(&mut self, cmd: SlashCommandAction) {
+    pub(super) fn dispatch_command(&mut self, cmd: impl Into<SlashCommandAction>) {
+        let cmd = cmd.into();
         if !self.ensure_slash_command_allowed_in_side_conversation(&cmd) {
             return;
         }

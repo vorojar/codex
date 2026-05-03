@@ -148,8 +148,6 @@ pub(super) use codex_protocol::approvals::GuardianUserAuthorization;
 pub(super) use codex_protocol::config_types::CollaborationMode;
 pub(super) use codex_protocol::config_types::ModeKind;
 pub(super) use codex_protocol::config_types::Personality;
-pub(super) use codex_protocol::config_types::SERVICE_TIER_PRIORITY;
-pub(super) use codex_protocol::config_types::ServiceTier;
 pub(super) use codex_protocol::config_types::Settings;
 pub(super) use codex_protocol::models::FileSystemPermissions;
 pub(super) use codex_protocol::models::MessagePhase;
