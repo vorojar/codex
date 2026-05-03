@@ -131,6 +131,114 @@ async fn token_usage_update_uses_runtime_context_window() {
         "expected /status to avoid raw config context window, got: {context_line}"
     );
 }
+
+#[tokio::test]
+async fn status_line_git_summary_items_render_values() {
+    let (mut chat, _rx, _ops) = make_chatwidget_manual(/*model_override*/ None).await;
+    chat.status_line_git_summary = Some(StatusLineGitSummary {
+        pull_request: Some(crate::chatwidget::status_surfaces::StatusLinePullRequest {
+            number: 20_252,
+            url: "https://github.com/openai/codex/pull/20252".to_string(),
+        }),
+        branch_change_stats: Some(codex_git_utils::GitBranchDiffStats {
+            additions: 143,
+            deletions: 22,
+        }),
+    });
+
+    assert_eq!(
+        chat.status_line_value_for_item(crate::bottom_pane::StatusLineItem::PullRequestNumber),
+        Some("PR #20252".to_string())
+    );
+    assert_eq!(
+        chat.status_line_value_for_item(crate::bottom_pane::StatusLineItem::BranchChanges),
+        Some("+143 -22".to_string())
+    );
+}
+
+#[tokio::test]
+async fn status_line_branch_changes_render_no_changes() {
+    let (mut chat, _rx, _ops) = make_chatwidget_manual(/*model_override*/ None).await;
+    chat.status_line_git_summary = Some(StatusLineGitSummary {
+        pull_request: None,
+        branch_change_stats: Some(codex_git_utils::GitBranchDiffStats {
+            additions: 0,
+            deletions: 0,
+        }),
+    });
+
+    assert_eq!(
+        chat.status_line_value_for_item(crate::bottom_pane::StatusLineItem::BranchChanges),
+        Some("No changes".to_string())
+    );
+}
+
+#[test]
+fn status_line_pr_view_parser_requires_open_pr() {
+    assert_eq!(
+        crate::chatwidget::status_surfaces::pull_request_from_view_output(
+            br#"{"number":20252,"url":"https://github.com/openai/codex/pull/20252","state":"OPEN"}"#
+        ),
+        Some(crate::chatwidget::status_surfaces::StatusLinePullRequest {
+            number: 20_252,
+            url: "https://github.com/openai/codex/pull/20252".to_string(),
+        })
+    );
+
+    assert_eq!(
+        crate::chatwidget::status_surfaces::pull_request_from_view_output(
+            br#"{"number":20252,"url":"https://github.com/openai/codex/pull/20252","state":"MERGED"}"#
+        ),
+        None
+    );
+}
+
+#[test]
+fn status_line_commit_pr_parser_uses_open_rest_result() {
+    assert_eq!(
+        crate::chatwidget::status_surfaces::pull_request_from_api_output(
+            br#"[{"number":20251,"html_url":"https://github.com/openai/codex/pull/20251","state":"closed"},{"number":20252,"html_url":"https://github.com/openai/codex/pull/20252","state":"open"}]"#
+        ),
+        Some(crate::chatwidget::status_surfaces::StatusLinePullRequest {
+            number: 20_252,
+            url: "https://github.com/openai/codex/pull/20252".to_string(),
+        })
+    );
+}
+
+#[test]
+fn status_line_pr_fallback_searches_parent_repo_first() {
+    assert_eq!(
+        crate::chatwidget::status_surfaces::repo_search_order_from_gh_output(
+            br#"{"nameWithOwner":"fcoury/codex","parent":{"nameWithOwner":"openai/codex"}}"#
+        ),
+        Some(vec!["openai/codex".to_string(), "fcoury/codex".to_string(),])
+    );
+}
+
+#[tokio::test]
+async fn stale_status_line_git_summary_update_is_ignored() {
+    let (mut chat, _rx, _ops) = make_chatwidget_manual(/*model_override*/ None).await;
+    chat.status_line_git_summary_cwd = Some(PathBuf::from("/expected"));
+    chat.status_line_git_summary_pending = true;
+
+    chat.set_status_line_git_summary(
+        PathBuf::from("/other"),
+        StatusLineGitSummary {
+            pull_request: Some(crate::chatwidget::status_surfaces::StatusLinePullRequest {
+                number: 20_252,
+                url: "https://github.com/openai/codex/pull/20252".to_string(),
+            }),
+            branch_change_stats: Some(codex_git_utils::GitBranchDiffStats {
+                additions: 143,
+                deletions: 22,
+            }),
+        },
+    );
+
+    assert!(chat.status_line_git_summary.is_none());
+    assert!(!chat.status_line_git_summary_pending);
+}
 #[tokio::test]
 async fn helpers_are_available_and_do_not_panic() {
     let (tx_raw, _rx) = unbounded_channel::<AppEvent>();

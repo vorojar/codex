@@ -60,6 +60,12 @@ pub struct GitDiffToRemote {
     pub diff: String,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct GitBranchDiffStats {
+    pub additions: u64,
+    pub deletions: u64,
+}
+
 /// Collect git repository information from the given working directory using command-line git.
 /// Returns None if no git repository is found or if git operations fail.
 /// Uses timeouts to prevent freezing on large repositories.
@@ -268,6 +274,49 @@ pub async fn git_diff_to_remote(cwd: &Path) -> Option<GitDiffToRemote> {
     })
 }
 
+/// Returns committed branch diff stats relative to the repository's default branch.
+pub async fn branch_diff_stats_to_default_branch(cwd: &Path) -> Option<GitBranchDiffStats> {
+    get_git_repo_root(cwd)?;
+    let default_branch = get_default_branch(cwd).await?;
+    let merge_base =
+        run_git_command_with_timeout(&["merge-base", "HEAD", &default_branch.merge_ref], cwd)
+            .await?;
+    if !merge_base.status.success() {
+        return None;
+    }
+    let merge_base = String::from_utf8(merge_base.stdout).ok()?;
+    let merge_base = merge_base.trim();
+    if merge_base.is_empty() {
+        return None;
+    }
+
+    let range = format!("{merge_base}..HEAD");
+    let numstat = run_git_command_with_timeout(&["diff", "--numstat", &range], cwd).await?;
+    if !numstat.status.success() {
+        return None;
+    }
+    let numstat = String::from_utf8(numstat.stdout).ok()?;
+
+    let mut additions = 0_u64;
+    let mut deletions = 0_u64;
+    for line in numstat.lines() {
+        let mut columns = line.split('\t');
+        additions += columns
+            .next()
+            .and_then(|value| value.parse().ok())
+            .unwrap_or(0);
+        deletions += columns
+            .next()
+            .and_then(|value| value.parse().ok())
+            .unwrap_or(0);
+    }
+
+    Some(GitBranchDiffStats {
+        additions,
+        deletions,
+    })
+}
+
 /// Run a git command with a timeout to prevent blocking on large repositories
 async fn run_git_command_with_timeout(args: &[&str], cwd: &Path) -> Option<std::process::Output> {
     let mut command = Command::new("git");
@@ -301,13 +350,19 @@ async fn get_git_remotes(cwd: &Path) -> Option<Vec<String>> {
     Some(remotes)
 }
 
-/// Attempt to determine the repository's default branch name.
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct DefaultBranch {
+    name: String,
+    merge_ref: String,
+}
+
+/// Attempt to determine the repository's default branch.
 ///
 /// Preference order:
 /// 1) The symbolic ref at `refs/remotes/<remote>/HEAD` for the first remote (origin prioritized)
 /// 2) `git remote show <remote>` parsed for "HEAD branch: <name>"
 /// 3) Local fallback to existing `main` or `master` if present
-async fn get_default_branch(cwd: &Path) -> Option<String> {
+async fn get_default_branch(cwd: &Path) -> Option<DefaultBranch> {
     // Prefer the first remote (with origin prioritized)
     let remotes = get_git_remotes(cwd).await.unwrap_or_default();
     for remote in remotes {
@@ -325,8 +380,14 @@ async fn get_default_branch(cwd: &Path) -> Option<String> {
             && let Ok(sym) = String::from_utf8(symref_output.stdout)
         {
             let trimmed = sym.trim();
-            if let Some((_, name)) = trimmed.rsplit_once('/') {
-                return Some(name.to_string());
+            let remote_ref_prefix = format!("refs/remotes/{remote}/");
+            if let Some(name) = trimmed.strip_prefix(&remote_ref_prefix)
+                && git_ref_exists(cwd, trimmed).await
+            {
+                return Some(DefaultBranch {
+                    name: name.to_string(),
+                    merge_ref: trimmed.to_string(),
+                });
             }
         }
 
@@ -340,8 +401,12 @@ async fn get_default_branch(cwd: &Path) -> Option<String> {
                 let line = line.trim();
                 if let Some(rest) = line.strip_prefix("HEAD branch:") {
                     let name = rest.trim();
-                    if !name.is_empty() {
-                        return Some(name.to_string());
+                    let remote_ref = format!("refs/remotes/{remote}/{name}");
+                    if !name.is_empty() && git_ref_exists(cwd, &remote_ref).await {
+                        return Some(DefaultBranch {
+                            name: name.to_string(),
+                            merge_ref: remote_ref,
+                        });
                     }
                 }
             }
@@ -359,29 +424,28 @@ async fn get_default_branch(cwd: &Path) -> Option<String> {
 /// `master`. Returns `None` when the information cannot be determined, for
 /// example when the current directory is not inside a Git repository.
 pub async fn default_branch_name(cwd: &Path) -> Option<String> {
-    get_default_branch(cwd).await
+    get_default_branch(cwd).await.map(|branch| branch.name)
 }
 
 /// Attempt to determine the repository's default branch name from local branches.
-async fn get_default_branch_local(cwd: &Path) -> Option<String> {
+async fn get_default_branch_local(cwd: &Path) -> Option<DefaultBranch> {
     for candidate in ["main", "master"] {
-        if let Some(verify) = run_git_command_with_timeout(
-            &[
-                "rev-parse",
-                "--verify",
-                "--quiet",
-                &format!("refs/heads/{candidate}"),
-            ],
-            cwd,
-        )
-        .await
-            && verify.status.success()
-        {
-            return Some(candidate.to_string());
+        let local_ref = format!("refs/heads/{candidate}");
+        if git_ref_exists(cwd, &local_ref).await {
+            return Some(DefaultBranch {
+                name: candidate.to_string(),
+                merge_ref: local_ref,
+            });
         }
     }
 
     None
+}
+
+async fn git_ref_exists(cwd: &Path, reference: &str) -> bool {
+    run_git_command_with_timeout(&["rev-parse", "--verify", "--quiet", reference], cwd)
+        .await
+        .is_some_and(|verify| verify.status.success())
 }
 
 /// Build an ancestry of branches starting at the current branch and ending at the
@@ -401,7 +465,7 @@ async fn branch_ancestry(cwd: &Path) -> Option<Vec<String>> {
         .filter(|s| s != "HEAD");
 
     // Discover default branch
-    let default_branch = get_default_branch(cwd).await;
+    let default_branch = get_default_branch(cwd).await.map(|branch| branch.name);
 
     let mut ancestry: Vec<String> = Vec::new();
     let mut seen: HashSet<String> = HashSet::new();
@@ -703,7 +767,9 @@ pub async fn local_git_branches(cwd: &Path) -> Vec<String> {
 
     branches.sort_unstable();
 
-    if let Some(base) = get_default_branch_local(cwd).await
+    if let Some(base) = get_default_branch_local(cwd)
+        .await
+        .map(|branch| branch.name)
         && let Some(pos) = branches.iter().position(|name| name == &base)
     {
         let base_branch = branches.remove(pos);
@@ -723,4 +789,92 @@ pub async fn current_branch_name(cwd: &Path) -> Option<String> {
         .ok()
         .map(|s| s.trim().to_string())
         .filter(|name| !name.is_empty())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use pretty_assertions::assert_eq;
+    use std::process::Command as StdCommand;
+
+    #[tokio::test]
+    async fn branch_diff_stats_prefers_remote_default_ref_over_stale_local_branch() {
+        let temp_dir = tempfile::tempdir().expect("create temp dir");
+        let repo = temp_dir.path();
+
+        git(repo, &["init"]);
+        git(repo, &["checkout", "-b", "main"]);
+        git(repo, &["config", "user.email", "codex@example.com"]);
+        git(repo, &["config", "user.name", "Codex"]);
+
+        commit_file(repo, "shared.txt", "base\n", "base");
+        let stale_main_sha = git_stdout(repo, &["rev-parse", "HEAD"]);
+
+        commit_file(repo, "default.txt", "default branch change\n", "default");
+        git(
+            repo,
+            &[
+                "remote",
+                "add",
+                "origin",
+                "https://github.com/example/repo.git",
+            ],
+        );
+        git(repo, &["update-ref", "refs/remotes/origin/main", "HEAD"]);
+        git(
+            repo,
+            &[
+                "symbolic-ref",
+                "refs/remotes/origin/HEAD",
+                "refs/remotes/origin/main",
+            ],
+        );
+
+        git(repo, &["checkout", "-b", "feature"]);
+        git(repo, &["update-ref", "refs/heads/main", &stale_main_sha]);
+        commit_file(repo, "feature.txt", "feature branch change\n", "feature");
+
+        let stats = branch_diff_stats_to_default_branch(repo)
+            .await
+            .expect("branch diff stats");
+
+        assert_eq!(
+            stats,
+            GitBranchDiffStats {
+                additions: 1,
+                deletions: 0,
+            }
+        );
+    }
+
+    fn commit_file(repo: &Path, file_name: &str, contents: &str, message: &str) {
+        std::fs::write(repo.join(file_name), contents).expect("write file");
+        git(repo, &["add", file_name]);
+        git(repo, &["commit", "-m", message]);
+    }
+
+    fn git_stdout(repo: &Path, args: &[&str]) -> String {
+        let output = git_output(repo, args);
+        String::from_utf8(output.stdout)
+            .expect("git stdout is utf8")
+            .trim()
+            .to_string()
+    }
+
+    fn git(repo: &Path, args: &[&str]) {
+        let output = git_output(repo, args);
+        assert!(
+            output.status.success(),
+            "git {args:?} failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
+    fn git_output(repo: &Path, args: &[&str]) -> std::process::Output {
+        StdCommand::new("git")
+            .args(args)
+            .current_dir(repo)
+            .output()
+            .expect("run git")
+    }
 }
