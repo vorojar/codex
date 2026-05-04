@@ -1,5 +1,6 @@
 use super::*;
 use codex_app_server_protocol::PluginAvailability;
+use codex_protocol::config_types::CollaborationModeMask;
 use pretty_assertions::assert_eq;
 
 pub(super) async fn test_config() -> Config {
@@ -136,7 +137,18 @@ pub(super) fn test_session_telemetry(config: &Config, model: &str) -> SessionTel
 pub(super) fn test_model_catalog(_config: &Config) -> Arc<ModelCatalog> {
     Arc::new(ModelCatalog::new(
         crate::legacy_core::test_support::all_model_presets().clone(),
+        test_collaboration_mode_presets(),
     ))
+}
+
+fn test_collaboration_mode_presets() -> Vec<CollaborationModeMask> {
+    crate::legacy_core::test_support::builtin_collaboration_mode_presets()
+        .into_iter()
+        .map(|mut preset| {
+            preset.developer_instructions = None;
+            preset
+        })
+        .collect()
 }
 
 // --- Helpers for tests that need direct construction and event draining ---
@@ -437,7 +449,7 @@ pub(crate) fn set_fast_mode_test_catalog(chat: &mut ChatWidget) {
     .map(Into::into)
     .collect();
 
-    chat.model_catalog = Arc::new(ModelCatalog::new(models));
+    chat.model_catalog = Arc::new(ModelCatalog::new(models, test_collaboration_mode_presets()));
 }
 
 pub(crate) async fn make_chatwidget_manual_with_sender() -> (

@@ -20,6 +20,9 @@ use codex_app_server_protocol::Account;
 use codex_app_server_protocol::AskForApproval;
 use codex_app_server_protocol::AuthMode;
 use codex_app_server_protocol::ClientRequest;
+use codex_app_server_protocol::CollaborationModeListParams;
+use codex_app_server_protocol::CollaborationModeListResponse;
+use codex_app_server_protocol::CollaborationModeMask as ApiCollaborationModeMask;
 use codex_app_server_protocol::ConfigBatchWriteParams;
 use codex_app_server_protocol::ConfigWriteResponse;
 use codex_app_server_protocol::ExternalAgentConfigDetectParams;
@@ -105,6 +108,7 @@ use codex_app_server_protocol::UserInput;
 use codex_otel::TelemetryAuthMode;
 use codex_protocol::ThreadId;
 use codex_protocol::approvals::GuardianAssessmentEvent;
+use codex_protocol::config_types::CollaborationModeMask;
 use codex_protocol::models::ActivePermissionProfile;
 use codex_protocol::models::ActivePermissionProfileModification;
 use codex_protocol::models::PermissionProfile;
@@ -143,6 +147,7 @@ pub(crate) struct AppServerBootstrap {
     pub(crate) feedback_audience: FeedbackAudience,
     pub(crate) has_chatgpt_account: bool,
     pub(crate) available_models: Vec<ModelPreset>,
+    pub(crate) collaboration_modes: Vec<CollaborationModeMask>,
 }
 
 pub(crate) struct AppServerSession {
@@ -215,6 +220,22 @@ impl AppServerSession {
             .into_iter()
             .map(model_preset_from_api_model)
             .collect::<Vec<_>>();
+        let collaboration_modes_request_id = self.next_request_id();
+        let collaboration_modes: CollaborationModeListResponse = self
+            .client
+            .request_typed(ClientRequest::CollaborationModeList {
+                request_id: collaboration_modes_request_id,
+                params: CollaborationModeListParams::default(),
+            })
+            .await
+            .map_err(|err| {
+                bootstrap_request_error("collaborationMode/list failed during TUI bootstrap", err)
+            })?;
+        let collaboration_modes = collaboration_modes
+            .data
+            .into_iter()
+            .map(collaboration_mode_mask_from_api_mask)
+            .collect::<Vec<_>>();
         let default_model = config
             .model
             .clone()
@@ -276,6 +297,7 @@ impl AppServerSession {
             feedback_audience,
             has_chatgpt_account,
             available_models,
+            collaboration_modes,
         })
     }
 
@@ -1055,6 +1077,16 @@ fn model_preset_from_api_model(model: ApiModel) -> ModelPreset {
         // `model/list` already returns models filtered for the active client/auth context.
         supported_in_api: true,
         input_modalities: model.input_modalities,
+    }
+}
+
+fn collaboration_mode_mask_from_api_mask(mask: ApiCollaborationModeMask) -> CollaborationModeMask {
+    CollaborationModeMask {
+        name: mask.name,
+        mode: mask.mode,
+        model: mask.model,
+        reasoning_effort: mask.reasoning_effort,
+        developer_instructions: None,
     }
 }
 
