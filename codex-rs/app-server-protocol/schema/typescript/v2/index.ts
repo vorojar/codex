@@ -363,6 +363,7 @@ export type { ThreadInjectItemsResponse } from "./ThreadInjectItemsResponse";
 export type { ThreadItem } from "./ThreadItem";
 export type { ThreadListParams } from "./ThreadListParams";
 export type { ThreadListResponse } from "./ThreadListResponse";
+export type { ThreadListSearchMode } from "./ThreadListSearchMode";
 export type { ThreadLoadedListParams } from "./ThreadLoadedListParams";
 export type { ThreadLoadedListResponse } from "./ThreadLoadedListResponse";
 export type { ThreadMetadataGitInfoUpdateParams } from "./ThreadMetadataGitInfoUpdateParams";

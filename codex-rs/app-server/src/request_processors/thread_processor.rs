@@ -9,6 +9,7 @@ struct ThreadListFilters {
     archived: bool,
     cwd_filters: Option<Vec<PathBuf>>,
     search_term: Option<String>,
+    search_mode: Option<ThreadListSearchMode>,
     use_state_db_only: bool,
 }
 
@@ -1826,6 +1827,7 @@ impl ThreadRequestProcessor {
             cwd,
             use_state_db_only,
             search_term,
+            search_mode,
         } = params;
         let cwd_filters = normalize_thread_list_cwd_filters(cwd)?;
 
@@ -1850,6 +1852,7 @@ impl ThreadRequestProcessor {
                     archived: archived.unwrap_or(false),
                     cwd_filters,
                     search_term,
+                    search_mode,
                     use_state_db_only,
                 },
             )
@@ -3228,6 +3231,7 @@ impl ThreadRequestProcessor {
             archived,
             cwd_filters,
             search_term,
+            search_mode,
             use_state_db_only,
         } = filters;
         let mut cursor_obj = cursor;
@@ -3287,6 +3291,12 @@ impl ThreadRequestProcessor {
                             path_utils::paths_match_after_normalization(&it.cwd, expected_cwd)
                         })
                     })
+                    && match (search_mode, search_term.as_deref()) {
+                        (Some(ThreadListSearchMode::Exact), Some(search_term)) => {
+                            it.name.as_deref() == Some(search_term)
+                        }
+                        _ => true,
+                    }
                 {
                     filtered.push(it);
                     if filtered.len() >= remaining {

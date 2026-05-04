@@ -3628,6 +3628,17 @@
             "null"
           ]
         },
+        "searchMode": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/ThreadListSearchMode"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Optional search matching mode. Defaults to substring matching."
+        },
         "searchTerm": {
           "description": "Optional substring filter for the extracted thread title.",
           "type": [
@@ -3673,6 +3684,13 @@
         }
       },
       "type": "object"
+    },
+    "ThreadListSearchMode": {
+      "enum": [
+        "contains",
+        "exact"
+      ],
+      "type": "string"
     },
     "ThreadLoadedListParams": {
       "properties": {

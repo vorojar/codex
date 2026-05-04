@@ -32,6 +32,7 @@ use codex_app_server_protocol::ConfigWarningNotification;
 use codex_app_server_protocol::Thread as AppServerThread;
 use codex_app_server_protocol::ThreadListCwdFilter;
 use codex_app_server_protocol::ThreadListParams;
+use codex_app_server_protocol::ThreadListSearchMode;
 use codex_app_server_protocol::ThreadSortKey as AppServerThreadSortKey;
 use codex_app_server_protocol::ThreadSourceKind;
 use codex_cloud_requirements::cloud_requirements_loader_for_storage;
@@ -546,34 +547,26 @@ async fn lookup_session_target_by_name_with_app_server(
     app_server: &mut AppServerSession,
     name: &str,
 ) -> color_eyre::Result<Option<resume_picker::SessionTarget>> {
-    let mut cursor = None;
-    loop {
-        let response = app_server
-            .thread_list(ThreadListParams {
-                cursor: cursor.clone(),
-                limit: Some(100),
-                sort_key: Some(AppServerThreadSortKey::UpdatedAt),
-                sort_direction: None,
-                model_providers: None,
-                source_kinds: Some(vec![ThreadSourceKind::Cli, ThreadSourceKind::VsCode]),
-                archived: Some(false),
-                cwd: None,
-                use_state_db_only: false,
-                search_term: Some(name.to_string()),
-            })
-            .await?;
-        if let Some(thread) = response
-            .data
-            .into_iter()
-            .find(|thread| thread.name.as_deref() == Some(name))
-        {
-            return Ok(session_target_from_app_server_thread(thread));
-        }
-        if response.next_cursor.is_none() {
-            return Ok(None);
-        }
-        cursor = response.next_cursor;
-    }
+    let response = app_server
+        .thread_list(ThreadListParams {
+            cursor: None,
+            limit: Some(100),
+            sort_key: Some(AppServerThreadSortKey::UpdatedAt),
+            sort_direction: None,
+            model_providers: None,
+            source_kinds: Some(vec![ThreadSourceKind::Cli, ThreadSourceKind::VsCode]),
+            archived: Some(false),
+            cwd: None,
+            use_state_db_only: false,
+            search_term: Some(name.to_string()),
+            search_mode: Some(ThreadListSearchMode::Exact),
+        })
+        .await?;
+    Ok(response
+        .data
+        .into_iter()
+        .next()
+        .and_then(session_target_from_app_server_thread))
 }
 
 async fn lookup_session_target_with_app_server(
@@ -653,6 +646,7 @@ fn latest_session_lookup_params(
         cwd: cwd_filter.map(|cwd| ThreadListCwdFilter::One(cwd.to_string_lossy().to_string())),
         use_state_db_only: false,
         search_term: None,
+        search_mode: None,
     }
 }
 
@@ -2045,6 +2039,29 @@ mod tests {
             metadata.first_user_message = Some("preview text".to_string());
             state_runtime
                 .upsert_thread(&metadata)
+                .await
+                .map_err(std::io::Error::other)?;
+            let newer_thread_id = ThreadId::new();
+            let newer_rollout_path = temp_dir.path().join("sessions/2025/02/01").join(format!(
+                "rollout-2025-02-01T11-00-00-{newer_thread_id}.jsonl"
+            ));
+            std::fs::write(&newer_rollout_path, "")?;
+            let newer_created_at = chrono::DateTime::parse_from_rfc3339("2025-02-01T11:00:00Z")
+                .expect("timestamp should parse")
+                .with_timezone(&chrono::Utc);
+            let mut newer_builder = codex_state::ThreadMetadataBuilder::new(
+                newer_thread_id,
+                newer_rollout_path,
+                newer_created_at,
+                serde_json::from_value(serde_json::json!("cli"))
+                    .expect("cli session source should deserialize"),
+            );
+            newer_builder.cwd = temp_dir.path().join("other-project");
+            let mut newer_metadata = newer_builder.build(config.model_provider_id.as_str());
+            newer_metadata.title = "saved-session-copy".to_string();
+            newer_metadata.first_user_message = Some("other preview text".to_string());
+            state_runtime
+                .upsert_thread(&newer_metadata)
                 .await
                 .map_err(std::io::Error::other)?;
 

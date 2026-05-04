@@ -14009,6 +14009,17 @@
             "null"
           ]
         },
+        "searchMode": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/ThreadListSearchMode"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Optional search matching mode. Defaults to substring matching."
+        },
         "searchTerm": {
           "description": "Optional substring filter for the extracted thread title.",
           "type": [
@@ -14085,6 +14096,13 @@
       ],
       "title": "ThreadListResponse",
       "type": "object"
+    },
+    "ThreadListSearchMode": {
+      "enum": [
+        "contains",
+        "exact"
+      ],
+      "type": "string"
     },
     "ThreadLoadedListParams": {
       "$schema": "http://json-schema.org/draft-07/schema#",

@@ -690,6 +690,7 @@ async fn thread_fork_ephemeral_remains_pathless_and_omits_listing() -> Result<()
             cwd: None,
             use_state_db_only: false,
             search_term: None,
+            search_mode: None,
         })
         .await?;
     let list_resp: JSONRPCResponse = timeout(

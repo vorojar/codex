@@ -17,6 +17,7 @@ use codex_app_server_protocol::SessionSource;
 use codex_app_server_protocol::SortDirection;
 use codex_app_server_protocol::ThreadListCwdFilter;
 use codex_app_server_protocol::ThreadListResponse;
+use codex_app_server_protocol::ThreadListSearchMode;
 use codex_app_server_protocol::ThreadSortKey;
 use codex_app_server_protocol::ThreadSourceKind;
 use codex_app_server_protocol::ThreadStartParams;
@@ -93,6 +94,7 @@ async fn list_threads_with_sort(
             cwd: None,
             use_state_db_only: false,
             search_term: None,
+            search_mode: None,
         })
         .await?;
     let resp: JSONRPCResponse = timeout(
@@ -533,6 +535,7 @@ async fn thread_list_respects_cwd_filters() -> Result<()> {
             ])),
             use_state_db_only: false,
             search_term: None,
+            search_mode: None,
         })
         .await?;
     let resp: JSONRPCResponse = timeout(
@@ -628,6 +631,13 @@ sqlite = true
     )
     .await?;
     assert_eq!(repaired_page.items.len(), 3);
+    let exact_thread_id = ThreadId::from_string(&newer_match)?;
+    let mut exact_metadata = state_db
+        .get_thread(exact_thread_id)
+        .await?
+        .expect("exact match metadata should be present");
+    exact_metadata.title = "needle exact".to_string();
+    state_db.upsert_thread(&exact_metadata).await?;
 
     let mut mcp = init_mcp(codex_home.path()).await?;
     let request_id = mcp
@@ -642,6 +652,7 @@ sqlite = true
             cwd: None,
             use_state_db_only: false,
             search_term: Some("needle".to_string()),
+            search_mode: None,
         })
         .await?;
     let resp: JSONRPCResponse = timeout(
@@ -656,6 +667,36 @@ sqlite = true
     assert_eq!(next_cursor, None);
     let ids: Vec<_> = data.iter().map(|thread| thread.id.as_str()).collect();
     assert_eq!(ids, vec![newer_match, older_match]);
+
+    let exact_request_id = mcp
+        .send_thread_list_request(codex_app_server_protocol::ThreadListParams {
+            cursor: None,
+            limit: Some(10),
+            sort_key: None,
+            sort_direction: None,
+            model_providers: Some(vec!["mock_provider".to_string()]),
+            source_kinds: None,
+            archived: None,
+            cwd: None,
+            use_state_db_only: false,
+            search_term: Some("needle exact".to_string()),
+            search_mode: Some(ThreadListSearchMode::Exact),
+        })
+        .await?;
+    let exact_resp: JSONRPCResponse = timeout(
+        DEFAULT_READ_TIMEOUT,
+        mcp.read_stream_until_response_message(RequestId::Integer(exact_request_id)),
+    )
+    .await??;
+    let ThreadListResponse {
+        data: exact_data,
+        next_cursor: exact_next_cursor,
+        ..
+    } = to_response::<ThreadListResponse>(exact_resp)?;
+
+    assert_eq!(exact_next_cursor, None);
+    let exact_ids: Vec<_> = exact_data.iter().map(|thread| thread.id.as_str()).collect();
+    assert_eq!(exact_ids, vec![newer_match]);
 
     Ok(())
 }
@@ -703,6 +744,7 @@ sqlite = true
             cwd: None,
             use_state_db_only: false,
             search_term: None,
+            search_mode: None,
         })
         .await?;
     let resp: JSONRPCResponse = timeout(
@@ -741,6 +783,7 @@ sqlite = true
             )),
             use_state_db_only: true,
             search_term: None,
+            search_mode: None,
         })
         .await?;
     let resp: JSONRPCResponse = timeout(
@@ -770,6 +813,7 @@ sqlite = true
             )),
             use_state_db_only: false,
             search_term: None,
+            search_mode: None,
         })
         .await?;
     let resp: JSONRPCResponse = timeout(
@@ -1464,6 +1508,7 @@ async fn thread_list_backwards_cursor_can_seed_forward_delta_sync() -> Result<()
                 cwd: None,
                 use_state_db_only: false,
                 search_term: None,
+                search_mode: None,
             })
             .await?;
         let resp: JSONRPCResponse = timeout(
@@ -1506,6 +1551,7 @@ async fn thread_list_backwards_cursor_can_seed_forward_delta_sync() -> Result<()
                 cwd: None,
                 use_state_db_only: false,
                 search_term: None,
+                search_mode: None,
             })
             .await?;
         let resp: JSONRPCResponse = timeout(
@@ -1744,6 +1790,7 @@ async fn thread_list_invalid_cursor_returns_error() -> Result<()> {
             cwd: None,
             use_state_db_only: false,
             search_term: None,
+            search_mode: None,
         })
         .await?;
     let error: JSONRPCError = timeout(

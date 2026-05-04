@@ -4325,6 +4325,9 @@ pub struct ThreadListParams {
     /// Optional substring filter for the extracted thread title.
     #[ts(optional = nullable)]
     pub search_term: Option<String>,
+    /// Optional search matching mode. Defaults to substring matching.
+    #[ts(optional = nullable)]
+    pub search_mode: Option<ThreadListSearchMode>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, JsonSchema)]
@@ -4332,6 +4335,14 @@ pub struct ThreadListParams {
 pub enum ThreadListCwdFilter {
     One(String),
     Many(Vec<String>),
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(rename_all = "camelCase", export_to = "v2/")]
+pub enum ThreadListSearchMode {
+    Contains,
+    Exact,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, JsonSchema, TS)]
@@ -8234,10 +8245,12 @@ mod tests {
     fn thread_list_params_accepts_state_db_only_flag() {
         let params = serde_json::from_value::<ThreadListParams>(json!({
             "useStateDbOnly": true,
+            "searchMode": "exact",
         }))
         .expect("state db only flag should deserialize");
 
         assert!(params.use_state_db_only);
+        assert_eq!(params.search_mode, Some(ThreadListSearchMode::Exact));
     }
 
     #[test]
