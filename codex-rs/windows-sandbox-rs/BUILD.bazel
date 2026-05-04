@@ -7,4 +7,5 @@ codex_rust_crate(
         "Cargo.toml",
         "codex-windows-sandbox-setup.manifest",
     ],
+    unit_test_timeout = "long",
 )
