@@ -1119,7 +1119,7 @@ async fn read_head_summary(path: &Path, head_limit: usize) -> io::Result<HeadTai
                     summary.saw_session_meta = true;
                 }
             }
-            RolloutItem::ForkReference(_) => {
+            RolloutItem::ForkReference(_) | RolloutItem::RolloutReference(_) => {
                 // Not included in summaries; skip.
             }
             RolloutItem::ResponseItem(_) => {
@@ -1186,6 +1186,7 @@ pub async fn read_head_for_summary(path: &Path) -> io::Result<Vec<serde_json::Va
                     }
                 }
                 RolloutItem::ForkReference(_)
+                | RolloutItem::RolloutReference(_)
                 | RolloutItem::Compacted(_)
                 | RolloutItem::TurnContext(_)
                 | RolloutItem::EventMsg(_) => {}
@@ -1422,6 +1423,41 @@ async fn find_rollout_path_by_segment_id_in_subdir(
 pub async fn resolve_fork_reference_rollout_path(
     codex_home: &Path,
     reference: &codex_protocol::protocol::ForkReferenceItem,
+) -> io::Result<PathBuf> {
+    if let (Some(thread_id), Some(segment_id)) = (reference.thread_id, reference.segment_id)
+        && let Some(path) =
+            find_rollout_path_by_segment_id(codex_home, thread_id, segment_id).await?
+    {
+        return Ok(path);
+    }
+
+    let rollout_path = reference.rollout_path.as_path();
+    if tokio::fs::try_exists(rollout_path).await.unwrap_or(false) {
+        return Ok(rollout_path.to_path_buf());
+    }
+
+    let Some(file_name) = rollout_path
+        .file_name()
+        .and_then(|file_name| file_name.to_str())
+    else {
+        return Ok(rollout_path.to_path_buf());
+    };
+    let Some((_, uuid)) = parse_timestamp_uuid_from_filename(file_name) else {
+        return Ok(rollout_path.to_path_buf());
+    };
+    let id = uuid.to_string();
+    if let Some(path) = find_thread_path_by_id_str(codex_home, id.as_str()).await? {
+        return Ok(path);
+    }
+    if let Some(path) = find_archived_thread_path_by_id_str(codex_home, id.as_str()).await? {
+        return Ok(path);
+    }
+    Ok(rollout_path.to_path_buf())
+}
+
+pub async fn resolve_rollout_reference_rollout_path(
+    codex_home: &Path,
+    reference: &codex_protocol::protocol::RolloutReferenceItem,
 ) -> io::Result<PathBuf> {
     if let (Some(thread_id), Some(segment_id)) = (reference.thread_id, reference.segment_id)
         && let Some(path) =

@@ -8,6 +8,7 @@ use codex_protocol::models::ReasoningItemReasoningSummary;
 use codex_protocol::protocol::ForkReferenceItem;
 use codex_protocol::protocol::InterAgentCommunication;
 use codex_protocol::protocol::RolloutLine;
+use codex_protocol::protocol::RolloutReferenceItem;
 use codex_protocol::protocol::SessionMeta;
 use codex_protocol::protocol::SessionMetaLine;
 use codex_protocol::protocol::ThreadRolledBackEvent;
@@ -242,6 +243,73 @@ async fn materializes_fork_reference_by_segment_id_after_source_rollover() {
     assert!(text.contains("old segment request"));
     assert!(!text.contains("new segment request"));
     assert!(text.contains("child request"));
+}
+
+#[tokio::test]
+async fn materializes_rollout_reference_with_bounded_depth() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let thread_id = ThreadId::new();
+    let oldest_segment_id = SegmentId::new();
+    let old_segment_id = SegmentId::new();
+    let middle_segment_id = SegmentId::new();
+
+    let oldest_path = temp.path().join("oldest.jsonl");
+    let old_path = temp.path().join("old.jsonl");
+    let middle_path = temp.path().join("middle.jsonl");
+
+    write_rollout(
+        &oldest_path,
+        &[
+            session_meta_item(thread_id, oldest_segment_id),
+            RolloutItem::ResponseItem(user_msg("oldest segment request")),
+        ],
+    )
+    .await;
+    write_rollout(
+        &old_path,
+        &[
+            session_meta_item(thread_id, old_segment_id),
+            RolloutItem::RolloutReference(RolloutReferenceItem {
+                rollout_path: oldest_path,
+                thread_id: None,
+                segment_id: None,
+                max_depth: 2,
+            }),
+            RolloutItem::ResponseItem(user_msg("old segment request")),
+        ],
+    )
+    .await;
+    write_rollout(
+        &middle_path,
+        &[
+            session_meta_item(thread_id, middle_segment_id),
+            RolloutItem::RolloutReference(RolloutReferenceItem {
+                rollout_path: old_path,
+                thread_id: None,
+                segment_id: None,
+                max_depth: 2,
+            }),
+            RolloutItem::ResponseItem(user_msg("middle segment request")),
+        ],
+    )
+    .await;
+
+    let current_items = vec![
+        RolloutItem::RolloutReference(RolloutReferenceItem {
+            rollout_path: middle_path,
+            thread_id: None,
+            segment_id: None,
+            max_depth: 2,
+        }),
+        RolloutItem::ResponseItem(user_msg("current segment request")),
+    ];
+    let materialized = materialize_rollout_items_for_replay(temp.path(), &current_items).await;
+    let text = serde_json::to_string(&materialized).expect("serialize materialized rollout");
+
+    assert!(!text.contains("oldest segment request"));
+    assert!(text.contains("old segment request"));
+    assert!(text.contains("middle segment request"));
+    assert!(text.contains("current segment request"));
 }
 
 #[test]

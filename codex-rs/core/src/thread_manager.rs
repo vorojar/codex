@@ -1416,6 +1416,7 @@ fn fork_reference_history_for_snapshot(
         RolloutItem::Compacted(_)
         | RolloutItem::EventMsg(_)
         | RolloutItem::ForkReference(_)
+        | RolloutItem::RolloutReference(_)
         | RolloutItem::ResponseItem(_)
         | RolloutItem::TurnContext(_) => None,
     });
@@ -1427,6 +1428,7 @@ fn fork_reference_history_for_snapshot(
             RolloutItem::Compacted(_)
             | RolloutItem::EventMsg(_)
             | RolloutItem::ForkReference(_)
+            | RolloutItem::RolloutReference(_)
             | RolloutItem::ResponseItem(_)
             | RolloutItem::TurnContext(_) => None,
         })

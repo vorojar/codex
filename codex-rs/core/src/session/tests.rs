@@ -2879,6 +2879,72 @@ async fn attach_thread_persistence(session: &mut Session) -> PathBuf {
         .expect("thread should have rollout path")
 }
 
+#[tokio::test]
+async fn replace_compacted_history_rotates_local_rollout_segment() {
+    let (mut sess, tc, _) = make_session_and_context_with_rx().await;
+    let sess = Arc::get_mut(&mut sess).expect("session should not have additional references");
+    let old_rollout_path = attach_thread_persistence(sess).await;
+    sess.persist_rollout_items(&[
+        RolloutItem::ResponseItem(user_message("before compaction")),
+        RolloutItem::ResponseItem(assistant_message("before compaction answer")),
+    ])
+    .await;
+    sess.flush_rollout()
+        .await
+        .expect("pre-compaction rollout should flush");
+    let replacement_history = vec![user_message("compacted summary")];
+
+    sess.replace_compacted_history(
+        replacement_history.clone(),
+        Some(tc.to_turn_context_item()),
+        CompactedItem {
+            message: "compacted summary".to_string(),
+            replacement_history: Some(replacement_history.clone()),
+        },
+    )
+    .await;
+
+    let new_rollout_path = sess
+        .current_rollout_path()
+        .await
+        .expect("load current rollout path")
+        .expect("rollout path after compaction");
+    assert_ne!(new_rollout_path, old_rollout_path);
+    let (new_items, new_thread_id, _) =
+        RolloutRecorder::load_rollout_items(new_rollout_path.as_path())
+            .await
+            .expect("load new rollout segment");
+    assert_eq!(new_thread_id, Some(sess.conversation_id));
+    assert!(new_items.iter().any(|item| {
+        matches!(
+            item,
+            RolloutItem::RolloutReference(reference)
+                if reference.rollout_path == old_rollout_path
+                    && reference.thread_id == Some(sess.conversation_id)
+        )
+    }));
+    assert!(new_items.iter().any(|item| {
+        matches!(
+            item,
+            RolloutItem::Compacted(CompactedItem {
+                replacement_history: Some(history),
+                ..
+            }) if *history == replacement_history
+        )
+    }));
+
+    let config = sess.get_config().await;
+    let replay_items = crate::thread_rollout_truncation::materialize_rollout_items_for_replay(
+        config.codex_home.as_path(),
+        &new_items,
+    )
+    .await;
+    let reconstructed = sess
+        .reconstruct_history_from_rollout(tc.as_ref(), &replay_items)
+        .await;
+    assert_eq!(reconstructed.history, replacement_history);
+}
+
 fn text_block(s: &str) -> serde_json::Value {
     json!({
         "type": "text",

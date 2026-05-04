@@ -4039,7 +4039,12 @@ impl CodexMessageProcessor {
                 let (mut thread, history) =
                     thread_from_stored_thread(stored_thread, fallback_provider, &self.config.cwd);
                 if include_turns && let Some(history) = history {
-                    thread.turns = build_turns_from_rollout_items(&history.items);
+                    let items = codex_core::materialize_rollout_items_for_replay(
+                        &self.config.codex_home,
+                        &history.items,
+                    )
+                    .await;
+                    thread.turns = build_turns_from_rollout_items(&items);
                 }
                 Ok(Some(thread))
             }

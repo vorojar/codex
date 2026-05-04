@@ -287,6 +287,7 @@ async fn recorder_materializes_on_flush_with_pending_items() -> std::io::Result<
     let segment_id = items.iter().find_map(|item| match item {
         RolloutItem::SessionMeta(meta) => meta.meta.segment_id,
         RolloutItem::ForkReference(_)
+        | RolloutItem::RolloutReference(_)
         | RolloutItem::ResponseItem(_)
         | RolloutItem::Compacted(_)
         | RolloutItem::TurnContext(_)

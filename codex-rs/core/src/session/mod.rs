@@ -101,6 +101,7 @@ use codex_protocol::models::format_allow_prefixes;
 use codex_protocol::openai_models::ModelInfo;
 use codex_protocol::permissions::FileSystemSandboxPolicy;
 use codex_protocol::permissions::NetworkSandboxPolicy;
+use codex_protocol::protocol::DEFAULT_ROLLOUT_REFERENCE_DEPTH;
 use codex_protocol::protocol::FileChange;
 use codex_protocol::protocol::HasLegacyEvent;
 use codex_protocol::protocol::InterAgentCommunication;
@@ -135,6 +136,7 @@ use codex_thread_store::LiveThread;
 use codex_thread_store::LiveThreadInitGuard;
 use codex_thread_store::LocalThreadStore;
 use codex_thread_store::ResumeThreadParams;
+use codex_thread_store::RotateThreadSegmentParams;
 use codex_thread_store::ThreadEventPersistenceMode;
 use codex_thread_store::ThreadPersistenceMetadata;
 use codex_thread_store::ThreadStore;
@@ -1245,9 +1247,12 @@ impl Session {
             let state = self.state.lock().await;
             state.session_configuration.codex_home().clone()
         };
-        let replay_rollout_items = if conversation_history
-            .scan_rollout_items(|item| matches!(item, RolloutItem::ForkReference(_)))
-        {
+        let replay_rollout_items = if conversation_history.scan_rollout_items(|item| {
+            matches!(
+                item,
+                RolloutItem::ForkReference(_) | RolloutItem::RolloutReference(_)
+            )
+        }) {
             Some(
                 materialize_rollout_items_for_replay(
                     codex_home.as_path(),
@@ -2599,13 +2604,68 @@ impl Session {
         self.replace_history(items, reference_context_item.clone())
             .await;
 
-        self.persist_rollout_items(&[RolloutItem::Compacted(compacted_item)])
-            .await;
+        let mut rollout_items = vec![RolloutItem::Compacted(compacted_item)];
         if let Some(turn_context_item) = reference_context_item {
-            self.persist_rollout_items(&[RolloutItem::TurnContext(turn_context_item)])
-                .await;
+            rollout_items.push(RolloutItem::TurnContext(turn_context_item));
+        }
+        if !self
+            .rotate_rollout_segment_after_compaction(rollout_items.clone())
+            .await
+        {
+            self.persist_rollout_items(&rollout_items).await;
         }
         self.services.model_client.advance_window_generation();
+    }
+
+    async fn rotate_rollout_segment_after_compaction(
+        &self,
+        initial_items: Vec<RolloutItem>,
+    ) -> bool {
+        let Some(live_thread) = self.live_thread() else {
+            return false;
+        };
+        let params = {
+            let state = self.state.lock().await;
+            let session_configuration = &state.session_configuration;
+            let event_persistence_mode = if session_configuration.persist_extended_history {
+                ThreadEventPersistenceMode::Extended
+            } else {
+                ThreadEventPersistenceMode::Limited
+            };
+            RotateThreadSegmentParams {
+                source: session_configuration.session_source.clone(),
+                base_instructions: BaseInstructions {
+                    text: session_configuration.base_instructions.clone(),
+                },
+                dynamic_tools: session_configuration.dynamic_tools.clone(),
+                metadata: ThreadPersistenceMetadata {
+                    cwd: Some(session_configuration.cwd.to_path_buf()),
+                    model_provider: session_configuration
+                        .original_config_do_not_use
+                        .model_provider_id
+                        .clone(),
+                    memory_mode: if session_configuration
+                        .original_config_do_not_use
+                        .memories
+                        .generate_memories
+                    {
+                        ThreadMemoryMode::Enabled
+                    } else {
+                        ThreadMemoryMode::Disabled
+                    },
+                },
+                event_persistence_mode,
+                initial_items,
+                previous_segment_reference_depth: DEFAULT_ROLLOUT_REFERENCE_DEPTH,
+            }
+        };
+        match live_thread.rotate_local_segment(params).await {
+            Ok(rotated) => rotated,
+            Err(err) => {
+                warn!("failed to rotate rollout segment after compaction: {err:#}");
+                false
+            }
+        }
     }
 
     async fn persist_rollout_response_items(&self, items: &[ResponseItem]) {

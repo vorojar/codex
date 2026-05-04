@@ -164,6 +164,7 @@ fn keep_forked_rollout_item(item: &RolloutItem) -> bool {
         RolloutItem::Compacted(_)
         | RolloutItem::EventMsg(_)
         | RolloutItem::ForkReference(_)
+        | RolloutItem::RolloutReference(_)
         | RolloutItem::SessionMeta(_) => true,
     }
 }
@@ -177,6 +178,7 @@ fn full_history_fork_reference_items(
         RolloutItem::Compacted(_)
         | RolloutItem::EventMsg(_)
         | RolloutItem::ForkReference(_)
+        | RolloutItem::RolloutReference(_)
         | RolloutItem::ResponseItem(_)
         | RolloutItem::TurnContext(_) => None,
     });
@@ -187,6 +189,7 @@ fn full_history_fork_reference_items(
             RolloutItem::Compacted(_)
             | RolloutItem::EventMsg(_)
             | RolloutItem::ForkReference(_)
+            | RolloutItem::RolloutReference(_)
             | RolloutItem::ResponseItem(_)
             | RolloutItem::TurnContext(_) => None,
         })
@@ -1841,6 +1844,7 @@ fn previous_response_fork_rollout_items(
     let source_session_meta = source_items.iter().find_map(|item| match item {
         RolloutItem::SessionMeta(meta) => Some(meta.clone()),
         RolloutItem::ForkReference(_)
+        | RolloutItem::RolloutReference(_)
         | RolloutItem::ResponseItem(_)
         | RolloutItem::Compacted(_)
         | RolloutItem::TurnContext(_)
@@ -1849,6 +1853,7 @@ fn previous_response_fork_rollout_items(
     let latest_turn_context = source_items.iter().rev().find_map(|item| match item {
         RolloutItem::TurnContext(turn_context) => Some(turn_context.clone()),
         RolloutItem::ForkReference(_)
+        | RolloutItem::RolloutReference(_)
         | RolloutItem::ResponseItem(_)
         | RolloutItem::Compacted(_)
         | RolloutItem::SessionMeta(_)

@@ -23,6 +23,7 @@ pub use codex_rollout::parse_cursor;
 pub use codex_rollout::read_head_for_summary;
 pub use codex_rollout::read_session_meta_line;
 pub use codex_rollout::resolve_fork_reference_rollout_path;
+pub use codex_rollout::resolve_rollout_reference_rollout_path;
 pub use codex_rollout::rollout_date_parts;
 
 impl codex_rollout::RolloutConfigView for Config {

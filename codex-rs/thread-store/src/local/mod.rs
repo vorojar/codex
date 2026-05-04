@@ -29,6 +29,7 @@ use crate::LoadThreadHistoryParams;
 use crate::ReadThreadByRolloutPathParams;
 use crate::ReadThreadParams;
 use crate::ResumeThreadParams;
+use crate::RotateThreadSegmentParams;
 use crate::StoredThread;
 use crate::StoredThreadHistory;
 use crate::ThreadPage;
@@ -121,6 +122,14 @@ impl LocalThreadStore {
     /// Return the live local rollout path for legacy local-only code paths.
     pub async fn live_rollout_path(&self, thread_id: ThreadId) -> ThreadStoreResult<PathBuf> {
         live_writer::rollout_path(self, thread_id).await
+    }
+
+    pub async fn rotate_thread_segment(
+        &self,
+        thread_id: ThreadId,
+        params: RotateThreadSegmentParams,
+    ) -> ThreadStoreResult<()> {
+        live_writer::rotate_thread_segment(self, thread_id, params).await
     }
 
     pub(super) async fn live_recorder(
@@ -293,6 +302,7 @@ mod tests {
     use tempfile::TempDir;
 
     use super::*;
+    use crate::RotateThreadSegmentParams;
     use crate::ThreadEventPersistenceMode;
     use crate::ThreadPersistenceMetadata;
     use crate::local::test_support::test_config;
@@ -346,6 +356,109 @@ mod tests {
         assert!(
             matches!(err, ThreadStoreError::ThreadNotFound { thread_id: missing } if missing == thread_id)
         );
+    }
+
+    #[tokio::test]
+    async fn rotate_thread_segment_keeps_thread_id_and_references_previous_segment() {
+        let home = TempDir::new().expect("temp dir");
+        let store = LocalThreadStore::new(test_config(home.path()));
+        let thread_id = ThreadId::default();
+
+        store
+            .create_thread(create_thread_params(thread_id))
+            .await
+            .expect("create live thread");
+        store
+            .append_items(AppendThreadItemsParams {
+                thread_id,
+                items: vec![user_message_item("before rotation")],
+            })
+            .await
+            .expect("append pre-rotation item");
+        store
+            .flush_thread(thread_id)
+            .await
+            .expect("flush pre-rotation item");
+        let old_rollout_path = store
+            .live_rollout_path(thread_id)
+            .await
+            .expect("old rollout path");
+        let (old_items, _, _) = RolloutRecorder::load_rollout_items(old_rollout_path.as_path())
+            .await
+            .expect("old rollout items");
+        let old_segment_id = old_items.iter().find_map(|item| match item {
+            RolloutItem::SessionMeta(meta) => meta.meta.segment_id,
+            RolloutItem::ForkReference(_)
+            | RolloutItem::RolloutReference(_)
+            | RolloutItem::ResponseItem(_)
+            | RolloutItem::Compacted(_)
+            | RolloutItem::TurnContext(_)
+            | RolloutItem::EventMsg(_) => None,
+        });
+
+        store
+            .rotate_thread_segment(
+                thread_id,
+                RotateThreadSegmentParams {
+                    source: SessionSource::Exec,
+                    base_instructions: BaseInstructions::default(),
+                    dynamic_tools: Vec::new(),
+                    metadata: thread_metadata(),
+                    event_persistence_mode: ThreadEventPersistenceMode::Limited,
+                    initial_items: vec![user_message_item("rotation checkpoint")],
+                    previous_segment_reference_depth: 2,
+                },
+            )
+            .await
+            .expect("rotate segment");
+        let new_rollout_path = store
+            .live_rollout_path(thread_id)
+            .await
+            .expect("new rollout path");
+        assert_ne!(new_rollout_path, old_rollout_path);
+
+        store
+            .append_items(AppendThreadItemsParams {
+                thread_id,
+                items: vec![user_message_item("after rotation")],
+            })
+            .await
+            .expect("append post-rotation item");
+        store
+            .flush_thread(thread_id)
+            .await
+            .expect("flush post-rotation item");
+
+        let (new_items, new_thread_id, _) =
+            RolloutRecorder::load_rollout_items(new_rollout_path.as_path())
+                .await
+                .expect("new rollout items");
+        assert_eq!(new_thread_id, Some(thread_id));
+        assert!(new_items.iter().any(|item| {
+            matches!(
+                item,
+                RolloutItem::RolloutReference(reference)
+                    if reference.rollout_path == old_rollout_path
+                        && reference.thread_id == Some(thread_id)
+                        && reference.segment_id == old_segment_id
+                        && reference.max_depth == 2
+            )
+        }));
+        assert!(new_items.iter().any(|item| {
+            matches!(
+                item,
+                RolloutItem::EventMsg(EventMsg::UserMessage(event))
+                    if event.message == "rotation checkpoint"
+            )
+        }));
+        assert!(new_items.iter().any(|item| {
+            matches!(
+                item,
+                RolloutItem::EventMsg(EventMsg::UserMessage(event))
+                    if event.message == "after rotation"
+            )
+        }));
+        assert_rollout_contains_message(old_rollout_path.as_path(), "before rotation").await;
     }
 
     #[tokio::test]

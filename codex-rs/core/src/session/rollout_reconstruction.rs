@@ -209,6 +209,7 @@ impl Session {
                 }
                 RolloutItem::EventMsg(_)
                 | RolloutItem::ForkReference(_)
+                | RolloutItem::RolloutReference(_)
                 | RolloutItem::SessionMeta(_) => {}
             }
 
@@ -278,6 +279,7 @@ impl Session {
                 }
                 RolloutItem::EventMsg(_)
                 | RolloutItem::ForkReference(_)
+                | RolloutItem::RolloutReference(_)
                 | RolloutItem::TurnContext(_)
                 | RolloutItem::SessionMeta(_) => {}
             }

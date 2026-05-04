@@ -7,6 +7,7 @@ use crate::context_manager::is_user_turn_boundary;
 use crate::event_mapping;
 use crate::rollout::RolloutRecorder;
 use crate::rollout::resolve_fork_reference_rollout_path;
+use crate::rollout::resolve_rollout_reference_rollout_path;
 use codex_protocol::items::TurnItem;
 use codex_protocol::models::ResponseItem;
 use codex_protocol::protocol::EventMsg;
@@ -203,6 +204,41 @@ async fn materialize_rollout_items_for_replay_at_depth(
                     Err(err) => {
                         warn!(
                             "failed to load fork reference {}: {err}",
+                            resolved_path.display()
+                        );
+                    }
+                }
+            }
+            RolloutItem::RolloutReference(reference) => {
+                if depth >= reference.max_depth {
+                    warn!("rollout reference materialization reached max depth");
+                    continue;
+                }
+                let resolved_path =
+                    match resolve_rollout_reference_rollout_path(codex_home, reference).await {
+                        Ok(path) => path,
+                        Err(err) => {
+                            warn!(
+                                "failed to resolve rollout reference {}: {err}",
+                                reference.rollout_path.display()
+                            );
+                            reference.rollout_path.clone()
+                        }
+                    };
+                match RolloutRecorder::load_rollout_items(&resolved_path).await {
+                    Ok((reference_items, _, _)) => {
+                        let reference_materialized =
+                            Box::pin(materialize_rollout_items_for_replay_at_depth(
+                                codex_home,
+                                &reference_items,
+                                depth + 1,
+                            ))
+                            .await;
+                        materialized.extend(reference_materialized);
+                    }
+                    Err(err) => {
+                        warn!(
+                            "failed to load rollout reference {}: {err}",
                             resolved_path.display()
                         );
                     }
