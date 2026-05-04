@@ -6,6 +6,7 @@ use crate::ipc_framed::ResizePayload;
 use crate::ipc_framed::StdinPayload;
 use crate::ipc_framed::decode_bytes;
 use crate::ipc_framed::encode_bytes;
+use crate::protected_metadata::ProtectedMetadataGuard;
 use anyhow::Result;
 use codex_utils_pty::ProcessDriver;
 use codex_utils_pty::SpawnedProcess;
@@ -97,6 +98,7 @@ pub(crate) fn start_runner_stdout_reader(
     stdout_tx: broadcast::Sender<Vec<u8>>,
     stderr_tx: Option<broadcast::Sender<Vec<u8>>>,
     exit_tx: oneshot::Sender<i32>,
+    protected_metadata_guard: Option<ProtectedMetadataGuard>,
 ) {
     std::thread::spawn(move || {
         loop {
@@ -140,7 +142,27 @@ pub(crate) fn start_runner_stdout_reader(
                     }
                 }
                 Message::Exit { payload } => {
-                    let _ = exit_tx.send(payload.exit_code);
+                    let mut exit_code = payload.exit_code;
+                    if let Some(protected_metadata_guard) = protected_metadata_guard {
+                        match protected_metadata_guard.cleanup_created_monitored_paths() {
+                            Ok(paths) => {
+                                if !paths.is_empty() && exit_code == 0 {
+                                    exit_code = 1;
+                                }
+                            }
+                            Err(err) => {
+                                send_runner_error(
+                                    &format!("protected metadata cleanup failed: {err:#}"),
+                                    &stdout_tx,
+                                    stderr_tx.as_ref(),
+                                );
+                                if exit_code == 0 {
+                                    exit_code = 1;
+                                }
+                            }
+                        }
+                    }
+                    let _ = exit_tx.send(exit_code);
                     break;
                 }
                 Message::Error { payload } => {

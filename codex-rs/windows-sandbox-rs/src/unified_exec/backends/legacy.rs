@@ -9,6 +9,8 @@ use crate::process::StderrMode;
 use crate::process::StdinMode;
 use crate::process::read_handle_loop;
 use crate::process::spawn_process_with_pipes;
+use crate::protected_metadata::ProtectedMetadataGuard;
+use crate::protected_metadata::prepare_protected_metadata_targets;
 use crate::setup::ProtectedMetadataTarget;
 use crate::spawn_prep::LocalSid;
 use crate::spawn_prep::allow_null_device_for_workspace_write;
@@ -203,10 +205,11 @@ fn finalize_exit(
     output_join: std::thread::JoinHandle<()>,
     guards: Vec<PathBuf>,
     cap_sid: Option<String>,
+    protected_metadata_guard: ProtectedMetadataGuard,
     logs_base_dir: Option<&Path>,
     command: Vec<String>,
 ) {
-    let exit_code = {
+    let mut exit_code = {
         let mut raw_exit = 1u32;
         if let Ok(guard) = process_handle.lock()
             && let Some(handle) = guard.as_ref()
@@ -220,6 +223,21 @@ fn finalize_exit(
     };
 
     let _ = output_join.join();
+    let protected_metadata_failure =
+        match protected_metadata_guard.cleanup_created_monitored_paths() {
+            Ok(paths) => {
+                if !paths.is_empty() && exit_code == 0 {
+                    exit_code = 1;
+                }
+                None
+            }
+            Err(err) => {
+                if exit_code == 0 {
+                    exit_code = 1;
+                }
+                Some(format!("protected metadata cleanup failed: {err:#}"))
+            }
+        };
     let _ = exit_tx.send(exit_code);
 
     unsafe {
@@ -233,7 +251,9 @@ fn finalize_exit(
         }
     }
 
-    if exit_code == 0 {
+    if let Some(message) = protected_metadata_failure {
+        log_failure(&command, &message, logs_base_dir);
+    } else if exit_code == 0 {
         log_success(&command, logs_base_dir);
     } else {
         log_failure(&command, &format!("exit code {exit_code}"), logs_base_dir);
@@ -287,7 +307,7 @@ pub(crate) async fn spawn_windows_sandbox_session_legacy(
     timeout_ms: Option<u64>,
     tty: bool,
     stdin_open: bool,
-    _protected_metadata_targets: &[ProtectedMetadataTarget],
+    protected_metadata_targets: &[ProtectedMetadataTarget],
     use_private_desktop: bool,
 ) -> Result<SpawnedProcess> {
     let common = prepare_legacy_spawn_context(
@@ -306,6 +326,9 @@ pub(crate) async fn spawn_windows_sandbox_session_legacy(
     allow_null_device_for_workspace_write(common.is_workspace_write);
 
     let persist_aces = common.is_workspace_write;
+    let protected_metadata_guard = prepare_protected_metadata_targets(protected_metadata_targets);
+    let additional_deny_write_paths: Vec<PathBuf> =
+        protected_metadata_guard.deny_paths().cloned().collect();
     let guards = apply_legacy_session_acl_rules(
         &common.policy,
         sandbox_policy_cwd,
@@ -314,6 +337,7 @@ pub(crate) async fn spawn_windows_sandbox_session_legacy(
         &security.psid_generic,
         security.psid_workspace.as_ref(),
         persist_aces,
+        &additional_deny_write_paths,
     );
 
     let (writer_tx, writer_rx) = mpsc::channel::<Vec<u8>>(128);
@@ -406,6 +430,7 @@ pub(crate) async fn spawn_windows_sandbox_session_legacy(
             output_join,
             guards_for_wait,
             cap_sid_for_wait,
+            protected_metadata_guard,
             common.logs_base_dir.as_deref(),
             command_for_wait,
         );

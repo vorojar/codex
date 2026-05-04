@@ -7,6 +7,7 @@ use crate::ipc_framed::EmptyPayload;
 use crate::ipc_framed::FramedMessage;
 use crate::ipc_framed::Message;
 use crate::ipc_framed::SpawnRequest;
+use crate::protected_metadata::prepare_protected_metadata_targets;
 use crate::runner_client::spawn_runner_transport;
 use crate::setup::ProtectedMetadataTarget;
 use crate::spawn_prep::prepare_elevated_spawn_context;
@@ -43,6 +44,7 @@ pub(crate) async fn spawn_windows_sandbox_session_elevated(
         protected_metadata_targets,
     )?;
 
+    let protected_metadata_guard = prepare_protected_metadata_targets(protected_metadata_targets);
     let spawn_request = SpawnRequest {
         command: command.clone(),
         cwd: cwd.to_path_buf(),
@@ -102,6 +104,7 @@ pub(crate) async fn spawn_windows_sandbox_session_elevated(
         stdout_tx,
         stderr_rx.as_ref().map(|(tx, _rx)| tx.clone()),
         exit_tx,
+        Some(protected_metadata_guard),
     );
 
     Ok(finish_driver_spawn(

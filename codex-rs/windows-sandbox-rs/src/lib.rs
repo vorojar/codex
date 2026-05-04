@@ -168,6 +168,8 @@ pub use process::read_handle_loop;
 #[cfg(target_os = "windows")]
 pub use process::spawn_process_with_pipes;
 #[cfg(target_os = "windows")]
+pub use protected_metadata::protected_metadata_existing_deny_paths;
+#[cfg(target_os = "windows")]
 pub use session::spawn_windows_sandbox_session_elevated;
 #[cfg(target_os = "windows")]
 pub use session::spawn_windows_sandbox_session_legacy;
@@ -270,6 +272,7 @@ mod windows_impl {
     use super::path_normalization::canonicalize_path;
     use super::policy::SandboxPolicy;
     use super::process::create_process_as_user;
+    use super::protected_metadata::prepare_protected_metadata_targets;
     use super::sandbox_utils::ensure_codex_home_exists;
     use super::spawn_prep::prepare_legacy_spawn_context;
     use super::token::convert_string_sid_to_sid;
@@ -364,7 +367,7 @@ mod windows_impl {
         mut env_map: HashMap<String, String>,
         timeout_ms: Option<u64>,
         additional_deny_write_paths: &[PathBuf],
-        _protected_metadata_targets: &[ProtectedMetadataTarget],
+        protected_metadata_targets: &[ProtectedMetadataTarget],
         use_private_desktop: bool,
     ) -> Result<CaptureResult> {
         let common = prepare_legacy_spawn_context(
@@ -434,6 +437,11 @@ mod windows_impl {
         let persist_aces = is_workspace_write;
         let AllowDenyPaths { allow, mut deny } =
             compute_allow_paths(&policy, sandbox_policy_cwd, &current_dir, &env_map);
+        let protected_metadata_guard =
+            prepare_protected_metadata_targets(protected_metadata_targets);
+        for path in protected_metadata_guard.deny_paths() {
+            deny.insert(path.clone());
+        }
         for path in additional_deny_write_paths {
             if path.exists() {
                 deny.insert(path.clone());
@@ -584,11 +592,16 @@ mod windows_impl {
         let _ = t_err.join();
         let stdout = rx_out.recv().unwrap_or_default();
         let stderr = rx_err.recv().unwrap_or_default();
-        let exit_code = if timed_out {
+        let mut exit_code = if timed_out {
             128 + 64
         } else {
             exit_code_u32 as i32
         };
+        let protected_metadata_violations =
+            protected_metadata_guard.cleanup_created_monitored_paths()?;
+        if !protected_metadata_violations.is_empty() && exit_code == 0 {
+            exit_code = 1;
+        }
 
         if exit_code == 0 {
             log_success(&command, logs_base_dir);

@@ -1,5 +1,3 @@
-#![allow(dead_code)]
-
 use crate::setup::ProtectedMetadataMode;
 use crate::setup::ProtectedMetadataTarget;
 use anyhow::Context;
