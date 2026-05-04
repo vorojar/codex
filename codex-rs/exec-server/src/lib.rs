@@ -45,7 +45,6 @@ pub use environment::LOCAL_ENVIRONMENT_ID;
 pub use environment::REMOTE_ENVIRONMENT_ID;
 pub use environment_provider::DefaultEnvironmentProvider;
 pub use environment_provider::EnvironmentProvider;
-pub use environment_toml::environment_provider_from_codex_home;
 pub use fs_helper::CODEX_FS_HELPER_ARG1;
 pub use fs_helper_main::main as run_fs_helper_main;
 pub use local_file_system::LOCAL_FS;

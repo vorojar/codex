@@ -4,7 +4,6 @@ use std::path::Path;
 
 use async_trait::async_trait;
 use serde::Deserialize;
-use serde::Serialize;
 
 use crate::DefaultEnvironmentProvider;
 use crate::Environment;
@@ -13,18 +12,19 @@ use crate::ExecServerError;
 use crate::ExecServerRuntimePaths;
 use crate::ExecServerTransport;
 use crate::environment::LOCAL_ENVIRONMENT_ID;
+use crate::environment_provider::EnvironmentProviderSnapshot;
 
 const ENVIRONMENTS_TOML_FILE: &str = "environments.toml";
 
-#[derive(Serialize, Deserialize, Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Deserialize, Debug, Default)]
 struct EnvironmentsToml {
     default: Option<String>,
 
     #[serde(default)]
-    items: Vec<EnvironmentToml>,
+    environments: Vec<EnvironmentToml>,
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+#[derive(Deserialize, Debug)]
 struct EnvironmentToml {
     id: String,
     url: Option<String>,
@@ -33,120 +33,91 @@ struct EnvironmentToml {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct TomlEnvironmentProvider {
-    default: Option<String>,
-    items: Vec<ConfiguredEnvironment>,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-struct ConfiguredEnvironment {
-    id: String,
-    transport: ExecServerTransport,
+    default_environment_id: Option<String>,
+    environments: HashMap<String, ExecServerTransport>,
 }
 
 impl TomlEnvironmentProvider {
     fn new(config: EnvironmentsToml) -> Result<Self, ExecServerError> {
         let mut ids = HashSet::from([LOCAL_ENVIRONMENT_ID.to_string()]);
-        let mut items = Vec::with_capacity(config.items.len());
-        for item in config.items {
-            let item = ConfiguredEnvironment::try_from(item)?;
-            if !ids.insert(item.id.clone()) {
+        let mut environments = HashMap::with_capacity(config.environments.len());
+        for item in config.environments {
+            let (id, transport) = parse_environment_toml(item)?;
+            if !ids.insert(id.clone()) {
                 return Err(ExecServerError::Protocol(format!(
-                    "environment id `{}` is duplicated",
-                    item.id
+                    "environment id `{id}` is duplicated"
                 )));
             }
-            items.push(item);
+            environments.insert(id, transport);
         }
-        validate_default(config.default.as_deref(), &ids)?;
+        let default_environment_id =
+            normalize_default_environment_id(config.default.as_deref(), &ids)?;
         Ok(Self {
-            default: config.default,
-            items,
+            default_environment_id,
+            environments,
         })
     }
 }
 
 #[async_trait]
 impl EnvironmentProvider for TomlEnvironmentProvider {
-    async fn get_environments(
+    async fn get_environment_snapshot(
         &self,
         local_runtime_paths: &ExecServerRuntimePaths,
-    ) -> Result<HashMap<String, Environment>, ExecServerError> {
+    ) -> Result<EnvironmentProviderSnapshot, ExecServerError> {
         let mut environments = HashMap::from([(
             LOCAL_ENVIRONMENT_ID.to_string(),
             Environment::local(local_runtime_paths.clone()),
         )]);
 
-        for item in &self.items {
+        for (id, transport) in &self.environments {
             environments.insert(
-                item.id.clone(),
-                item.environment(Some(local_runtime_paths.clone())),
+                id.clone(),
+                Environment::remote_with_transport(
+                    transport.clone(),
+                    Some(local_runtime_paths.clone()),
+                ),
             );
         }
 
-        Ok(environments)
-    }
-
-    fn default_environment_id(
-        &self,
-        _environments: &HashMap<String, Environment>,
-    ) -> Option<String> {
-        match self.default.as_deref().map(str::trim) {
-            None => Some(LOCAL_ENVIRONMENT_ID.to_string()),
-            Some(default) if default.eq_ignore_ascii_case("none") => None,
-            Some(default) => Some(default.to_string()),
-        }
-    }
-}
-
-impl TryFrom<EnvironmentToml> for ConfiguredEnvironment {
-    type Error = ExecServerError;
-
-    fn try_from(item: EnvironmentToml) -> Result<Self, Self::Error> {
-        validate_environment_id(&item.id)?;
-        let transport = match (item.url, item.command) {
-            (Some(url), None) => {
-                let url = validate_websocket_url(url)?;
-                ExecServerTransport::WebSocketUrl(url)
-            }
-            (None, Some(command)) => {
-                let command = command.trim().to_string();
-                if command.is_empty() {
-                    return Err(ExecServerError::Protocol(format!(
-                        "environment `{}` command cannot be empty",
-                        item.id
-                    )));
-                }
-                ExecServerTransport::StdioShellCommand(command)
-            }
-            (None, None) | (Some(_), Some(_)) => {
-                return Err(ExecServerError::Protocol(format!(
-                    "environment `{}` must set exactly one of url or command",
-                    item.id
-                )));
-            }
-        };
-
-        Ok(Self {
-            id: item.id,
-            transport,
+        Ok(EnvironmentProviderSnapshot {
+            environments,
+            default_environment_id: self.default_environment_id.clone(),
         })
     }
 }
 
-impl ConfiguredEnvironment {
-    fn environment(&self, local_runtime_paths: Option<ExecServerRuntimePaths>) -> Environment {
-        match &self.transport {
-            ExecServerTransport::WebSocketUrl(url) => {
-                Environment::remote_inner(url.clone(), local_runtime_paths)
-            }
-            ExecServerTransport::StdioShellCommand(command) => {
-                Environment::remote_stdio_shell_command(command.clone(), local_runtime_paths)
-            }
+fn parse_environment_toml(
+    item: EnvironmentToml,
+) -> Result<(String, ExecServerTransport), ExecServerError> {
+    validate_environment_id(&item.id)?;
+    let transport = match (item.url, item.command) {
+        (Some(url), None) => {
+            let url = validate_websocket_url(url)?;
+            ExecServerTransport::WebSocketUrl(url)
         }
-    }
+        (None, Some(command)) => {
+            let command = command.trim().to_string();
+            if command.is_empty() {
+                return Err(ExecServerError::Protocol(format!(
+                    "environment `{}` command cannot be empty",
+                    item.id
+                )));
+            }
+            ExecServerTransport::StdioShellCommand(command)
+        }
+        (None, None) | (Some(_), Some(_)) => {
+            return Err(ExecServerError::Protocol(format!(
+                "environment `{}` must set exactly one of url or command",
+                item.id
+            )));
+        }
+    };
+
+    Ok((item.id, transport))
 }
 
-pub fn environment_provider_from_codex_home(
+pub(crate) fn environment_provider_from_codex_home(
     codex_home: &Path,
 ) -> Result<Box<dyn EnvironmentProvider>, ExecServerError> {
     let path = codex_home.join(ENVIRONMENTS_TOML_FILE);
@@ -163,9 +134,12 @@ pub fn environment_provider_from_codex_home(
     Ok(Box::new(TomlEnvironmentProvider::new(environments)?))
 }
 
-fn validate_default(default: Option<&str>, ids: &HashSet<String>) -> Result<(), ExecServerError> {
+fn normalize_default_environment_id(
+    default: Option<&str>,
+    ids: &HashSet<String>,
+) -> Result<Option<String>, ExecServerError> {
     let Some(default) = default.map(str::trim) else {
-        return Ok(());
+        return Ok(Some(LOCAL_ENVIRONMENT_ID.to_string()));
     };
     if default.is_empty() {
         return Err(ExecServerError::Protocol(
@@ -177,7 +151,11 @@ fn validate_default(default: Option<&str>, ids: &HashSet<String>) -> Result<(), 
             "default environment `{default}` is not configured"
         )));
     }
-    Ok(())
+    if default.eq_ignore_ascii_case("none") {
+        Ok(None)
+    } else {
+        Ok(Some(default.to_string()))
+    }
 }
 
 fn validate_environment_id(id: &str) -> Result<(), ExecServerError> {
@@ -250,7 +228,7 @@ mod tests {
     async fn toml_provider_adds_implicit_local_and_configured_environments() {
         let provider = TomlEnvironmentProvider::new(EnvironmentsToml {
             default: Some("ssh-dev".to_string()),
-            items: vec![
+            environments: vec![
                 EnvironmentToml {
                     id: "devbox".to_string(),
                     url: Some(" ws://127.0.0.1:8765 ".to_string()),
@@ -266,10 +244,11 @@ mod tests {
         .expect("provider");
         let runtime_paths = test_runtime_paths();
 
-        let environments = provider
-            .get_environments(&runtime_paths)
+        let snapshot = provider
+            .get_environment_snapshot(&runtime_paths)
             .await
-            .expect("environments");
+            .expect("environment snapshot");
+        let environments = snapshot.environments;
 
         assert!(!environments[LOCAL_ENVIRONMENT_ID].is_remote());
         assert_eq!(
@@ -277,10 +256,7 @@ mod tests {
             Some("ws://127.0.0.1:8765")
         );
         assert!(environments["ssh-dev"].is_remote());
-        assert_eq!(
-            provider.default_environment_id(&environments),
-            Some("ssh-dev".to_string())
-        );
+        assert_eq!(snapshot.default_environment_id, Some("ssh-dev".to_string()));
     }
 
     #[test]
@@ -288,7 +264,7 @@ mod tests {
         let provider = TomlEnvironmentProvider::new(EnvironmentsToml::default()).expect("provider");
 
         assert_eq!(
-            provider.default_environment_id(&HashMap::new()),
+            provider.default_environment_id.clone(),
             Some(LOCAL_ENVIRONMENT_ID.to_string())
         );
     }
@@ -297,15 +273,15 @@ mod tests {
     fn toml_provider_default_none_disables_default() {
         let provider = TomlEnvironmentProvider::new(EnvironmentsToml {
             default: Some("none".to_string()),
-            items: Vec::new(),
+            environments: Vec::new(),
         })
         .expect("provider");
 
-        assert_eq!(provider.default_environment_id(&HashMap::new()), None);
+        assert_eq!(provider.default_environment_id, None);
     }
 
     #[test]
-    fn toml_provider_rejects_invalid_items() {
+    fn toml_provider_rejects_invalid_environments() {
         let cases = [
             (
                 EnvironmentToml {
@@ -352,7 +328,7 @@ mod tests {
         for (item, expected) in cases {
             let err = TomlEnvironmentProvider::new(EnvironmentsToml {
                 default: None,
-                items: vec![item],
+                environments: vec![item],
             })
             .expect_err("invalid item should fail");
 
@@ -367,7 +343,7 @@ mod tests {
     fn toml_provider_rejects_duplicate_ids() {
         let err = TomlEnvironmentProvider::new(EnvironmentsToml {
             default: None,
-            items: vec![
+            environments: vec![
                 EnvironmentToml {
                     id: "devbox".to_string(),
                     url: Some("ws://127.0.0.1:8765".to_string()),
@@ -392,7 +368,7 @@ mod tests {
     fn toml_provider_rejects_unknown_default() {
         let err = TomlEnvironmentProvider::new(EnvironmentsToml {
             default: Some("missing".to_string()),
-            items: Vec::new(),
+            environments: Vec::new(),
         })
         .expect_err("unknown default should fail");
 
@@ -411,11 +387,11 @@ mod tests {
             r#"
 default = "ssh-dev"
 
-[[items]]
+[[environments]]
 id = "devbox"
 url = "ws://127.0.0.1:4512"
 
-[[items]]
+[[environments]]
 id = "ssh-dev"
 command = 'ssh dev "codex exec-server --listen stdio"'
 "#,
@@ -425,16 +401,16 @@ command = 'ssh dev "codex exec-server --listen stdio"'
         let environments = load_environments_toml(&path).expect("environments.toml");
 
         assert_eq!(environments.default.as_deref(), Some("ssh-dev"));
-        assert_eq!(environments.items.len(), 2);
-        assert_eq!(environments.items[0].id, "devbox");
+        assert_eq!(environments.environments.len(), 2);
+        assert_eq!(environments.environments[0].id, "devbox");
         assert_eq!(
-            environments.items[1].command.as_deref(),
+            environments.environments[1].command.as_deref(),
             Some("ssh dev \"codex exec-server --listen stdio\"")
         );
     }
 
-    #[test]
-    fn environment_provider_from_codex_home_uses_present_environments_file() {
+    #[tokio::test]
+    async fn environment_provider_from_codex_home_uses_present_environments_file() {
         let codex_home = tempdir().expect("tempdir");
         std::fs::write(
             codex_home.path().join(ENVIRONMENTS_TOML_FILE),
@@ -447,6 +423,11 @@ default = "none"
         let provider =
             environment_provider_from_codex_home(codex_home.path()).expect("environment provider");
 
-        assert_eq!(provider.default_environment_id(&HashMap::new()), None);
+        let snapshot = provider
+            .get_environment_snapshot(&test_runtime_paths())
+            .await
+            .expect("environment snapshot");
+
+        assert_eq!(snapshot.default_environment_id, None);
     }
 }
