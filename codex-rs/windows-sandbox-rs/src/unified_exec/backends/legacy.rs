@@ -334,6 +334,7 @@ pub(crate) async fn spawn_windows_sandbox_session_legacy(
         sandbox_policy_cwd,
         &common.current_dir,
         &env_map,
+        &command,
         &security.psid_generic,
         security.psid_workspace.as_ref(),
         persist_aces,

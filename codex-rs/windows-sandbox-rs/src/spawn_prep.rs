@@ -2,6 +2,8 @@ use crate::acl::add_allow_ace;
 use crate::acl::add_deny_write_ace;
 use crate::acl::allow_named_pipe_device;
 use crate::acl::allow_null_device;
+use crate::acl::ensure_allow_mask_aces;
+use crate::acl::ensure_allow_mask_aces_with_inheritance;
 use crate::allow::AllowDenyPaths;
 use crate::allow::compute_allow_paths;
 use crate::cap::load_or_create_cap_sids;
@@ -36,6 +38,8 @@ use windows_sys::Win32::Foundation::CloseHandle;
 use windows_sys::Win32::Foundation::HANDLE;
 use windows_sys::Win32::Foundation::HLOCAL;
 use windows_sys::Win32::Foundation::LocalFree;
+use windows_sys::Win32::Storage::FileSystem::FILE_GENERIC_EXECUTE;
+use windows_sys::Win32::Storage::FileSystem::FILE_GENERIC_READ;
 
 pub(crate) struct SpawnContext {
     pub(crate) policy: SandboxPolicy,
@@ -219,6 +223,7 @@ pub(crate) fn apply_legacy_session_acl_rules(
     sandbox_policy_cwd: &Path,
     current_dir: &Path,
     env_map: &HashMap<String, String>,
+    command: &[String],
     psid_generic: &LocalSid,
     psid_workspace: Option<&LocalSid>,
     persist_aces: bool,
@@ -228,8 +233,35 @@ pub(crate) fn apply_legacy_session_acl_rules(
         compute_allow_paths(policy, sandbox_policy_cwd, current_dir, env_map);
     deny.extend(additional_deny_paths.iter().cloned());
     let mut guards: Vec<PathBuf> = Vec::new();
+    let read_roots = legacy_session_executable_read_roots(env_map, command);
+    let direct_read_paths = legacy_session_direct_read_paths(env_map);
+    let read_execute_mask = FILE_GENERIC_READ | FILE_GENERIC_EXECUTE;
     let canonical_cwd = canonicalize_path(current_dir);
     unsafe {
+        let read_execute_sids: Vec<*mut std::ffi::c_void> = match psid_workspace {
+            Some(psid_workspace) => vec![psid_generic.as_ptr(), psid_workspace.as_ptr()],
+            None => vec![psid_generic.as_ptr()],
+        };
+        for p in &read_roots {
+            if let Ok(added) = ensure_allow_mask_aces(p, &read_execute_sids, read_execute_mask)
+                && added
+                && !persist_aces
+            {
+                guards.push(p.clone());
+            }
+        }
+        for p in &direct_read_paths {
+            if let Ok(added) = ensure_allow_mask_aces_with_inheritance(
+                p,
+                &read_execute_sids,
+                read_execute_mask,
+                /*inheritance*/ 0,
+            ) && added
+                && !persist_aces
+            {
+                guards.push(p.clone());
+            }
+        }
         for p in &allow {
             let psid = if matches!(policy, SandboxPolicy::WorkspaceWrite { .. })
                 && is_command_cwd_root(p, &canonical_cwd)
