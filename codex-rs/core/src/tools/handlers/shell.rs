@@ -25,6 +25,9 @@ use crate::tools::handlers::normalize_and_validate_additional_permissions;
 use crate::tools::handlers::parse_arguments;
 use crate::tools::handlers::parse_arguments_with_base_path;
 use crate::tools::handlers::resolve_workdir_base_path;
+use crate::tools::handlers::rewrite_function_arguments;
+use crate::tools::handlers::rewrite_function_string_argument;
+use crate::tools::handlers::updated_hook_command;
 use crate::tools::hook_names::HookToolName;
 use crate::tools::orchestrator::ToolOrchestrator;
 use crate::tools::registry::PostToolUsePayload;
@@ -73,17 +76,6 @@ fn shell_command_payload_command(payload: &ToolPayload) -> Option<String> {
     parse_arguments::<ShellCommandToolCallParams>(arguments)
         .ok()
         .map(|params| params.command)
-}
-
-fn updated_hook_command(updated_input: &JsonValue) -> Result<&str, FunctionCallError> {
-    updated_input
-        .get("command")
-        .and_then(JsonValue::as_str)
-        .ok_or_else(|| {
-            FunctionCallError::RespondToModel(
-                "hook returned updatedInput without string field `command`".to_string(),
-            )
-        })
 }
 
 struct RunExecLikeArgs {
@@ -236,21 +228,13 @@ impl ToolHandler for ShellHandler {
                         "hook returned shell input with an invalid command string".to_string(),
                     )
                 })?;
-                let mut arguments: JsonValue = parse_arguments(&arguments)?;
-                let JsonValue::Object(arguments) = &mut arguments else {
-                    return Err(FunctionCallError::RespondToModel(
-                        "shell arguments must be an object".to_string(),
-                    ));
-                };
-                arguments.insert(
-                    "command".to_string(),
-                    JsonValue::Array(command.into_iter().map(JsonValue::String).collect()),
-                );
                 ToolPayload::Function {
-                    arguments: serde_json::to_string(&arguments).map_err(|err| {
-                        FunctionCallError::RespondToModel(format!(
-                            "failed to serialize rewritten shell arguments: {err}"
-                        ))
+                    arguments: rewrite_function_arguments(&arguments, "shell", |arguments| {
+                        arguments.insert(
+                            "command".to_string(),
+                            JsonValue::Array(command.into_iter().map(JsonValue::String).collect()),
+                        );
+                        Ok(())
                     })?,
                 }
             }
@@ -391,22 +375,13 @@ impl ToolHandler for ShellCommandHandler {
                 "hook input rewrite received unsupported shell_command payload".to_string(),
             ));
         };
-        let mut arguments: JsonValue = parse_arguments(&arguments)?;
-        let JsonValue::Object(arguments) = &mut arguments else {
-            return Err(FunctionCallError::RespondToModel(
-                "shell_command arguments must be an object".to_string(),
-            ));
-        };
-        arguments.insert(
-            "command".to_string(),
-            JsonValue::String(updated_hook_command(&updated_input)?.to_string()),
-        );
         invocation.payload = ToolPayload::Function {
-            arguments: serde_json::to_string(&arguments).map_err(|err| {
-                FunctionCallError::RespondToModel(format!(
-                    "failed to serialize rewritten shell_command arguments: {err}"
-                ))
-            })?,
+            arguments: rewrite_function_string_argument(
+                &arguments,
+                "shell_command",
+                "command",
+                updated_hook_command(&updated_input)?,
+            )?,
         };
         Ok(invocation)
     }

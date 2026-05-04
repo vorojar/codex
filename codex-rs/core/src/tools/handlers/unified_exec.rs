@@ -14,6 +14,8 @@ use crate::tools::handlers::normalize_and_validate_additional_permissions;
 use crate::tools::handlers::parse_arguments;
 use crate::tools::handlers::parse_arguments_with_base_path;
 use crate::tools::handlers::resolve_workdir_base_path;
+use crate::tools::handlers::rewrite_function_string_argument;
+use crate::tools::handlers::updated_hook_command;
 use crate::tools::hook_names::HookToolName;
 use crate::tools::registry::PostToolUsePayload;
 use crate::tools::registry::PreToolUsePayload;
@@ -162,30 +164,13 @@ impl ToolHandler for UnifiedExecHandler {
                 "hook input rewrite received unsupported unified_exec payload".to_string(),
             ));
         };
-        let command = updated_input
-            .get("command")
-            .and_then(serde_json::Value::as_str)
-            .ok_or_else(|| {
-                FunctionCallError::RespondToModel(
-                    "hook returned updatedInput without string field `command`".to_string(),
-                )
-            })?;
-        let mut arguments: serde_json::Value = parse_arguments(&arguments)?;
-        let serde_json::Value::Object(arguments) = &mut arguments else {
-            return Err(FunctionCallError::RespondToModel(
-                "exec_command arguments must be an object".to_string(),
-            ));
-        };
-        arguments.insert(
-            "cmd".to_string(),
-            serde_json::Value::String(command.to_string()),
-        );
         invocation.payload = ToolPayload::Function {
-            arguments: serde_json::to_string(&arguments).map_err(|err| {
-                FunctionCallError::RespondToModel(format!(
-                    "failed to serialize rewritten exec_command arguments: {err}"
-                ))
-            })?,
+            arguments: rewrite_function_string_argument(
+                &arguments,
+                "exec_command",
+                "cmd",
+                updated_hook_command(&updated_input)?,
+            )?,
         };
         Ok(invocation)
     }

@@ -25,6 +25,7 @@ use crate::guardian::guardian_timeout_message;
 use crate::guardian::new_guardian_review_id;
 use crate::guardian::review_approval_request;
 use crate::guardian::routes_approval_to_guardian;
+use crate::hook_runtime::MAX_HOOK_INPUT_REWRITES;
 use crate::hook_runtime::run_permission_request_hooks;
 use crate::mcp_openai_file::rewrite_mcp_tool_arguments_for_openai_files;
 use crate::mcp_tool_approval_templates::RenderedMcpToolApprovalParam;
@@ -215,7 +216,7 @@ pub(crate) async fn handle_mcp_tool_call(
         let result = match decision {
             McpToolApprovalDecision::AcceptWithUpdatedInput(updated_input) => {
                 input_rewrites += 1;
-                if input_rewrites > 8 {
+                if input_rewrites > MAX_HOOK_INPUT_REWRITES {
                     notify_mcp_tool_call_skip(
                         sess.as_ref(),
                         turn_context.as_ref(),

@@ -48,6 +48,8 @@ pub(crate) enum PreToolUseHookResult {
     Blocked(String),
 }
 
+pub(crate) const MAX_HOOK_INPUT_REWRITES: usize = 8;
+
 pub(crate) enum PendingInputHookDisposition {
     Accepted(Box<PendingInputRecord>),
     Blocked { additional_contexts: Vec<String> },

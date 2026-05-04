@@ -22,6 +22,8 @@ use crate::tools::events::ToolEmitter;
 use crate::tools::events::ToolEventCtx;
 use crate::tools::handlers::apply_granted_turn_permissions;
 use crate::tools::handlers::parse_arguments;
+use crate::tools::handlers::rewrite_function_string_argument;
+use crate::tools::handlers::updated_hook_command;
 use crate::tools::hook_names::HookToolName;
 use crate::tools::orchestrator::ToolOrchestrator;
 use crate::tools::registry::PostToolUsePayload;
@@ -323,34 +325,16 @@ impl ToolHandler for ApplyPatchHandler {
         mut invocation: ToolInvocation,
         updated_input: serde_json::Value,
     ) -> Result<ToolInvocation, FunctionCallError> {
-        let patch = updated_input
-            .get("command")
-            .and_then(serde_json::Value::as_str)
-            .ok_or_else(|| {
-                FunctionCallError::RespondToModel(
-                    "hook returned updatedInput without string field `command`".to_string(),
-                )
-            })?;
+        let patch = updated_hook_command(&updated_input)?;
         invocation.payload = match invocation.payload {
-            ToolPayload::Function { arguments } => {
-                let mut arguments: serde_json::Value = parse_arguments(&arguments)?;
-                let serde_json::Value::Object(arguments) = &mut arguments else {
-                    return Err(FunctionCallError::RespondToModel(
-                        "apply_patch arguments must be an object".to_string(),
-                    ));
-                };
-                arguments.insert(
-                    "input".to_string(),
-                    serde_json::Value::String(patch.to_string()),
-                );
-                ToolPayload::Function {
-                    arguments: serde_json::to_string(&arguments).map_err(|err| {
-                        FunctionCallError::RespondToModel(format!(
-                            "failed to serialize rewritten apply_patch arguments: {err}"
-                        ))
-                    })?,
-                }
-            }
+            ToolPayload::Function { arguments } => ToolPayload::Function {
+                arguments: rewrite_function_string_argument(
+                    &arguments,
+                    "apply_patch",
+                    "input",
+                    patch,
+                )?,
+            },
             ToolPayload::Custom { .. } => ToolPayload::Custom {
                 input: patch.to_string(),
             },
