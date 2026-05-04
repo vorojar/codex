@@ -1,27 +1,27 @@
-use crate::config_toml::RealtimeTransport;
-use crate::config_toml::RealtimeVoice;
-use crate::config_toml::RealtimeWsMode;
-use crate::config_toml::RealtimeWsVersion;
-use crate::config_toml::ThreadStoreToml;
-use crate::types::ApprovalsReviewer;
-use crate::types::AuthCredentialsStoreMode;
-use crate::types::HistoryPersistence;
-use crate::types::OAuthCredentialsStoreMode;
-use crate::types::Personality;
-use crate::types::ServiceTier;
-use crate::types::UriBasedFileOpener;
-use crate::types::WebSearchMode;
-use crate::types::WindowsSandboxModeToml;
-use codex_protocol::config_types::ForcedLoginMethod;
-use codex_protocol::config_types::ReasoningSummary;
-use codex_protocol::config_types::SandboxMode;
-use codex_protocol::config_types::TrustLevel;
-use codex_protocol::config_types::Verbosity;
-use codex_protocol::config_types::WebSearchContextSize;
-use codex_protocol::openai_models::ReasoningEffort;
-use codex_protocol::protocol::AskForApproval;
-use serde::Deserialize;
+use crate::config_toml::ConfigToml;
+use schemars::r#gen::SchemaSettings;
+use schemars::schema::RootSchema;
+use schemars::schema::Schema;
+use schemars::schema::SchemaObject;
+use serde_json::Value as JsonValue;
+use std::collections::BTreeSet;
+use std::sync::OnceLock;
 use toml::Value as TomlValue;
+
+static CONFIG_ENUM_FIELDS: OnceLock<Vec<EnumField>> = OnceLock::new();
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct EnumField {
+    value_path: Vec<PathSegment>,
+    remove_path: Vec<PathSegment>,
+    allowed_values: BTreeSet<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum PathSegment {
+    Key(String),
+    MapValue,
+}
 
 /// Removes unrecognized string values from enum-typed config fields.
 ///
@@ -32,241 +32,310 @@ use toml::Value as TomlValue;
 pub fn sanitize_unknown_enum_values(root: &mut TomlValue) -> Vec<String> {
     let mut warnings = Vec::new();
 
-    sanitize_enum::<AskForApproval>(root, &["approval_policy"], &mut warnings);
-    sanitize_enum::<ApprovalsReviewer>(root, &["approvals_reviewer"], &mut warnings);
-    sanitize_enum::<SandboxMode>(root, &["sandbox_mode"], &mut warnings);
-    sanitize_enum::<ForcedLoginMethod>(root, &["forced_login_method"], &mut warnings);
-    sanitize_enum::<AuthCredentialsStoreMode>(root, &["cli_auth_credentials_store"], &mut warnings);
-    sanitize_enum::<OAuthCredentialsStoreMode>(
-        root,
-        &["mcp_oauth_credentials_store"],
-        &mut warnings,
-    );
-    sanitize_enum::<UriBasedFileOpener>(root, &["file_opener"], &mut warnings);
-    sanitize_enum::<ReasoningEffort>(root, &["model_reasoning_effort"], &mut warnings);
-    sanitize_enum::<ReasoningEffort>(root, &["plan_mode_reasoning_effort"], &mut warnings);
-    sanitize_enum::<ReasoningSummary>(root, &["model_reasoning_summary"], &mut warnings);
-    sanitize_enum::<Verbosity>(root, &["model_verbosity"], &mut warnings);
-    sanitize_enum::<Personality>(root, &["personality"], &mut warnings);
-    sanitize_enum::<ServiceTier>(root, &["service_tier"], &mut warnings);
-    sanitize_enum::<WebSearchMode>(root, &["web_search"], &mut warnings);
-    sanitize_enum::<HistoryPersistence>(root, &["history", "persistence"], &mut warnings);
-    sanitize_enum::<WindowsSandboxModeToml>(root, &["windows", "sandbox"], &mut warnings);
-    sanitize_enum::<RealtimeWsVersion>(root, &["realtime", "version"], &mut warnings);
-    sanitize_enum::<RealtimeWsMode>(root, &["realtime", "type"], &mut warnings);
-    sanitize_enum::<RealtimeTransport>(root, &["realtime", "transport"], &mut warnings);
-    sanitize_enum::<RealtimeVoice>(root, &["realtime", "voice"], &mut warnings);
-    sanitize_tagged_enum::<ThreadStoreToml>(
-        root,
-        &["experimental_thread_store"],
-        "type",
-        &mut warnings,
-    );
-    sanitize_enum::<WebSearchContextSize>(
-        root,
-        &["tools", "web_search", "context_size"],
-        &mut warnings,
-    );
-
-    sanitize_table_entries(
-        root,
-        &["profiles"],
-        |value, prefix, warnings| {
-            sanitize_enum_with_prefix::<ServiceTier>(value, prefix, &["service_tier"], warnings);
-            sanitize_enum_with_prefix::<AskForApproval>(
-                value,
-                prefix,
-                &["approval_policy"],
-                warnings,
-            );
-            sanitize_enum_with_prefix::<ApprovalsReviewer>(
-                value,
-                prefix,
-                &["approvals_reviewer"],
-                warnings,
-            );
-            sanitize_enum_with_prefix::<SandboxMode>(value, prefix, &["sandbox_mode"], warnings);
-            sanitize_enum_with_prefix::<ReasoningEffort>(
-                value,
-                prefix,
-                &["model_reasoning_effort"],
-                warnings,
-            );
-            sanitize_enum_with_prefix::<ReasoningEffort>(
-                value,
-                prefix,
-                &["plan_mode_reasoning_effort"],
-                warnings,
-            );
-            sanitize_enum_with_prefix::<ReasoningSummary>(
-                value,
-                prefix,
-                &["model_reasoning_summary"],
-                warnings,
-            );
-            sanitize_enum_with_prefix::<Verbosity>(value, prefix, &["model_verbosity"], warnings);
-            sanitize_enum_with_prefix::<Personality>(value, prefix, &["personality"], warnings);
-            sanitize_enum_with_prefix::<WebSearchMode>(value, prefix, &["web_search"], warnings);
-            sanitize_enum_with_prefix::<WindowsSandboxModeToml>(
-                value,
-                prefix,
-                &["windows", "sandbox"],
-                warnings,
-            );
-            sanitize_enum_with_prefix::<WebSearchContextSize>(
-                value,
-                prefix,
-                &["tools", "web_search", "context_size"],
-                warnings,
-            );
-        },
-        &mut warnings,
-    );
-
-    sanitize_table_entries(
-        root,
-        &["projects"],
-        |value, prefix, warnings| {
-            sanitize_enum_with_prefix::<TrustLevel>(value, prefix, &["trust_level"], warnings);
-        },
-        &mut warnings,
-    );
+    for field in config_enum_fields() {
+        sanitize_enum_field(root, field, &mut warnings);
+    }
 
     warnings
 }
 
-fn sanitize_enum<T>(root: &mut TomlValue, path: &[&str], warnings: &mut Vec<String>)
-where
-    T: for<'de> Deserialize<'de>,
-{
-    sanitize_enum_with_prefix::<T>(root, &[], path, warnings);
+fn config_enum_fields() -> &'static [EnumField] {
+    CONFIG_ENUM_FIELDS.get_or_init(|| {
+        let root_schema = config_root_schema();
+        let root = Schema::Object(root_schema.schema.clone());
+        let mut fields = Vec::new();
+        collect_enum_fields(&root, &root_schema, &mut Vec::new(), &mut fields);
+        fields
+    })
 }
 
-fn sanitize_enum_with_prefix<T>(
-    root: &mut TomlValue,
-    prefix: &[String],
-    path: &[&str],
-    warnings: &mut Vec<String>,
-) where
-    T: for<'de> Deserialize<'de>,
-{
-    let Some(value) = value_at_path(root, path) else {
+fn config_root_schema() -> RootSchema {
+    SchemaSettings::draft07()
+        .with(|settings| {
+            settings.option_add_null_type = false;
+        })
+        .into_generator()
+        .into_root_schema_for::<ConfigToml>()
+}
+
+fn collect_enum_fields(
+    schema: &Schema,
+    root_schema: &RootSchema,
+    path: &mut Vec<PathSegment>,
+    fields: &mut Vec<EnumField>,
+) {
+    let Schema::Object(schema_object) = schema else {
         return;
     };
-    let Some(raw_value) = value.as_str() else {
-        return;
-    };
-    let parsed: Result<T, _> = value.clone().try_into();
-    if parsed.is_ok() {
+    let schema_object = resolve_schema_object(schema_object, root_schema);
+
+    if let Some(allowed_values) = string_enum_values(schema_object) {
+        push_enum_field(path, path, allowed_values, fields);
         return;
     }
 
-    let field_path = display_path(prefix, path);
-    warnings.push(format!(
-        "Ignoring unrecognized config value `{raw_value}` for `{field_path}`; using the default for this setting."
-    ));
-    tracing::warn!(
-        field = field_path,
-        value = raw_value,
-        "ignoring unrecognized config enum value"
-    );
-    remove_value_at_path(root, path);
+    if collect_string_union_enum(schema_object, path, fields) {
+        return;
+    }
+    if collect_tagged_union_enum(schema_object, path, fields) {
+        return;
+    }
+
+    if let Some(subschemas) = schema_object.subschemas.as_ref() {
+        for schema in subschemas.all_of.iter().flatten() {
+            collect_enum_fields(schema, root_schema, path, fields);
+        }
+        for schema in subschemas.any_of.iter().flatten() {
+            collect_enum_fields(schema, root_schema, path, fields);
+        }
+        for schema in subschemas.one_of.iter().flatten() {
+            collect_enum_fields(schema, root_schema, path, fields);
+        }
+    }
+
+    let Some(object) = schema_object.object.as_ref() else {
+        return;
+    };
+
+    for (property, property_schema) in &object.properties {
+        path.push(PathSegment::Key(property.clone()));
+        collect_enum_fields(property_schema, root_schema, path, fields);
+        path.pop();
+    }
+
+    if let Some(additional_properties) = object.additional_properties.as_ref() {
+        path.push(PathSegment::MapValue);
+        collect_enum_fields(additional_properties, root_schema, path, fields);
+        path.pop();
+    }
 }
 
-fn sanitize_tagged_enum<T>(
-    root: &mut TomlValue,
-    path: &[&str],
-    tag: &str,
-    warnings: &mut Vec<String>,
-) where
-    T: for<'de> Deserialize<'de>,
-{
-    let Some(value) = value_at_path(root, path) else {
+fn resolve_schema_object<'a>(
+    schema_object: &'a SchemaObject,
+    root_schema: &'a RootSchema,
+) -> &'a SchemaObject {
+    let Some(reference) = schema_object.reference.as_deref() else {
+        return schema_object;
+    };
+    let Some(definition_name) = reference.strip_prefix("#/definitions/") else {
+        return schema_object;
+    };
+    let Some(Schema::Object(definition)) = root_schema.definitions.get(definition_name) else {
+        return schema_object;
+    };
+    resolve_schema_object(definition, root_schema)
+}
+
+fn collect_string_union_enum(
+    schema_object: &SchemaObject,
+    path: &[PathSegment],
+    fields: &mut Vec<EnumField>,
+) -> bool {
+    let Some(subschemas) = schema_object.subschemas.as_ref() else {
+        return false;
+    };
+    let Some(one_of) = subschemas.one_of.as_ref() else {
+        return false;
+    };
+
+    let mut allowed_values = BTreeSet::new();
+    let mut found_string_enum = false;
+    for schema in one_of {
+        let Schema::Object(variant) = schema else {
+            continue;
+        };
+        let Some(values) = string_enum_values(variant) else {
+            continue;
+        };
+        found_string_enum = true;
+        allowed_values.extend(values);
+    }
+
+    if found_string_enum {
+        push_enum_field(path, path, allowed_values, fields);
+    }
+    found_string_enum
+}
+
+fn collect_tagged_union_enum(
+    schema_object: &SchemaObject,
+    path: &[PathSegment],
+    fields: &mut Vec<EnumField>,
+) -> bool {
+    let Some(subschemas) = schema_object.subschemas.as_ref() else {
+        return false;
+    };
+    let Some(one_of) = subschemas.one_of.as_ref() else {
+        return false;
+    };
+
+    let mut allowed_values = BTreeSet::new();
+    for schema in one_of {
+        let Schema::Object(variant) = schema else {
+            return false;
+        };
+        let Some(object) = variant.object.as_ref() else {
+            return false;
+        };
+        let Some(tag_schema) = object.properties.get("type") else {
+            return false;
+        };
+        let Schema::Object(tag_schema) = tag_schema else {
+            return false;
+        };
+        let Some(values) = string_enum_values(tag_schema) else {
+            return false;
+        };
+        allowed_values.extend(values);
+    }
+
+    if allowed_values.is_empty() {
+        return false;
+    }
+
+    let mut value_path = path.to_vec();
+    value_path.push(PathSegment::Key("type".to_string()));
+    push_enum_field(&value_path, path, allowed_values, fields);
+    true
+}
+
+fn string_enum_values(schema_object: &SchemaObject) -> Option<BTreeSet<String>> {
+    let values = schema_object.enum_values.as_ref()?;
+    let mut allowed_values = BTreeSet::new();
+    for value in values {
+        let JsonValue::String(value) = value else {
+            return None;
+        };
+        allowed_values.insert(value.clone());
+    }
+    (!allowed_values.is_empty()).then_some(allowed_values)
+}
+
+fn push_enum_field(
+    value_path: &[PathSegment],
+    remove_path: &[PathSegment],
+    allowed_values: BTreeSet<String>,
+    fields: &mut Vec<EnumField>,
+) {
+    let field = EnumField {
+        value_path: value_path.to_vec(),
+        remove_path: remove_path.to_vec(),
+        allowed_values,
+    };
+    if !fields.contains(&field) {
+        fields.push(field);
+    }
+}
+
+fn sanitize_enum_field(root: &mut TomlValue, field: &EnumField, warnings: &mut Vec<String>) {
+    let paths = matching_paths(root, &field.value_path);
+    for value_path in paths {
+        let Some(raw_value) = value_at_path(root, &value_path).and_then(TomlValue::as_str) else {
+            continue;
+        };
+        if field.allowed_values.contains(raw_value) {
+            continue;
+        }
+
+        let field_path = display_path(&value_path);
+        warnings.push(format!(
+            "Ignoring unrecognized config value `{raw_value}` for `{field_path}`; using the default for this setting."
+        ));
+        tracing::warn!(
+            field = field_path,
+            value = raw_value,
+            "ignoring unrecognized config enum value"
+        );
+
+        let remove_path = remove_path_for_match(field, &value_path);
+        remove_value_at_path(root, &remove_path);
+    }
+}
+
+fn matching_paths(root: &TomlValue, path: &[PathSegment]) -> Vec<Vec<String>> {
+    let mut matches = Vec::new();
+    collect_matching_paths(root, path, &mut Vec::new(), &mut matches);
+    matches
+}
+
+fn collect_matching_paths(
+    value: &TomlValue,
+    path: &[PathSegment],
+    current_path: &mut Vec<String>,
+    matches: &mut Vec<Vec<String>>,
+) {
+    let Some((segment, rest)) = path.split_first() else {
+        matches.push(current_path.clone());
         return;
     };
     let Some(table) = value.as_table() else {
         return;
     };
-    let Some(raw_value) = table.get(tag).and_then(TomlValue::as_str) else {
-        return;
-    };
-    let parsed: Result<T, _> = value.clone().try_into();
-    if parsed.is_ok() {
-        return;
-    }
 
-    let field_path = display_path(&[], path);
-    warnings.push(format!(
-        "Ignoring unrecognized config value `{raw_value}` for `{field_path}.{tag}`; using the default for this setting."
-    ));
-    tracing::warn!(
-        field = format!("{field_path}.{tag}"),
-        value = raw_value,
-        "ignoring unrecognized config enum value"
-    );
-    remove_value_at_path(root, path);
-}
-
-fn sanitize_table_entries(
-    root: &mut TomlValue,
-    path: &[&str],
-    mut sanitize_entry: impl FnMut(&mut TomlValue, &[String], &mut Vec<String>),
-    warnings: &mut Vec<String>,
-) {
-    let Some(TomlValue::Table(table)) = value_at_path_mut(root, path) else {
-        return;
-    };
-
-    for (key, value) in table {
-        let mut prefix = path
-            .iter()
-            .map(|part| (*part).to_string())
-            .collect::<Vec<_>>();
-        prefix.push(key.clone());
-        sanitize_entry(value, &prefix, warnings);
+    match segment {
+        PathSegment::Key(key) => {
+            let Some(value) = table.get(key) else {
+                return;
+            };
+            current_path.push(key.clone());
+            collect_matching_paths(value, rest, current_path, matches);
+            current_path.pop();
+        }
+        PathSegment::MapValue => {
+            for (key, value) in table {
+                current_path.push(key.clone());
+                collect_matching_paths(value, rest, current_path, matches);
+                current_path.pop();
+            }
+        }
     }
 }
 
-fn value_at_path_mut<'a>(root: &'a mut TomlValue, path: &[&str]) -> Option<&'a mut TomlValue> {
+fn remove_path_for_match(field: &EnumField, value_path: &[String]) -> Vec<String> {
+    field
+        .remove_path
+        .iter()
+        .zip(value_path.iter())
+        .map(|(segment, matched)| match segment {
+            PathSegment::Key(key) => key.clone(),
+            PathSegment::MapValue => matched.clone(),
+        })
+        .collect()
+}
+
+fn value_at_path<'a>(root: &'a TomlValue, path: &[String]) -> Option<&'a TomlValue> {
     let mut value = root;
     for part in path {
-        value = value.as_table_mut()?.get_mut(*part)?;
+        value = value.as_table()?.get(part)?;
     }
     Some(value)
 }
 
-fn value_at_path<'a>(root: &'a TomlValue, path: &[&str]) -> Option<&'a TomlValue> {
-    let mut value = root;
-    for part in path {
-        value = value.as_table()?.get(*part)?;
-    }
-    Some(value)
-}
-
-fn remove_value_at_path(root: &mut TomlValue, path: &[&str]) {
+fn remove_value_at_path(root: &mut TomlValue, path: &[String]) {
     let Some((last, parent_path)) = path.split_last() else {
         return;
     };
-    let Some(parent) = value_at_path_mut(root, parent_path).and_then(TomlValue::as_table_mut)
-    else {
-        return;
-    };
-    parent.remove(*last);
+
+    let mut value = root;
+    for part in parent_path {
+        let Some(next) = value.as_table_mut().and_then(|table| table.get_mut(part)) else {
+            return;
+        };
+        value = next;
+    }
+
+    if let Some(table) = value.as_table_mut() {
+        table.remove(last);
+    }
 }
 
-fn display_path(prefix: &[String], path: &[&str]) -> String {
-    prefix
-        .iter()
-        .map(String::as_str)
-        .chain(path.iter().copied())
-        .collect::<Vec<_>>()
-        .join(".")
+fn display_path(path: &[String]) -> String {
+    path.join(".")
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config_toml::ConfigToml;
     use pretty_assertions::assert_eq;
 
     #[test]
@@ -336,7 +405,7 @@ approval_policy = "on-request"
             (
                 None,
                 None,
-                Some(AskForApproval::OnRequest),
+                Some(codex_protocol::protocol::AskForApproval::OnRequest),
                 vec![
                     "Ignoring unrecognized config value `ultrafast` for `service_tier`; using the default for this setting.".to_string(),
                     "Ignoring unrecognized config value `verbose` for `model_reasoning_summary`; using the default for this setting.".to_string(),
@@ -348,6 +417,31 @@ approval_policy = "on-request"
                 config.approval_policy,
                 warnings,
             )
+        );
+    }
+
+    #[test]
+    fn unknown_tagged_enum_removes_the_parent_field() {
+        let mut value: TomlValue = toml::from_str(
+            r#"
+[experimental_thread_store]
+type = "future"
+endpoint = "https://example.test"
+"#,
+        )
+        .expect("config should parse as TOML");
+
+        let warnings = sanitize_unknown_enum_values(&mut value);
+        let expected: TomlValue = toml::from_str("").expect("expected TOML should parse");
+
+        assert_eq!(
+            (
+                expected,
+                vec![
+                    "Ignoring unrecognized config value `future` for `experimental_thread_store.type`; using the default for this setting.".to_string(),
+                ],
+            ),
+            (value, warnings)
         );
     }
 }
