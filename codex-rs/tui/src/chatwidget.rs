@@ -9362,7 +9362,12 @@ impl ChatWidget {
     }
 
     fn handle_service_tier_slash_command(&mut self, command: ServiceTierCommand) {
-        let next_service_tier_id = if self.config.service_tier_id.as_deref() == Some(&command.id) {
+        let active_service_tier_id = self
+            .config
+            .service_tier_id
+            .as_deref()
+            .or_else(|| self.effective_service_tier.map(ServiceTier::request_value));
+        let next_service_tier_id = if active_service_tier_id == Some(command.id.as_str()) {
             None
         } else {
             Some(command.id)

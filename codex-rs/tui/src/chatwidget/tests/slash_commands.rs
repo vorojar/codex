@@ -1837,6 +1837,30 @@ async fn user_turn_sends_standard_override_after_fast_is_turned_off() {
 }
 
 #[tokio::test]
+async fn service_tier_slash_command_clears_effective_session_tier() {
+    let (mut chat, mut rx, _op_rx) = make_chatwidget_manual(Some("gpt-5.4")).await;
+    set_fast_mode_test_catalog(&mut chat);
+    chat.set_feature_enabled(Feature::FastMode, /*enabled*/ true);
+    chat.config.service_tier_id = None;
+    chat.config.service_tier = None;
+    chat.effective_service_tier = Some(ServiceTier::Fast);
+
+    submit_composer_text(&mut chat, "/fast");
+
+    let events = std::iter::from_fn(|| rx.try_recv().ok()).collect::<Vec<_>>();
+    assert!(
+        events.iter().any(|event| matches!(
+            event,
+            AppEvent::CodexOp(Op::OverrideTurnContext {
+                service_tier: Some(None),
+                ..
+            })
+        )),
+        "expected slash command to clear effective service tier; events: {events:?}"
+    );
+}
+
+#[tokio::test]
 async fn compact_queues_user_messages_snapshot() {
     let (mut chat, _rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
     chat.thread_id = Some(ThreadId::new());
