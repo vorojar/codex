@@ -25,7 +25,6 @@ use codex_sandboxing::policy_transforms::normalize_additional_permissions;
 use codex_utils_absolute_path::AbsolutePathBuf;
 use codex_utils_absolute_path::AbsolutePathBufGuard;
 use serde::Deserialize;
-use serde_json::Value;
 use std::path::Path;
 use std::sync::Arc;
 
@@ -75,18 +74,6 @@ where
 {
     let _guard = AbsolutePathBufGuard::new(base_path);
     parse_arguments(arguments)
-}
-
-fn resolve_workdir_base_path(
-    arguments: &str,
-    default_cwd: &AbsolutePathBuf,
-) -> Result<AbsolutePathBuf, FunctionCallError> {
-    let arguments: Value = parse_arguments(arguments)?;
-    Ok(arguments
-        .get("workdir")
-        .and_then(Value::as_str)
-        .filter(|workdir| !workdir.is_empty())
-        .map_or_else(|| default_cwd.clone(), |workdir| default_cwd.join(workdir)))
 }
 
 pub(crate) struct ResolvedToolEnvironment {
@@ -288,7 +275,13 @@ mod tests {
     use super::implicit_granted_permissions;
     use super::normalize_and_validate_additional_permissions;
     use super::permissions_are_preapproved;
+    use super::resolve_tool_environment;
+    use crate::environment_selection::ResolvedTurnEnvironments;
+    use crate::function_tool::FunctionCallError;
     use crate::sandboxing::SandboxPermissions;
+    use crate::session::tests::make_session_and_context;
+    use crate::session::turn_context::TurnEnvironment;
+    use crate::tools::handlers::parse_arguments_with_base_path;
     use codex_protocol::models::AdditionalPermissionProfile;
     use codex_protocol::models::FileSystemPermissions;
     use codex_protocol::models::NetworkPermissions;
@@ -301,8 +294,15 @@ mod tests {
     use codex_sandboxing::policy_transforms::intersect_permission_profiles;
     use codex_sandboxing::policy_transforms::merge_permission_profiles;
     use codex_utils_absolute_path::AbsolutePathBuf;
+    use core_test_support::PathExt;
     use pretty_assertions::assert_eq;
+    use std::sync::Arc;
     use tempfile::tempdir;
+
+    #[derive(serde::Deserialize)]
+    struct TestToolArgs {
+        additional_permissions: Option<AdditionalPermissionProfile>,
+    }
 
     fn network_permissions() -> AdditionalPermissionProfile {
         AdditionalPermissionProfile {
@@ -323,6 +323,104 @@ mod tests {
             )),
             ..Default::default()
         }
+    }
+
+    #[tokio::test]
+    async fn resolve_tool_environment_returns_none_without_turn_environments() {
+        let (_session, mut turn) = make_session_and_context().await;
+        turn.environments.turn_environments.clear();
+
+        let resolved = resolve_tool_environment(&turn, r#"{"cmd":"echo hello"}"#)
+            .expect("valid arguments should parse");
+
+        assert!(resolved.is_none());
+    }
+
+    #[tokio::test]
+    async fn resolve_tool_environment_uses_primary_environment_by_default() {
+        let (_session, turn) = make_session_and_context().await;
+        let primary = turn.environments.primary().expect("primary environment");
+
+        let resolved = resolve_tool_environment(&turn, r#"{"cmd":"echo hello"}"#)
+            .expect("valid arguments should parse")
+            .expect("selected environment");
+
+        assert!(Arc::ptr_eq(&resolved.environment, &primary.environment));
+        assert_eq!(resolved.cwd, primary.cwd);
+    }
+
+    #[tokio::test]
+    async fn resolve_tool_environment_selects_environment_before_resolving_workdir()
+    -> anyhow::Result<()> {
+        let (_session, mut turn) = make_session_and_context().await;
+        let primary = turn
+            .environments
+            .primary()
+            .expect("primary environment")
+            .environment
+            .clone();
+        let local_cwd = tempdir()?;
+        let remote_cwd = tempdir()?;
+        turn.environments = ResolvedTurnEnvironments {
+            turn_environments: vec![
+                TurnEnvironment {
+                    environment_id: "local".to_string(),
+                    environment: primary.clone(),
+                    cwd: local_cwd.path().abs(),
+                    shell: "bash".to_string(),
+                },
+                TurnEnvironment {
+                    environment_id: "remote".to_string(),
+                    environment: primary,
+                    cwd: remote_cwd.path().abs(),
+                    shell: "bash".to_string(),
+                },
+            ],
+        };
+        let expected_cwd = remote_cwd.path().join("nested").abs();
+        let expected_write = expected_cwd.join("relative-write.txt");
+        let arguments = r#"{
+            "cmd": "echo hello",
+            "environment_id": "remote",
+            "workdir": "nested",
+            "additional_permissions": {
+                "file_system": {
+                    "write": ["./relative-write.txt"]
+                }
+            }
+        }"#;
+
+        let resolved = resolve_tool_environment(&turn, arguments)?
+            .expect("selected environment should resolve");
+        let args: TestToolArgs = parse_arguments_with_base_path(arguments, &resolved.cwd)?;
+
+        assert_eq!(resolved.cwd, expected_cwd);
+        assert_eq!(
+            args.additional_permissions,
+            Some(AdditionalPermissionProfile {
+                file_system: Some(FileSystemPermissions::from_read_write_roots(
+                    /*read*/ None,
+                    Some(vec![expected_write]),
+                )),
+                ..Default::default()
+            })
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn resolve_tool_environment_rejects_unknown_environment_id() {
+        let (_session, turn) = make_session_and_context().await;
+
+        let err = match resolve_tool_environment(&turn, r#"{"environment_id":"missing"}"#) {
+            Ok(_) => panic!("unknown environment should be rejected"),
+            Err(err) => err,
+        };
+
+        assert_eq!(
+            err,
+            FunctionCallError::RespondToModel("unknown turn environment id `missing`".to_string())
+        );
     }
 
     #[test]
