@@ -2245,7 +2245,9 @@ mod tests {
             access: FileSystemAccessMode::Write,
         }]);
 
-        let args = create_filesystem_args(&policy, temp_dir.path()).expect("filesystem args");
+        let args =
+            create_filesystem_args(&policy, temp_dir.path(), NO_UNREADABLE_GLOB_SCAN_MAX_DEPTH)
+                .expect("filesystem args");
 
         assert!(
             args.args
