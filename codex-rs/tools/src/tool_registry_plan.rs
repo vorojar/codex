@@ -7,6 +7,7 @@ use crate::ShellToolOptions;
 use crate::SpawnAgentToolOptions;
 use crate::TOOL_SEARCH_DEFAULT_LIMIT;
 use crate::TOOL_SEARCH_TOOL_NAME;
+use crate::ToolEnvironmentMode;
 use crate::ToolHandlerKind;
 use crate::ToolName;
 use crate::ToolRegistryPlan;
