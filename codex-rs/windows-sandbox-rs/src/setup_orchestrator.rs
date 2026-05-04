@@ -97,6 +97,7 @@ pub struct SetupRootOverrides {
     pub read_roots_include_platform_defaults: bool,
     pub write_roots: Option<Vec<PathBuf>>,
     pub deny_write_paths: Option<Vec<PathBuf>>,
+    pub protected_metadata_targets: Option<Vec<ProtectedMetadataTarget>>,
 }
 
 /// Layer: Windows enforcement request boundary. These targets are projected by
@@ -169,6 +170,7 @@ pub fn run_setup_refresh_with_extra_read_roots(
             read_roots_include_platform_defaults: false,
             write_roots: Some(Vec::new()),
             deny_write_paths: None,
+            protected_metadata_targets: None,
         },
     )
 }
@@ -186,6 +188,8 @@ fn run_setup_refresh_inner(
     }
     let (read_roots, write_roots) = build_payload_roots(&request, &overrides);
     let deny_write_paths = build_payload_deny_write_paths(&request, overrides.deny_write_paths);
+    let protected_metadata_targets =
+        build_payload_protected_metadata_targets(overrides.protected_metadata_targets);
     let network_identity =
         SandboxNetworkIdentity::from_policy(request.policy, request.proxy_enforced);
     let offline_proxy_settings = offline_proxy_settings_from_env(request.env_map, network_identity);
@@ -198,6 +202,7 @@ fn run_setup_refresh_inner(
         read_roots,
         write_roots,
         deny_write_paths,
+        protected_metadata_targets,
         proxy_ports: offline_proxy_settings.proxy_ports,
         allow_local_binding: offline_proxy_settings.allow_local_binding,
         otel: None,
@@ -436,6 +441,8 @@ struct ElevationPayload {
     write_roots: Vec<PathBuf>,
     #[serde(default)]
     deny_write_paths: Vec<PathBuf>,
+    #[serde(default)]
+    protected_metadata_targets: Vec<ProtectedMetadataTarget>,
     proxy_ports: Vec<u16>,
     #[serde(default)]
     allow_local_binding: bool,
@@ -738,6 +745,8 @@ pub fn run_elevated_setup(
     })?;
     let (read_roots, write_roots) = build_payload_roots(&request, &overrides);
     let deny_write_paths = build_payload_deny_write_paths(&request, overrides.deny_write_paths);
+    let protected_metadata_targets =
+        build_payload_protected_metadata_targets(overrides.protected_metadata_targets);
     let network_identity =
         SandboxNetworkIdentity::from_policy(request.policy, request.proxy_enforced);
     let offline_proxy_settings = offline_proxy_settings_from_env(request.env_map, network_identity);
@@ -750,6 +759,7 @@ pub fn run_elevated_setup(
         read_roots,
         write_roots,
         deny_write_paths,
+        protected_metadata_targets,
         proxy_ports: offline_proxy_settings.proxy_ports,
         allow_local_binding: offline_proxy_settings.allow_local_binding,
         real_user: std::env::var("USERNAME").unwrap_or_else(|_| "Administrators".to_string()),
@@ -832,6 +842,12 @@ fn build_payload_deny_write_paths(
         .collect();
     deny_write_paths.extend(allow_deny_paths.deny);
     deny_write_paths
+}
+
+fn build_payload_protected_metadata_targets(
+    explicit_targets: Option<Vec<ProtectedMetadataTarget>>,
+) -> Vec<ProtectedMetadataTarget> {
+    explicit_targets.unwrap_or_default()
 }
 
 fn expand_user_profile_root(roots: Vec<PathBuf>) -> Vec<PathBuf> {
@@ -1345,6 +1361,7 @@ mod tests {
                 read_roots_include_platform_defaults: true,
                 write_roots: None,
                 deny_write_paths: None,
+                protected_metadata_targets: None,
             },
         );
         let expected_helper =
@@ -1392,6 +1409,7 @@ mod tests {
                 read_roots_include_platform_defaults: false,
                 write_roots: None,
                 deny_write_paths: None,
+                protected_metadata_targets: None,
             },
         );
         let expected_helper =

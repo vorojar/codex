@@ -140,6 +140,7 @@ pub fn require_logon_sandbox_creds(
     read_roots_include_platform_defaults: bool,
     write_roots_override: Option<&[PathBuf]>,
     deny_write_paths_override: &[PathBuf],
+    protected_metadata_targets: &[crate::setup::ProtectedMetadataTarget],
     proxy_enforced: bool,
 ) -> Result<SandboxCreds> {
     let sandbox_dir = crate::setup::sandbox_dir(codex_home);
@@ -202,6 +203,7 @@ pub fn require_logon_sandbox_creds(
                 read_roots_include_platform_defaults,
                 write_roots: Some(needed_write.clone()),
                 deny_write_paths: Some(deny_write_paths_override.to_vec()),
+                protected_metadata_targets: Some(protected_metadata_targets.to_vec()),
             },
         )?;
         identity = select_identity(network_identity, codex_home)?;
@@ -221,6 +223,7 @@ pub fn require_logon_sandbox_creds(
             read_roots_include_platform_defaults,
             write_roots: Some(needed_write),
             deny_write_paths: Some(deny_write_paths_override.to_vec()),
+            protected_metadata_targets: Some(protected_metadata_targets.to_vec()),
         },
     )?;
     let identity = identity.ok_or_else(|| {

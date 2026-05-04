@@ -8,6 +8,7 @@ use base64::Engine;
 use base64::engine::general_purpose::STANDARD as BASE64;
 use codex_otel::StatsigMetricsSettings;
 use codex_windows_sandbox::LOG_FILE_NAME;
+use codex_windows_sandbox::ProtectedMetadataTarget;
 use codex_windows_sandbox::SETUP_VERSION;
 use codex_windows_sandbox::SetupErrorCode;
 use codex_windows_sandbox::SetupErrorReport;
@@ -87,6 +88,9 @@ struct Payload {
     write_roots: Vec<PathBuf>,
     #[serde(default)]
     deny_write_paths: Vec<PathBuf>,
+    #[allow(dead_code)]
+    #[serde(default)]
+    protected_metadata_targets: Vec<ProtectedMetadataTarget>,
     proxy_ports: Vec<u16>,
     #[serde(default)]
     allow_local_binding: bool,

@@ -2,6 +2,8 @@ use std::collections::HashMap;
 use std::path::Path;
 use std::path::PathBuf;
 
+use crate::setup::ProtectedMetadataTarget;
+
 pub struct ElevatedSandboxCaptureRequest<'a> {
     pub policy_json_or_preset: &'a str,
     pub sandbox_policy_cwd: &'a Path,
@@ -16,6 +18,7 @@ pub struct ElevatedSandboxCaptureRequest<'a> {
     pub read_roots_include_platform_defaults: bool,
     pub write_roots_override: Option<&'a [PathBuf]>,
     pub deny_write_paths_override: &'a [PathBuf],
+    pub protected_metadata_targets: &'a [ProtectedMetadataTarget],
 }
 
 mod windows_impl {
@@ -125,6 +128,7 @@ mod windows_impl {
             read_roots_include_platform_defaults,
             write_roots_override,
             deny_write_paths_override,
+            protected_metadata_targets,
         } = request;
         let policy = parse_policy(policy_json_or_preset)?;
         normalize_null_device_env(&mut env_map);
@@ -147,6 +151,7 @@ mod windows_impl {
             read_roots_include_platform_defaults,
             write_roots_override,
             deny_write_paths_override,
+            protected_metadata_targets,
             proxy_enforced,
         )?;
         // Build capability SID for ACL grants.

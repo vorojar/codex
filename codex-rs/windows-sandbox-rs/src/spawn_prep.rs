@@ -17,6 +17,7 @@ use crate::policy::SandboxPolicy;
 use crate::policy::parse_policy;
 use crate::sandbox_utils::ensure_codex_home_exists;
 use crate::sandbox_utils::inject_git_safe_directory;
+use crate::setup::ProtectedMetadataTarget;
 use crate::token::convert_string_sid_to_sid;
 use crate::token::create_readonly_token_with_cap;
 use crate::token::create_workspace_write_token_with_caps_from;
@@ -264,6 +265,7 @@ pub(crate) fn prepare_elevated_spawn_context(
     cwd: &Path,
     env_map: &mut HashMap<String, String>,
     command: &[String],
+    protected_metadata_targets: &[ProtectedMetadataTarget],
 ) -> Result<ElevatedSpawnContext> {
     let common = prepare_spawn_context_common(
         policy_json_or_preset,
@@ -298,6 +300,7 @@ pub(crate) fn prepare_elevated_spawn_context(
         /*read_roots_include_platform_defaults*/ false,
         write_roots_override,
         &deny_write_paths,
+        protected_metadata_targets,
         /*proxy_enforced*/ false,
     )?;
     let caps = load_or_create_cap_sids(codex_home)?;

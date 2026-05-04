@@ -38,6 +38,7 @@ pub(crate) async fn spawn_windows_sandbox_session_elevated(
         cwd,
         &mut env_map,
         &command,
+        &[],
     )?;
 
     let spawn_request = SpawnRequest {
