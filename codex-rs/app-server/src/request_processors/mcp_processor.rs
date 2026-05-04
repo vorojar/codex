@@ -47,8 +47,9 @@ impl McpRequestProcessor {
         &self,
         request_id: &ConnectionRequestId,
         params: ListMcpServerStatusParams,
+        client_compatibility_flags: ClientCompatibilityFlags,
     ) -> Result<Option<ClientResponsePayload>, JSONRPCErrorError> {
-        self.list_mcp_server_status(request_id, params)
+        self.list_mcp_server_status(request_id, params, client_compatibility_flags)
             .await
             .map(|()| None)
     }
@@ -57,20 +58,38 @@ impl McpRequestProcessor {
         &self,
         request_id: &ConnectionRequestId,
         params: McpResourceReadParams,
+        app_server_client_name: Option<String>,
+        app_server_client_version: Option<String>,
+        client_compatibility_flags: ClientCompatibilityFlags,
     ) -> Result<Option<ClientResponsePayload>, JSONRPCErrorError> {
-        self.read_mcp_resource(request_id, params)
-            .await
-            .map(|()| None)
+        self.read_mcp_resource(
+            request_id,
+            params,
+            app_server_client_name,
+            app_server_client_version,
+            client_compatibility_flags,
+        )
+        .await
+        .map(|()| None)
     }
 
     pub(crate) async fn mcp_server_tool_call(
         &self,
         request_id: &ConnectionRequestId,
         params: McpServerToolCallParams,
+        app_server_client_name: Option<String>,
+        app_server_client_version: Option<String>,
+        client_compatibility_flags: ClientCompatibilityFlags,
     ) -> Result<Option<ClientResponsePayload>, JSONRPCErrorError> {
-        self.call_mcp_server_tool(request_id, params)
-            .await
-            .map(|()| None)
+        self.call_mcp_server_tool(
+            request_id,
+            params,
+            app_server_client_name,
+            app_server_client_version,
+            client_compatibility_flags,
+        )
+        .await
+        .map(|()| None)
     }
 
     async fn mcp_server_refresh_response(
@@ -248,6 +267,7 @@ impl McpRequestProcessor {
         &self,
         request_id: &ConnectionRequestId,
         params: ListMcpServerStatusParams,
+        client_compatibility_flags: ClientCompatibilityFlags,
     ) -> Result<(), JSONRPCErrorError> {
         let request = request_id.clone();
 
@@ -271,39 +291,19 @@ impl McpRequestProcessor {
         };
 
         tokio::spawn(async move {
-            Self::list_mcp_server_status_task(
-                outgoing,
-                request,
+            let result = Self::list_mcp_server_status_response(
+                request.request_id.to_string(),
                 params,
                 config,
                 mcp_config,
                 auth,
                 runtime_environment,
+                client_compatibility_flags,
             )
             .await;
+            outgoing.send_result(request, result).await;
         });
         Ok(())
-    }
-
-    async fn list_mcp_server_status_task(
-        outgoing: Arc<OutgoingMessageSender>,
-        request_id: ConnectionRequestId,
-        params: ListMcpServerStatusParams,
-        config: Config,
-        mcp_config: codex_mcp::McpConfig,
-        auth: Option<CodexAuth>,
-        runtime_environment: McpRuntimeEnvironment,
-    ) {
-        let result = Self::list_mcp_server_status_response(
-            request_id.request_id.to_string(),
-            params,
-            config,
-            mcp_config,
-            auth,
-            runtime_environment,
-        )
-        .await;
-        outgoing.send_result(request_id, result).await;
     }
 
     async fn list_mcp_server_status_response(
@@ -313,6 +313,7 @@ impl McpRequestProcessor {
         mcp_config: codex_mcp::McpConfig,
         auth: Option<CodexAuth>,
         runtime_environment: McpRuntimeEnvironment,
+        client_compatibility_flags: ClientCompatibilityFlags,
     ) -> Result<ListMcpServerStatusResponse, JSONRPCErrorError> {
         let detail = match params.detail.unwrap_or(McpServerStatusDetail::Full) {
             McpServerStatusDetail::Full => McpSnapshotDetail::Full,
@@ -325,6 +326,7 @@ impl McpRequestProcessor {
             request_id,
             runtime_environment,
             detail,
+            client_compatibility_flags.mcp_elicitation,
         )
         .await;
 
@@ -398,6 +400,9 @@ impl McpRequestProcessor {
         &self,
         request_id: &ConnectionRequestId,
         params: McpResourceReadParams,
+        app_server_client_name: Option<String>,
+        app_server_client_version: Option<String>,
+        client_compatibility_flags: ClientCompatibilityFlags,
     ) -> Result<(), JSONRPCErrorError> {
         let outgoing = Arc::clone(&self.outgoing);
         let McpResourceReadParams {
@@ -408,6 +413,13 @@ impl McpRequestProcessor {
 
         if let Some(thread_id) = thread_id {
             let (_, thread) = self.load_thread(&thread_id).await?;
+            thread
+                .set_app_server_client_info(
+                    app_server_client_name,
+                    app_server_client_version,
+                    client_compatibility_flags,
+                )
+                .await;
             let request_id = request_id.clone();
 
             tokio::spawn(async move {
@@ -440,6 +452,7 @@ impl McpRequestProcessor {
                 runtime_environment,
                 &server,
                 &uri,
+                client_compatibility_flags.mcp_elicitation,
             )
             .await
             .and_then(|result| serde_json::to_value(result).map_err(anyhow::Error::from));
@@ -469,10 +482,20 @@ impl McpRequestProcessor {
         &self,
         request_id: &ConnectionRequestId,
         params: McpServerToolCallParams,
+        app_server_client_name: Option<String>,
+        app_server_client_version: Option<String>,
+        client_compatibility_flags: ClientCompatibilityFlags,
     ) -> Result<(), JSONRPCErrorError> {
         let outgoing = Arc::clone(&self.outgoing);
         let thread_id = params.thread_id.clone();
         let (_, thread) = self.load_thread(&thread_id).await?;
+        thread
+            .set_app_server_client_info(
+                app_server_client_name,
+                app_server_client_version,
+                client_compatibility_flags,
+            )
+            .await;
         let meta = with_mcp_tool_call_thread_id_meta(params.meta, &thread_id);
         let request_id = request_id.clone();
 

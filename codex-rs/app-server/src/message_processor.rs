@@ -1195,17 +1195,29 @@ impl MessageProcessor {
             }
             ClientRequest::McpServerStatusList { params, .. } => {
                 self.mcp_processor
-                    .mcp_server_status_list(&request_id, params)
+                    .mcp_server_status_list(&request_id, params, client_compatibility_flags)
                     .await
             }
             ClientRequest::McpResourceRead { params, .. } => {
                 self.mcp_processor
-                    .mcp_resource_read(&request_id, params)
+                    .mcp_resource_read(
+                        &request_id,
+                        params,
+                        app_server_client_name.clone(),
+                        client_version.clone(),
+                        client_compatibility_flags,
+                    )
                     .await
             }
             ClientRequest::McpServerToolCall { params, .. } => {
                 self.mcp_processor
-                    .mcp_server_tool_call(&request_id, params)
+                    .mcp_server_tool_call(
+                        &request_id,
+                        params,
+                        app_server_client_name.clone(),
+                        client_version.clone(),
+                        client_compatibility_flags,
+                    )
                     .await
             }
             ClientRequest::WindowsSandboxSetupStart { params, .. } => {

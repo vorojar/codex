@@ -231,6 +231,7 @@ pub async fn read_mcp_resource(
     runtime_environment: McpRuntimeEnvironment,
     server: &str,
     uri: &str,
+    elicitation_compatibility: crate::McpElicitationCompatibility,
 ) -> anyhow::Result<ReadResourceResult> {
     let mut mcp_servers = effective_mcp_servers(config, auth);
     mcp_servers.retain(|name, _| name == server);
@@ -255,7 +256,7 @@ pub async fn read_mcp_resource(
         codex_apps_tools_cache_key(auth),
         tool_plugin_provenance(config),
         auth,
-        crate::McpElicitationCompatibility::default(),
+        elicitation_compatibility,
     )
     .await;
 
@@ -286,6 +287,7 @@ pub async fn collect_mcp_server_status_snapshot_with_detail(
     submit_id: String,
     runtime_environment: McpRuntimeEnvironment,
     detail: McpSnapshotDetail,
+    elicitation_compatibility: crate::McpElicitationCompatibility,
 ) -> McpServerStatusSnapshot {
     let mcp_servers = effective_mcp_servers(config, auth);
     let tool_plugin_provenance = tool_plugin_provenance(config);
@@ -321,7 +323,7 @@ pub async fn collect_mcp_server_status_snapshot_with_detail(
         codex_apps_tools_cache_key(auth),
         tool_plugin_provenance,
         auth,
-        crate::McpElicitationCompatibility::default(),
+        elicitation_compatibility,
     )
     .await;
 
