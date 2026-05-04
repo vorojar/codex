@@ -240,6 +240,12 @@ async fn exec_command_routes_across_empty_single_and_multiple_turn_environments(
     .await;
     test.submit_turn_with_environments("route exec command", Some(vec![]))
         .await?;
+    wait_for_event_with_timeout(
+        &test.codex,
+        |event| matches!(event, EventMsg::TurnComplete(_)),
+        REMOTE_EXEC_COMMAND_ROUTING_TIMEOUT,
+    )
+    .await;
     let no_env_tools = tool_names(&no_env_mock.single_request().body_json());
     assert!(
         !no_env_tools.contains(&"exec_command".to_string()),
