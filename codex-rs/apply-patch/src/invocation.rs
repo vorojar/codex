@@ -20,7 +20,7 @@ use crate::MaybeApplyPatchVerified;
 use crate::parser::Hunk;
 use crate::parser::ParseError;
 use crate::parser::ParsePatchMode;
-use crate::parser::parse_patch_with_mode;
+use crate::parser::parse_patch;
 use crate::unified_diff_from_chunks;
 use std::str::Utf8Error;
 use tree_sitter::LanguageError;
@@ -103,16 +103,11 @@ fn extract_apply_patch_from_shell(
 }
 
 // TODO: make private once we remove tests in lib.rs
-#[cfg_attr(not(test), allow(dead_code))]
-pub fn maybe_parse_apply_patch(argv: &[String]) -> MaybeApplyPatch {
-    maybe_parse_apply_patch_with_mode(argv, ParsePatchMode::Legacy)
-}
-
-pub fn maybe_parse_apply_patch_with_mode(argv: &[String], mode: ParsePatchMode) -> MaybeApplyPatch {
+pub fn maybe_parse_apply_patch(argv: &[String], mode: ParsePatchMode) -> MaybeApplyPatch {
     match argv {
         // Direct invocation: apply_patch <patch>
         [cmd, body] if APPLY_PATCH_COMMANDS.contains(&cmd.as_str()) => {
-            match parse_patch_with_mode(body, mode) {
+            match parse_patch(body, mode) {
                 Ok(source) => MaybeApplyPatch::Body(source),
                 Err(e) => MaybeApplyPatch::PatchParseError(e),
             }
@@ -120,7 +115,7 @@ pub fn maybe_parse_apply_patch_with_mode(argv: &[String], mode: ParsePatchMode) 
         // Shell heredoc form: (optional `cd <path> &&`) apply_patch <<'EOF' ...
         _ => match parse_shell_script(argv) {
             Some((shell, script)) => match extract_apply_patch_from_shell(shell, script) {
-                Ok((body, workdir)) => match parse_patch_with_mode(&body, mode) {
+                Ok((body, workdir)) => match parse_patch(&body, mode) {
                     Ok(mut source) => {
                         source.workdir = workdir;
                         MaybeApplyPatch::Body(source)
@@ -141,15 +136,6 @@ pub fn maybe_parse_apply_patch_with_mode(argv: &[String], mode: ParsePatchMode) 
 /// patch.
 pub async fn maybe_parse_apply_patch_verified(
     argv: &[String],
-    cwd: &AbsolutePathBuf,
-    fs: &dyn ExecutorFileSystem,
-    sandbox: Option<&codex_exec_server::FileSystemSandboxContext>,
-) -> MaybeApplyPatchVerified {
-    maybe_parse_apply_patch_verified_with_mode(argv, ParsePatchMode::Legacy, cwd, fs, sandbox).await
-}
-
-pub async fn maybe_parse_apply_patch_verified_with_mode(
-    argv: &[String],
     mode: ParsePatchMode,
     cwd: &AbsolutePathBuf,
     fs: &dyn ExecutorFileSystem,
@@ -158,17 +144,17 @@ pub async fn maybe_parse_apply_patch_verified_with_mode(
     // Detect a raw patch body passed directly as the command or as the body of a shell
     // script. In these cases, report an explicit error rather than applying the patch.
     if let [body] = argv
-        && parse_patch_with_mode(body, mode).is_ok()
+        && parse_patch(body, mode).is_ok()
     {
         return MaybeApplyPatchVerified::CorrectnessError(ApplyPatchError::ImplicitInvocation);
     }
     if let Some((_, script)) = parse_shell_script(argv)
-        && parse_patch_with_mode(script, mode).is_ok()
+        && parse_patch(script, mode).is_ok()
     {
         return MaybeApplyPatchVerified::CorrectnessError(ApplyPatchError::ImplicitInvocation);
     }
 
-    match maybe_parse_apply_patch_with_mode(argv, mode) {
+    match maybe_parse_apply_patch(argv, mode) {
         MaybeApplyPatch::Body(ApplyPatchArgs {
             patch,
             hunks,
@@ -179,15 +165,13 @@ pub async fn maybe_parse_apply_patch_verified_with_mode(
                 .map(|dir| cwd.join(Path::new(dir)))
                 .unwrap_or_else(|| cwd.clone());
             let mut changes = HashMap::new();
-            for hunk in &hunks {
+            for hunk in hunks {
                 let path = hunk.resolve_path(&effective_cwd);
                 match hunk {
                     Hunk::AddFile { contents, .. } => {
                         changes.insert(
                             path.into_path_buf(),
-                            ApplyPatchFileChange::Add {
-                                content: contents.clone(),
-                            },
+                            ApplyPatchFileChange::Add { content: contents },
                         );
                     }
                     Hunk::DeleteFile { .. } => {
@@ -223,9 +207,7 @@ pub async fn maybe_parse_apply_patch_verified_with_mode(
                             path.into_path_buf(),
                             ApplyPatchFileChange::Update {
                                 unified_diff,
-                                move_path: move_path
-                                    .as_ref()
-                                    .map(|p| effective_cwd.join(p).into_path_buf()),
+                                move_path: move_path.map(|p| effective_cwd.join(p).into_path_buf()),
                                 new_content: contents,
                             },
                         );
@@ -234,7 +216,6 @@ pub async fn maybe_parse_apply_patch_verified_with_mode(
             }
             MaybeApplyPatchVerified::Body(ApplyPatchAction {
                 changes,
-                hunks,
                 patch,
                 cwd: effective_cwd,
             })
@@ -400,7 +381,6 @@ fn extract_apply_patch_from_bash(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::UpdateFileChunk;
     use crate::parse_patch;
     use crate::unified_diff_from_chunks;
     use assert_matches::assert_matches;
@@ -462,7 +442,7 @@ mod tests {
     }
 
     fn assert_match_args(args: Vec<String>, expected_workdir: Option<&str>) {
-        match maybe_parse_apply_patch(&args) {
+        match maybe_parse_apply_patch(&args, ParsePatchMode::Legacy) {
             MaybeApplyPatch::Body(ApplyPatchArgs { hunks, workdir, .. }) => {
                 assert_eq!(workdir.as_deref(), expected_workdir);
                 assert_eq!(hunks, expected_single_add());
@@ -479,7 +459,7 @@ mod tests {
     fn assert_not_match(script: &str) {
         let args = args_bash(script);
         assert_matches!(
-            maybe_parse_apply_patch(&args),
+            maybe_parse_apply_patch(&args, ParsePatchMode::Legacy),
             MaybeApplyPatch::NotApplyPatch
         );
     }
@@ -492,6 +472,7 @@ mod tests {
         assert_matches!(
             maybe_parse_apply_patch_verified(
                 &args,
+                ParsePatchMode::Legacy,
                 &AbsolutePathBuf::from_absolute_path(dir.path()).unwrap(),
                 LOCAL_FS.as_ref(),
                 /*sandbox*/ None,
@@ -509,6 +490,7 @@ mod tests {
         assert_matches!(
             maybe_parse_apply_patch_verified(
                 &args,
+                ParsePatchMode::Legacy,
                 &AbsolutePathBuf::from_absolute_path(dir.path()).unwrap(),
                 LOCAL_FS.as_ref(),
                 /*sandbox*/ None,
@@ -529,7 +511,7 @@ mod tests {
 "#,
         ]);
 
-        match maybe_parse_apply_patch(&args) {
+        match maybe_parse_apply_patch(&args, ParsePatchMode::Legacy) {
             MaybeApplyPatch::Body(ApplyPatchArgs { hunks, .. }) => {
                 assert_eq!(
                     hunks,
@@ -554,7 +536,7 @@ mod tests {
 "#,
         ]);
 
-        match maybe_parse_apply_patch(&args) {
+        match maybe_parse_apply_patch(&args, ParsePatchMode::Legacy) {
             MaybeApplyPatch::Body(ApplyPatchArgs { hunks, .. }) => {
                 assert_eq!(
                     hunks,
@@ -593,7 +575,7 @@ mod tests {
 PATCH"#,
         ]);
 
-        match maybe_parse_apply_patch(&args) {
+        match maybe_parse_apply_patch(&args, ParsePatchMode::Legacy) {
             MaybeApplyPatch::Body(ApplyPatchArgs { hunks, workdir, .. }) => {
                 assert_eq!(workdir, None);
                 assert_eq!(
@@ -714,7 +696,7 @@ PATCH"#,
             path.display()
         ));
 
-        let patch = parse_patch(&patch).unwrap();
+        let patch = parse_patch(&patch, ParsePatchMode::Legacy).unwrap();
         let chunks = match patch.hunks.as_slice() {
             [Hunk::UpdateFile { chunks, .. }] => chunks,
             _ => panic!("Expected a single UpdateFile hunk"),
@@ -753,7 +735,7 @@ PATCH"#,
             path.display()
         ));
 
-        let patch = parse_patch(&patch).unwrap();
+        let patch = parse_patch(&patch, ParsePatchMode::Legacy).unwrap();
         let chunks = match patch.hunks.as_slice() {
             [Hunk::UpdateFile { chunks, .. }] => chunks,
             _ => panic!("Expected a single UpdateFile hunk"),
@@ -798,6 +780,7 @@ PATCH"#,
 
         let result = maybe_parse_apply_patch_verified(
             &argv,
+            ParsePatchMode::Legacy,
             &AbsolutePathBuf::from_absolute_path(session_dir.path()).unwrap(),
             LOCAL_FS.as_ref(),
             /*sandbox*/ None,
@@ -821,16 +804,6 @@ PATCH"#,
                         new_content: "updated session directory content\n".to_string(),
                     },
                 )]),
-                hunks: vec![Hunk::UpdateFile {
-                    path: PathBuf::from(relative_path),
-                    move_path: None,
-                    chunks: vec![UpdateFileChunk {
-                        change_context: None,
-                        old_lines: vec!["session directory content".to_string()],
-                        new_lines: vec!["updated session directory content".to_string()],
-                        is_end_of_file: false,
-                    }],
-                }],
                 patch: argv[1].clone(),
                 cwd: AbsolutePathBuf::from_absolute_path(session_dir.path()).unwrap(),
             })
@@ -862,6 +835,7 @@ PATCH"#,
 
         let result = maybe_parse_apply_patch_verified(
             &argv,
+            ParsePatchMode::Legacy,
             &AbsolutePathBuf::from_absolute_path(session_dir.path()).unwrap(),
             LOCAL_FS.as_ref(),
             /*sandbox*/ None,

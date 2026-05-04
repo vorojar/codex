@@ -1,6 +1,5 @@
 use std::path::PathBuf;
 
-use crate::ApplyPatchArgs;
 use crate::parser::ADD_FILE_MARKER;
 use crate::parser::BEGIN_PATCH_MARKER;
 use crate::parser::CHANGE_CONTEXT_MARKER;
@@ -16,67 +15,6 @@ use crate::parser::UpdateFileChunk;
 
 use Hunk::*;
 use ParseError::*;
-
-pub fn parse_patch(patch: &str) -> Result<ApplyPatchArgs, ParseError> {
-    let patch = normalize_patch_text(patch)?;
-    let mut parser = StreamingPatchParser::default();
-    parser.push_delta(&patch)?;
-    let hunks = parser.finish()?;
-    Ok(ApplyPatchArgs {
-        patch,
-        hunks,
-        workdir: None,
-    })
-}
-
-fn normalize_patch_text(patch: &str) -> Result<String, ParseError> {
-    let lines: Vec<&str> = patch.trim().lines().collect();
-    let patch_lines = match check_patch_boundaries(&lines) {
-        Ok(lines) => lines,
-        Err(original_parse_error) => match lines.as_slice() {
-            [first, .., last]
-                if matches!(*first, "<<EOF" | "<<'EOF'" | "<<\"EOF\"")
-                    && last.ends_with("EOF")
-                    && lines.len() >= 4 =>
-            {
-                let inner_lines = &lines[1..lines.len() - 1];
-                check_patch_boundaries(inner_lines)?
-            }
-            _ => return Err(original_parse_error),
-        },
-    };
-    Ok(patch_lines.join("\n"))
-}
-
-fn check_patch_boundaries<'a>(lines: &'a [&'a str]) -> Result<&'a [&'a str], ParseError> {
-    let (first_line, last_line) = match lines {
-        [] => (None, None),
-        [first] => (Some(first), Some(first)),
-        [first, .., last] => (Some(first), Some(last)),
-    };
-    check_start_and_end_lines(first_line, last_line)?;
-    Ok(lines)
-}
-
-fn check_start_and_end_lines(
-    first_line: Option<&&str>,
-    last_line: Option<&&str>,
-) -> Result<(), ParseError> {
-    let first_line = first_line.map(|line| line.trim());
-    let last_line = last_line.map(|line| line.trim());
-
-    match (first_line, last_line) {
-        (Some(first), Some(last)) if first == BEGIN_PATCH_MARKER && last == END_PATCH_MARKER => {
-            Ok(())
-        }
-        (Some(first), _) if first != BEGIN_PATCH_MARKER => Err(InvalidPatchError(String::from(
-            "The first line of the patch must be '*** Begin Patch'",
-        ))),
-        _ => Err(InvalidPatchError(String::from(
-            "The last line of the patch must be '*** End Patch'",
-        ))),
-    }
-}
 
 #[derive(Debug, Default, Clone)]
 pub struct StreamingPatchParser {
@@ -428,36 +366,6 @@ mod tests {
     use std::path::PathBuf;
 
     use super::*;
-    use crate::parser;
-
-    #[test]
-    fn test_parse_patch_matches_legacy_parser_for_complete_input() {
-        let patch = "\
-*** Begin Patch
-*** Add File: added.txt
-+hello
-*** Update File: changed.txt
-@@
--old
-+new
-*** Delete File: removed.txt
-*** End Patch";
-
-        assert_eq!(parse_patch(patch), parser::parse_patch(patch));
-    }
-
-    #[test]
-    fn test_parse_patch_supports_lenient_heredoc_wrapper() {
-        let patch = "\
-<<'EOF'
-*** Begin Patch
-*** Add File: added.txt
-+hello
-*** End Patch
-EOF";
-
-        assert_eq!(parse_patch(patch), parser::parse_patch(patch));
-    }
 
     #[test]
     fn test_streaming_patch_parser_streams_complete_lines_before_end_patch() {

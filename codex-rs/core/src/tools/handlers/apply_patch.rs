@@ -256,14 +256,6 @@ fn apply_patch_payload_command(payload: &ToolPayload) -> Option<String> {
     }
 }
 
-fn apply_patch_mode(turn: &TurnContext) -> ParsePatchMode {
-    if turn.features.enabled(Feature::ApplyPatchStreamingParser) {
-        ParsePatchMode::Streaming
-    } else {
-        ParsePatchMode::Legacy
-    }
-}
-
 async fn effective_patch_permissions(
     session: &Session,
     turn: &TurnContext,
@@ -372,7 +364,7 @@ impl ToolHandler for ApplyPatchHandler {
         // Avoid building temporary ExecParams/command vectors; derive directly from inputs.
         let cwd = turn.cwd.clone();
         let command = vec!["apply_patch".to_string(), patch_input.clone()];
-        let Some(turn_environment) = turn.primary_environment() else {
+        let Some(turn_environment) = turn.environments.primary() else {
             return Err(FunctionCallError::RespondToModel(
                 "apply_patch is unavailable in this session".to_string(),
             ));
@@ -382,8 +374,12 @@ impl ToolHandler for ApplyPatchHandler {
             .environment
             .is_remote()
             .then(|| turn.file_system_sandbox_context(/*additional_permissions*/ None));
-        let parse_mode = apply_patch_mode(turn.as_ref());
-        match codex_apply_patch::maybe_parse_apply_patch_verified_with_mode(
+        let parse_mode = if turn.features.enabled(Feature::ApplyPatchStreamingParser) {
+            ParsePatchMode::Streaming
+        } else {
+            ParsePatchMode::Legacy
+        };
+        match codex_apply_patch::maybe_parse_apply_patch_verified(
             &command,
             parse_mode,
             &cwd,
@@ -416,6 +412,7 @@ impl ToolHandler for ApplyPatchHandler {
 
                         let req = ApplyPatchRequest {
                             action: apply.action,
+                            parse_mode,
                             file_paths,
                             changes,
                             exec_approval_requirement: apply.exec_approval_requirement,
@@ -486,11 +483,16 @@ pub(crate) async fn intercept_apply_patch(
     tool_name: &str,
 ) -> Result<Option<FunctionToolOutput>, FunctionCallError> {
     let sandbox = turn
-        .primary_environment()
+        .environments
+        .primary()
         .filter(|env| env.environment.is_remote())
         .map(|_| turn.file_system_sandbox_context(/*additional_permissions*/ None));
-    let parse_mode = apply_patch_mode(turn.as_ref());
-    match codex_apply_patch::maybe_parse_apply_patch_verified_with_mode(
+    let parse_mode = if turn.features.enabled(Feature::ApplyPatchStreamingParser) {
+        ParsePatchMode::Streaming
+    } else {
+        ParsePatchMode::Legacy
+    };
+    match codex_apply_patch::maybe_parse_apply_patch_verified(
         command,
         parse_mode,
         cwd,
@@ -530,6 +532,7 @@ pub(crate) async fn intercept_apply_patch(
 
                     let req = ApplyPatchRequest {
                         action: apply.action,
+                        parse_mode,
                         file_paths: approval_keys,
                         changes,
                         exec_approval_requirement: apply.exec_approval_requirement,

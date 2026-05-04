@@ -220,6 +220,51 @@ D delete.txt
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn apply_patch_cli_uses_streaming_parser_when_feature_enabled() -> Result<()> {
+    skip_if_no_network!(Ok(()));
+
+    let harness = apply_patch_harness_with(|builder| {
+        builder.with_model("gpt-5.4").with_config(|config| {
+            config
+                .features
+                .enable(Feature::ApplyPatchStreamingParser)
+                .expect("enable apply_patch streaming parser");
+            config.suppress_unstable_features_warning = true;
+        })
+    })
+    .await?;
+
+    let patch = "*** Begin Patch\n*** Add File: streaming-parser.txt\n+enabled\n*** End Patch";
+    let call_id = "apply-streaming-parser";
+    mount_apply_patch(
+        &harness,
+        call_id,
+        patch,
+        "done",
+        ApplyPatchModelOutput::Function,
+    )
+    .await;
+
+    harness
+        .submit("please apply streaming parser patch")
+        .await?;
+
+    let out = harness
+        .apply_patch_output(call_id, ApplyPatchModelOutput::Function)
+        .await;
+    assert_regex_match(
+        r"(?s)^Exit code: 0.*Success\. Updated the following files:\nA streaming-parser\.txt\n?$",
+        &out,
+    );
+    assert_eq!(
+        harness.read_file_text("streaming-parser.txt").await?,
+        "enabled\n"
+    );
+
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[test_case(ApplyPatchModelOutput::Freeform)]
 #[test_case(ApplyPatchModelOutput::Function)]
 #[test_case(ApplyPatchModelOutput::Shell)]

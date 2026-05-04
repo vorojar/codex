@@ -67,6 +67,7 @@ pub fn run_main() -> i32 {
     };
     match runtime.block_on(crate::apply_patch(
         &patch_arg,
+        crate::ParsePatchMode::Legacy,
         &cwd,
         &mut stdout,
         &mut stderr,

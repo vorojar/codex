@@ -116,6 +116,7 @@ pub fn arg0_dispatch() -> Option<Arg0PathEntryGuard> {
                 };
                 match runtime.block_on(codex_apply_patch::apply_patch(
                     &patch_arg,
+                    codex_apply_patch::ParsePatchMode::Legacy,
                     &cwd,
                     &mut stdout,
                     &mut stderr,

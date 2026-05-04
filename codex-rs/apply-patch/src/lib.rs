@@ -27,7 +27,6 @@ pub use streaming_parser::StreamingPatchParser;
 use thiserror::Error;
 
 pub use invocation::maybe_parse_apply_patch_verified;
-pub use invocation::maybe_parse_apply_patch_verified_with_mode;
 pub use standalone_executable::main;
 
 use crate::invocation::ExtractHeredocError;
@@ -137,7 +136,6 @@ pub enum MaybeApplyPatchVerified {
 #[derive(Debug, PartialEq)]
 pub struct ApplyPatchAction {
     changes: HashMap<PathBuf, ApplyPatchFileChange>,
-    hunks: Vec<Hunk>,
 
     /// The raw patch argument that can be used to apply the patch. i.e., if the
     /// original arg was parsed in "lenient" mode with a
@@ -158,10 +156,6 @@ impl ApplyPatchAction {
         &self.changes
     }
 
-    pub fn hunks(&self) -> &[Hunk] {
-        &self.hunks
-    }
-
     /// Should be used exclusively for testing. (Not worth the overhead of
     /// creating a feature flag for this.)
     pub fn new_add_for_test(path: &AbsolutePathBuf, content: String) -> Self {
@@ -177,15 +171,10 @@ impl ApplyPatchAction {
 + {content}
 *** End Patch"#,
         );
-        let hunk = Hunk::AddFile {
-            path: path.to_path_buf(),
-            contents: content.clone(),
-        };
         let changes = HashMap::from([(path.to_path_buf(), ApplyPatchFileChange::Add { content })]);
         #[expect(clippy::expect_used)]
         Self {
             changes,
-            hunks: vec![hunk],
             cwd: path.parent().expect("path should have parent"),
             patch,
         }
@@ -195,13 +184,14 @@ impl ApplyPatchAction {
 /// Applies the patch and prints the result to stdout/stderr.
 pub async fn apply_patch(
     patch: &str,
+    mode: ParsePatchMode,
     cwd: &AbsolutePathBuf,
     stdout: &mut impl std::io::Write,
     stderr: &mut impl std::io::Write,
     fs: &dyn ExecutorFileSystem,
     sandbox: Option<&FileSystemSandboxContext>,
 ) -> Result<(), ApplyPatchError> {
-    let hunks = match parse_patch(patch) {
+    let hunks = match parser::parse_patch(patch, mode) {
         Ok(source) => source.hunks,
         Err(e) => {
             match &e {
@@ -652,6 +642,7 @@ mod tests {
         let mut stderr = Vec::new();
         apply_patch(
             &patch,
+            ParsePatchMode::Legacy,
             &AbsolutePathBuf::from_absolute_path(dir.path()).unwrap(),
             &mut stdout,
             &mut stderr,
@@ -712,6 +703,7 @@ mod tests {
 
         apply_patch(
             &patch,
+            ParsePatchMode::Legacy,
             &cwd,
             &mut stdout,
             &mut stderr,
@@ -755,6 +747,7 @@ mod tests {
         let mut stderr = Vec::new();
         apply_patch(
             &patch,
+            ParsePatchMode::Legacy,
             &AbsolutePathBuf::from_absolute_path(dir.path()).unwrap(),
             &mut stdout,
             &mut stderr,
@@ -791,6 +784,7 @@ mod tests {
         let mut stderr = Vec::new();
         apply_patch(
             &patch,
+            ParsePatchMode::Legacy,
             &AbsolutePathBuf::from_absolute_path(dir.path()).unwrap(),
             &mut stdout,
             &mut stderr,
@@ -831,6 +825,7 @@ mod tests {
         let mut stderr = Vec::new();
         apply_patch(
             &patch,
+            ParsePatchMode::Legacy,
             &AbsolutePathBuf::from_absolute_path(dir.path()).unwrap(),
             &mut stdout,
             &mut stderr,
@@ -880,6 +875,7 @@ mod tests {
         let mut stderr = Vec::new();
         apply_patch(
             &patch,
+            ParsePatchMode::Legacy,
             &AbsolutePathBuf::from_absolute_path(dir.path()).unwrap(),
             &mut stdout,
             &mut stderr,
@@ -938,6 +934,7 @@ mod tests {
         let mut stderr = Vec::new();
         apply_patch(
             &patch,
+            ParsePatchMode::Legacy,
             &AbsolutePathBuf::from_absolute_path(dir.path()).unwrap(),
             &mut stdout,
             &mut stderr,
@@ -982,6 +979,7 @@ mod tests {
         let mut stderr = Vec::new();
         apply_patch(
             &patch,
+            ParsePatchMode::Legacy,
             &AbsolutePathBuf::from_absolute_path(dir.path()).unwrap(),
             &mut stdout,
             &mut stderr,
@@ -1025,6 +1023,7 @@ mod tests {
         let mut stderr = Vec::new();
         apply_patch(
             &patch,
+            ParsePatchMode::Legacy,
             &AbsolutePathBuf::from_absolute_path(dir.path()).unwrap(),
             &mut stdout,
             &mut stderr,
@@ -1069,7 +1068,7 @@ mod tests {
 +QUX"#,
             path.display()
         ));
-        let patch = parse_patch(&patch).unwrap();
+        let patch = parse_patch(&patch, ParsePatchMode::Legacy).unwrap();
 
         let update_file_chunks = match patch.hunks.as_slice() {
             [Hunk::UpdateFile { chunks, .. }] => chunks,
@@ -1116,7 +1115,7 @@ mod tests {
             path.display()
         ));
 
-        let patch = parse_patch(&patch).unwrap();
+        let patch = parse_patch(&patch, ParsePatchMode::Legacy).unwrap();
         let chunks = match patch.hunks.as_slice() {
             [Hunk::UpdateFile { chunks, .. }] => chunks,
             _ => panic!("Expected a single UpdateFile hunk"),
@@ -1157,7 +1156,7 @@ mod tests {
             path.display()
         ));
 
-        let patch = parse_patch(&patch).unwrap();
+        let patch = parse_patch(&patch, ParsePatchMode::Legacy).unwrap();
         let chunks = match patch.hunks.as_slice() {
             [Hunk::UpdateFile { chunks, .. }] => chunks,
             _ => panic!("Expected a single UpdateFile hunk"),
@@ -1196,7 +1195,7 @@ mod tests {
             path.display()
         ));
 
-        let patch = parse_patch(&patch).unwrap();
+        let patch = parse_patch(&patch, ParsePatchMode::Legacy).unwrap();
         let chunks = match patch.hunks.as_slice() {
             [Hunk::UpdateFile { chunks, .. }] => chunks,
             _ => panic!("Expected a single UpdateFile hunk"),
@@ -1246,7 +1245,7 @@ mod tests {
         let patch = wrap_patch(&patch_body);
 
         // Extract chunks then build the unified diff.
-        let parsed = parse_patch(&patch).unwrap();
+        let parsed = parse_patch(&patch, ParsePatchMode::Legacy).unwrap();
         let chunks = match parsed.hunks.as_slice() {
             [Hunk::UpdateFile { chunks, .. }] => chunks,
             _ => panic!("Expected a single UpdateFile hunk"),
@@ -1281,6 +1280,7 @@ mod tests {
         let mut stderr = Vec::new();
         apply_patch(
             &patch,
+            ParsePatchMode::Legacy,
             &AbsolutePathBuf::from_absolute_path(dir.path()).unwrap(),
             &mut stdout,
             &mut stderr,
@@ -1321,6 +1321,7 @@ g
         let mut stderr = Vec::new();
         let result = apply_patch(
             &patch,
+            ParsePatchMode::Legacy,
             &AbsolutePathBuf::from_absolute_path(dir.path()).unwrap(),
             &mut stdout,
             &mut stderr,

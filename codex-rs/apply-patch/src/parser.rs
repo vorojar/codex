@@ -129,16 +129,17 @@ pub enum ParsePatchMode {
     Streaming,
 }
 
-pub fn parse_patch(patch: &str) -> Result<ApplyPatchArgs, ParseError> {
-    parse_patch_with_mode(patch, ParsePatchMode::Legacy)
-}
-
-pub fn parse_patch_with_mode(
-    patch: &str,
-    mode: ParsePatchMode,
-) -> Result<ApplyPatchArgs, ParseError> {
+pub fn parse_patch(patch: &str, mode: ParsePatchMode) -> Result<ApplyPatchArgs, ParseError> {
     if mode == ParsePatchMode::Streaming {
-        return crate::streaming_parser::parse_patch(patch);
+        let patch = normalize_patch_text(patch)?;
+        let mut parser = crate::streaming_parser::StreamingPatchParser::default();
+        parser.push_delta(&patch)?;
+        let hunks = parser.finish()?;
+        return Ok(ApplyPatchArgs {
+            hunks,
+            patch,
+            workdir: None,
+        });
     }
 
     let mode = if PARSE_IN_STRICT_MODE {
@@ -147,6 +148,12 @@ pub fn parse_patch_with_mode(
         ParseMode::Lenient
     };
     parse_patch_text(patch, mode)
+}
+
+fn normalize_patch_text(patch: &str) -> Result<String, ParseError> {
+    let lines: Vec<&str> = patch.trim().lines().collect();
+    let (patch_lines, _) = check_patch_boundaries_lenient(&lines)?;
+    Ok(patch_lines.join("\n"))
 }
 
 enum ParseMode {
