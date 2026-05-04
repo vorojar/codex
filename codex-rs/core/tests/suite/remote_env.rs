@@ -240,8 +240,8 @@ async fn exec_command_routes_across_empty_single_and_multiple_turn_environments(
         &single_env_server,
         "call-single-env",
         json!({
-            "shell": "bash",
-            "cmd": "/bin/cat marker.txt",
+            "shell": "/bin/sh",
+            "cmd": "cat marker.txt",
             "login": false,
             "yield_time_ms": 1_000,
         }),
@@ -283,8 +283,8 @@ async fn exec_command_routes_across_empty_single_and_multiple_turn_environments(
         &multi_env_server,
         "call-multi-env",
         json!({
-            "shell": "bash",
-            "cmd": "/bin/cat marker.txt",
+            "shell": "/bin/sh",
+            "cmd": "cat marker.txt",
             "login": false,
             "yield_time_ms": 1_000,
             "environment_id": REMOTE_ENVIRONMENT_ID,
