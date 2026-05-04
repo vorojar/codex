@@ -12,6 +12,7 @@ use crate::Environment;
 use crate::EnvironmentProvider;
 use crate::ExecServerError;
 use crate::ExecServerRuntimePaths;
+use crate::ExecServerTransport;
 use crate::environment::LOCAL_ENVIRONMENT_ID;
 
 const ENVIRONMENTS_TOML_FILE: &str = "environments.toml";
@@ -33,14 +34,35 @@ struct EnvironmentToml {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct TomlEnvironmentProvider {
-    config: EnvironmentsToml,
+    default: Option<String>,
+    items: Vec<ConfiguredEnvironment>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct ConfiguredEnvironment {
+    id: String,
+    transport: ExecServerTransport,
 }
 
 impl TomlEnvironmentProvider {
     fn new(config: EnvironmentsToml) -> Result<Self, ExecServerError> {
-        let ids = validate_config(&config)?;
+        let mut ids = HashSet::from([LOCAL_ENVIRONMENT_ID.to_string()]);
+        let mut items = Vec::with_capacity(config.items.len());
+        for item in config.items {
+            let item = ConfiguredEnvironment::try_from(item)?;
+            if !ids.insert(item.id.clone()) {
+                return Err(ExecServerError::Protocol(format!(
+                    "environment id `{}` is duplicated",
+                    item.id
+                )));
+            }
+            items.push(item);
+        }
         validate_default(config.default.as_deref(), &ids)?;
-        Ok(Self { config })
+        Ok(Self {
+            default: config.default,
+            items,
+        })
     }
 }
 
@@ -55,7 +77,7 @@ impl EnvironmentProvider for TomlEnvironmentProvider {
             Environment::local(local_runtime_paths.clone()),
         )]);
 
-        for item in &self.config.items {
+        for item in &self.items {
             environments.insert(
                 item.id.clone(),
                 item.environment(Some(local_runtime_paths.clone())),
@@ -66,7 +88,7 @@ impl EnvironmentProvider for TomlEnvironmentProvider {
     }
 
     fn default_environment_selection(&self) -> DefaultEnvironmentSelection {
-        match self.config.default.as_deref().map(str::trim) {
+        match self.default.as_deref().map(str::trim) {
             None => DefaultEnvironmentSelection::Environment(LOCAL_ENVIRONMENT_ID.to_string()),
             Some(default) if default.eq_ignore_ascii_case("none") => {
                 DefaultEnvironmentSelection::Disabled
@@ -76,17 +98,50 @@ impl EnvironmentProvider for TomlEnvironmentProvider {
     }
 }
 
-impl EnvironmentToml {
-    fn environment(&self, local_runtime_paths: Option<ExecServerRuntimePaths>) -> Environment {
-        match (self.url.as_deref(), self.command.as_deref()) {
+impl TryFrom<EnvironmentToml> for ConfiguredEnvironment {
+    type Error = ExecServerError;
+
+    fn try_from(item: EnvironmentToml) -> Result<Self, Self::Error> {
+        validate_environment_id(&item.id)?;
+        let transport = match (item.url, item.command) {
             (Some(url), None) => {
-                Environment::remote_inner(url.trim().to_string(), local_runtime_paths)
+                let url = validate_websocket_url(url)?;
+                ExecServerTransport::WebSocketUrl(url)
             }
-            (None, Some(command)) => Environment::remote_stdio_shell_command(
-                command.trim().to_string(),
-                local_runtime_paths,
-            ),
-            _ => unreachable!("transport shape validated by TomlEnvironmentProvider::new"),
+            (None, Some(command)) => {
+                let command = command.trim().to_string();
+                if command.is_empty() {
+                    return Err(ExecServerError::Protocol(format!(
+                        "environment `{}` command cannot be empty",
+                        item.id
+                    )));
+                }
+                ExecServerTransport::StdioShellCommand(command)
+            }
+            (None, None) | (Some(_), Some(_)) => {
+                return Err(ExecServerError::Protocol(format!(
+                    "environment `{}` must set exactly one of url or command",
+                    item.id
+                )));
+            }
+        };
+
+        Ok(Self {
+            id: item.id,
+            transport,
+        })
+    }
+}
+
+impl ConfiguredEnvironment {
+    fn environment(&self, local_runtime_paths: Option<ExecServerRuntimePaths>) -> Environment {
+        match &self.transport {
+            ExecServerTransport::WebSocketUrl(url) => {
+                Environment::remote_inner(url.clone(), local_runtime_paths)
+            }
+            ExecServerTransport::StdioShellCommand(command) => {
+                Environment::remote_stdio_shell_command(command.clone(), local_runtime_paths)
+            }
         }
     }
 }
@@ -108,20 +163,6 @@ pub fn environment_provider_from_codex_home(
     Ok(Box::new(TomlEnvironmentProvider::new(environments)?))
 }
 
-fn validate_config(config: &EnvironmentsToml) -> Result<HashSet<String>, ExecServerError> {
-    let mut ids = HashSet::from([LOCAL_ENVIRONMENT_ID.to_string()]);
-    for item in &config.items {
-        validate_environment_item(item)?;
-        if !ids.insert(item.id.clone()) {
-            return Err(ExecServerError::Protocol(format!(
-                "environment id `{}` is duplicated",
-                item.id
-            )));
-        }
-    }
-    Ok(ids)
-}
-
 fn validate_default(default: Option<&str>, ids: &HashSet<String>) -> Result<(), ExecServerError> {
     let Some(default) = default.map(str::trim) else {
         return Ok(());
@@ -139,40 +180,27 @@ fn validate_default(default: Option<&str>, ids: &HashSet<String>) -> Result<(), 
     Ok(())
 }
 
-fn validate_environment_item(item: &EnvironmentToml) -> Result<(), ExecServerError> {
-    let id = item.id.trim();
-    if id.is_empty() {
+fn validate_environment_id(id: &str) -> Result<(), ExecServerError> {
+    let trimmed_id = id.trim();
+    if trimmed_id.is_empty() {
         return Err(ExecServerError::Protocol(
             "environment id cannot be empty".to_string(),
         ));
     }
-    if id != item.id {
+    if trimmed_id != id {
         return Err(ExecServerError::Protocol(format!(
-            "environment id `{}` must not contain surrounding whitespace",
-            item.id
+            "environment id `{id}` must not contain surrounding whitespace"
         )));
     }
-    if item.id == LOCAL_ENVIRONMENT_ID || item.id.eq_ignore_ascii_case("none") {
+    if id == LOCAL_ENVIRONMENT_ID || id.eq_ignore_ascii_case("none") {
         return Err(ExecServerError::Protocol(format!(
-            "environment id `{}` is reserved",
-            item.id
+            "environment id `{id}` is reserved"
         )));
     }
-
-    match (item.url.as_deref(), item.command.as_deref()) {
-        (Some(url), None) => validate_websocket_url(url),
-        (None, Some(command)) if command.trim().is_empty() => Err(ExecServerError::Protocol(
-            format!("environment `{}` command cannot be empty", item.id),
-        )),
-        (None, Some(_)) => Ok(()),
-        (None, None) | (Some(_), Some(_)) => Err(ExecServerError::Protocol(format!(
-            "environment `{}` must set exactly one of url or command",
-            item.id
-        ))),
-    }
+    Ok(())
 }
 
-fn validate_websocket_url(url: &str) -> Result<(), ExecServerError> {
+fn validate_websocket_url(url: String) -> Result<String, ExecServerError> {
     let url = url.trim();
     if url.is_empty() {
         return Err(ExecServerError::Protocol(
@@ -184,7 +212,7 @@ fn validate_websocket_url(url: &str) -> Result<(), ExecServerError> {
             "environment url `{url}` must use ws:// or wss://"
         )));
     }
-    Ok(())
+    Ok(url.to_string())
 }
 
 fn load_environments_toml(path: &Path) -> Result<EnvironmentsToml, ExecServerError> {
