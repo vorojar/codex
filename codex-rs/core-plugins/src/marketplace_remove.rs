@@ -74,7 +74,12 @@ fn remove_marketplace_sync(
 }
 
 fn remove_marketplace_root(root: &Path) -> Result<Option<AbsolutePathBuf>, MarketplaceRemoveError> {
-    if !root.exists() {
+    if !root.try_exists().map_err(|err| {
+        MarketplaceRemoveError::Internal(format!(
+            "failed to check installed marketplace root {}: {err}",
+            root.display()
+        ))
+    })? {
         return Ok(None);
     }
 
@@ -90,10 +95,16 @@ fn remove_marketplace_root(root: &Path) -> Result<Option<AbsolutePathBuf>, Marke
             root.display()
         ))
     })?;
-    let remove_result = if metadata.is_dir() {
+    let file_type = metadata.file_type();
+    let remove_result = if file_type.is_dir() {
         fs::remove_dir_all(root)
-    } else {
+    } else if file_type.is_file() {
         fs::remove_file(root)
+    } else {
+        return Err(MarketplaceRemoveError::Internal(format!(
+            "installed marketplace root {} is neither a file nor a directory",
+            root.display()
+        )));
     };
     remove_result.map_err(|err| {
         MarketplaceRemoveError::Internal(format!(
