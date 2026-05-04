@@ -45,6 +45,17 @@ use tokio::time::Duration;
 
 const REMOTE_EXEC_COMMAND_ROUTING_TIMEOUT: Duration = Duration::from_secs(60);
 
+async fn unified_exec_test(server: &wiremock::MockServer) -> Result<TestCodex> {
+    let mut builder = test_codex().with_config(|config| {
+        config.use_experimental_unified_exec_tool = true;
+        config
+            .features
+            .enable(Feature::UnifiedExec)
+            .expect("unified exec should enable for test");
+    });
+    builder.build_remote_aware(server).await
+}
+
 fn tool_names(body: &Value) -> Vec<String> {
     body.get("tools")
         .and_then(Value::as_array)
@@ -208,26 +219,6 @@ async fn exec_command_routes_across_empty_single_and_multiple_turn_environments(
     };
 
     let server = start_mock_server().await;
-    let mut builder = test_codex().with_config(|config| {
-        config.use_experimental_unified_exec_tool = true;
-        config
-            .features
-            .enable(Feature::UnifiedExec)
-            .expect("unified exec should enable for test");
-    });
-    let test = builder.build_remote_aware(&server).await?;
-
-    let local_cwd = TempDir::new()?;
-    fs::write(local_cwd.path().join("marker.txt"), "local-routing")?;
-
-    let remote_cwd = test.config.cwd.clone();
-    test.fs()
-        .write_file(
-            &remote_cwd.join("marker.txt"),
-            b"remote-routing".to_vec(),
-            /*sandbox*/ None,
-        )
-        .await?;
 
     let no_env_mock = mount_sse_once(
         &server,
@@ -238,31 +229,25 @@ async fn exec_command_routes_across_empty_single_and_multiple_turn_environments(
         ]),
     )
     .await;
-    test.submit_turn_with_environments("route exec command", Some(vec![]))
+    unified_exec_test(&server)
+        .await?
+        .submit_turn_with_environments("route exec command", Some(vec![]))
         .await?;
-    wait_for_event_with_timeout(
-        &test.codex,
-        |event| matches!(event, EventMsg::TurnComplete(_)),
-        REMOTE_EXEC_COMMAND_ROUTING_TIMEOUT,
-    )
-    .await;
     let no_env_tools = tool_names(&no_env_mock.single_request().body_json());
     assert!(
         !no_env_tools.contains(&"exec_command".to_string()),
         "exec_command should be omitted without turn environments; got {no_env_tools:?}",
     );
 
+    let single_env_test = unified_exec_test(&server).await?;
+    let local_cwd = TempDir::new()?;
+    fs::write(local_cwd.path().join("marker.txt"), "local-routing")?;
     let local_selection = TurnEnvironmentSelection {
         environment_id: LOCAL_ENVIRONMENT_ID.to_string(),
         cwd: local_cwd.path().abs(),
     };
-    let remote_selection = TurnEnvironmentSelection {
-        environment_id: REMOTE_ENVIRONMENT_ID.to_string(),
-        cwd: remote_cwd,
-    };
-
     let single_env_output = exec_command_routing_output(
-        &test,
+        &single_env_test,
         &server,
         "call-single-env",
         json!({ "cmd": "cat marker.txt" }),
@@ -278,8 +263,28 @@ async fn exec_command_routes_across_empty_single_and_multiple_turn_environments(
         "single-env command should not route to remote: {single_env_output}",
     );
 
+    let multi_env_test = unified_exec_test(&server).await?;
+    let local_cwd = TempDir::new()?;
+    fs::write(local_cwd.path().join("marker.txt"), "local-routing")?;
+    let local_selection = TurnEnvironmentSelection {
+        environment_id: LOCAL_ENVIRONMENT_ID.to_string(),
+        cwd: local_cwd.path().abs(),
+    };
+    let remote_cwd = multi_env_test.config.cwd.clone();
+    multi_env_test
+        .fs()
+        .write_file(
+            &remote_cwd.join("marker.txt"),
+            b"remote-routing".to_vec(),
+            /*sandbox*/ None,
+        )
+        .await?;
+    let remote_selection = TurnEnvironmentSelection {
+        environment_id: REMOTE_ENVIRONMENT_ID.to_string(),
+        cwd: remote_cwd,
+    };
     let multi_env_output = exec_command_routing_output(
-        &test,
+        &multi_env_test,
         &server,
         "call-multi-env",
         json!({
