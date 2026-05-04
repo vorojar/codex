@@ -103,6 +103,12 @@ impl App {
         })
     }
 
+    fn unavailable_live_thread_attach_error(thread_id: ThreadId) -> color_eyre::Report {
+        color_eyre::eyre::eyre!(
+            "Agent thread {thread_id} is not yet available for replay or live attach."
+        )
+    }
+
     /// Updates cached picker metadata and then mirrors any visible-label change into the footer.
     ///
     /// These two writes stay paired so the picker rows and contextual footer continue to describe
@@ -226,9 +232,16 @@ impl App {
                         (thread, turns)
                     }
                     Err(err) if Self::can_fallback_from_include_turns_error(&err) => {
-                        let thread = app_server
+                        let thread = match app_server
                             .thread_read(thread_id, /*include_turns*/ false)
-                            .await?;
+                            .await
+                        {
+                            Ok(thread) => thread,
+                            Err(err) if Self::is_terminal_thread_read_error(&err) => {
+                                return Err(Self::unavailable_live_thread_attach_error(thread_id));
+                            }
+                            Err(err) => return Err(err),
+                        };
                         (thread, Vec::new())
                     }
                     Err(err) => return Err(err),
@@ -236,9 +249,7 @@ impl App {
                 if turns.is_empty() {
                     // A `thread/read` fallback without turns would create a blank local replay
                     // channel with no live listener attached, which blocks later real re-attach.
-                    return Err(color_eyre::eyre::eyre!(
-                        "Agent thread {thread_id} is not yet available for replay or live attach."
-                    ));
+                    return Err(Self::unavailable_live_thread_attach_error(thread_id));
                 }
                 let mut session = self.session_state_for_thread_read(thread_id, &thread).await;
                 // `thread/read` can seed replay state, but it does not attach the app-server
