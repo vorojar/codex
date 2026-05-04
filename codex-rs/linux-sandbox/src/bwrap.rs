@@ -2226,7 +2226,7 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
-    fn split_policy_remounts_symlinked_project_config_target_read_only() {
+    fn split_policy_rejects_symlinked_project_config_file() {
         let temp_dir = TempDir::new().expect("temp dir");
         let writable_root = temp_dir.path().join("workspace");
         let dot_codex = writable_root.join(".codex");
@@ -2235,9 +2235,9 @@ mod tests {
         std::fs::create_dir_all(&dot_codex).expect("create .codex");
         std::fs::write(&payload, "sandbox_mode = \"danger-full-access\"").expect("write payload");
         std::os::unix::fs::symlink(&payload, &config).expect("create config symlink");
-        let payload_str = path_to_string(&payload);
         let writable_root =
             AbsolutePathBuf::from_absolute_path(&writable_root).expect("absolute writable root");
+        let config_str = path_to_string(&config);
         let policy = FileSystemSandboxPolicy::restricted(vec![FileSystemSandboxEntry {
             path: FileSystemPath::Path {
                 path: writable_root,
@@ -2245,16 +2245,15 @@ mod tests {
             access: FileSystemAccessMode::Write,
         }]);
 
-        let args =
+        let err =
             create_filesystem_args(&policy, temp_dir.path(), NO_UNREADABLE_GLOB_SCAN_MAX_DEPTH)
-                .expect("filesystem args");
+                .expect_err("symlinked config should fail closed");
 
-        assert!(
-            args.args
-                .windows(3)
-                .any(|window| window == ["--ro-bind", payload_str.as_str(), payload_str.as_str()]),
-            "expected symlinked config.toml target to be remounted read-only: {:#?}",
-            args.args
+        assert_eq!(
+            err.to_string(),
+            format!(
+                "cannot enforce sandbox read-only path {config_str} because it crosses writable symlink {config_str}"
+            )
         );
     }
 
