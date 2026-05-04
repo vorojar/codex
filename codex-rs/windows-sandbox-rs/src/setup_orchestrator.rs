@@ -99,6 +99,23 @@ pub struct SetupRootOverrides {
     pub deny_write_paths: Option<Vec<PathBuf>>,
 }
 
+/// Layer: Windows enforcement request boundary. These targets are projected by
+/// the adapter layer before they reach the setup helper.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ProtectedMetadataTarget {
+    pub path: PathBuf,
+    pub mode: ProtectedMetadataMode,
+}
+
+/// Layer: Windows enforcement request boundary. The helper must distinguish
+/// existing metadata objects from missing names that need create monitoring.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum ProtectedMetadataMode {
+    ExistingDeny,
+    MissingCreationMonitor,
+}
+
 pub fn run_setup_refresh(
     policy: &SandboxPolicy,
     policy_cwd: &Path,

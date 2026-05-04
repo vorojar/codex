@@ -171,6 +171,10 @@ pub use session::spawn_windows_sandbox_session_elevated;
 #[cfg(target_os = "windows")]
 pub use session::spawn_windows_sandbox_session_legacy;
 #[cfg(target_os = "windows")]
+pub use setup::ProtectedMetadataMode;
+#[cfg(target_os = "windows")]
+pub use setup::ProtectedMetadataTarget;
+#[cfg(target_os = "windows")]
 pub use setup::SETUP_VERSION;
 #[cfg(target_os = "windows")]
 pub use setup::SandboxSetupRequest;
