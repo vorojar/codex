@@ -330,10 +330,17 @@ impl ThreadRequestProcessor {
         &self,
         request_id: ConnectionRequestId,
         params: ThreadResumeParams,
+        app_server_client_name: Option<String>,
+        app_server_client_version: Option<String>,
     ) -> Result<Option<ClientResponsePayload>, JSONRPCErrorError> {
-        self.thread_resume_inner(request_id, params)
-            .await
-            .map(|()| None)
+        self.thread_resume_inner(
+            request_id,
+            params,
+            app_server_client_name,
+            app_server_client_version,
+        )
+        .await
+        .map(|()| None)
     }
 
     pub(crate) async fn thread_fork(
@@ -597,9 +604,14 @@ impl ThreadRequestProcessor {
         thread: &CodexThread,
         app_server_client_name: Option<String>,
         app_server_client_version: Option<String>,
+        mcp_elicitations_auto_deny: bool,
     ) -> Result<(), JSONRPCErrorError> {
         thread
-            .set_app_server_client_info(app_server_client_name, app_server_client_version)
+            .set_app_server_client_info(
+                app_server_client_name,
+                app_server_client_version,
+                mcp_elicitations_auto_deny,
+            )
             .await
             .map_err(|err| JSONRPCErrorError {
                 code: INTERNAL_ERROR_CODE,
@@ -871,6 +883,10 @@ impl ThreadRequestProcessor {
             .load_with_overrides(config_overrides.clone(), typesafe_overrides.clone())
             .await
             .map_err(|err| config_load_error(&err))?;
+        config.mcp_elicitations_auto_deny = mcp_elicitations_auto_deny_for_app_server_client(
+            app_server_client_name.as_deref(),
+            app_server_client_version.as_deref(),
+        );
 
         // The user may have requested WorkspaceWrite or DangerFullAccess via
         // the command line, though in the process of deriving the Config, it
@@ -935,6 +951,10 @@ impl ThreadRequestProcessor {
                 )
                 .await
                 .map_err(|err| config_load_error(&err))?;
+            config.mcp_elicitations_auto_deny = mcp_elicitations_auto_deny_for_app_server_client(
+                app_server_client_name.as_deref(),
+                app_server_client_version.as_deref(),
+            );
         }
 
         let instruction_sources = Self::instruction_sources_from_config(&config).await;
@@ -960,6 +980,7 @@ impl ThreadRequestProcessor {
                 .collect()
         };
         let core_dynamic_tool_count = core_dynamic_tools.len();
+        let mcp_elicitations_auto_deny = config.mcp_elicitations_auto_deny;
 
         let NewThread {
             thread_id,
@@ -999,6 +1020,7 @@ impl ThreadRequestProcessor {
             thread.as_ref(),
             app_server_client_name,
             app_server_client_version,
+            mcp_elicitations_auto_deny,
         )
         .await?;
 
@@ -2296,6 +2318,8 @@ impl ThreadRequestProcessor {
         &self,
         request_id: ConnectionRequestId,
         params: ThreadResumeParams,
+        app_server_client_name: Option<String>,
+        app_server_client_version: Option<String>,
     ) -> Result<(), JSONRPCErrorError> {
         if let Ok(thread_id) = ThreadId::from_string(&params.thread_id)
             && self
@@ -2332,7 +2356,20 @@ impl ThreadRequestProcessor {
                 return Ok(());
             }
         };
-        match self.resume_running_thread(&request_id, &params).await {
+        let mcp_elicitations_auto_deny = mcp_elicitations_auto_deny_for_app_server_client(
+            app_server_client_name.as_deref(),
+            app_server_client_version.as_deref(),
+        );
+        match self
+            .resume_running_thread(
+                &request_id,
+                &params,
+                app_server_client_name.clone(),
+                app_server_client_version.clone(),
+                mcp_elicitations_auto_deny,
+            )
+            .await
+        {
             Ok(true) => return Ok(()),
             Ok(false) => {}
             Err(error) => {
@@ -2400,7 +2437,7 @@ impl ThreadRequestProcessor {
         .await;
 
         // Derive a Config using the same logic as new conversation, honoring overrides if provided.
-        let config = match self
+        let mut config = match self
             .config_manager
             .load_for_cwd(request_overrides, typesafe_overrides, history_cwd)
             .await
@@ -2412,6 +2449,7 @@ impl ThreadRequestProcessor {
                 return Ok(());
             }
         };
+        config.mcp_elicitations_auto_deny = mcp_elicitations_auto_deny;
 
         let instruction_sources = Self::instruction_sources_from_config(&config).await;
         let response_history = thread_history.clone();
@@ -2433,6 +2471,17 @@ impl ThreadRequestProcessor {
                 session_configured,
                 ..
             }) => {
+                if let Err(err) = Self::set_app_server_client_info(
+                    codex_thread.as_ref(),
+                    app_server_client_name,
+                    app_server_client_version,
+                    mcp_elicitations_auto_deny,
+                )
+                .await
+                {
+                    self.outgoing.send_error(request_id, err).await;
+                    return Ok(());
+                }
                 let SessionConfiguredEvent { rollout_path, .. } = session_configured;
                 let Some(rollout_path) = rollout_path else {
                     let error =
@@ -2569,6 +2618,9 @@ impl ThreadRequestProcessor {
         &self,
         request_id: &ConnectionRequestId,
         params: &ThreadResumeParams,
+        app_server_client_name: Option<String>,
+        app_server_client_version: Option<String>,
+        mcp_elicitations_auto_deny: bool,
     ) -> Result<bool, JSONRPCErrorError> {
         let running_thread = if params.history.is_some() {
             if let Ok(existing_thread_id) = ThreadId::from_string(&params.thread_id)
@@ -2648,6 +2700,13 @@ impl ThreadRequestProcessor {
                 existing_thread_id,
                 existing_thread.clone(),
                 thread_state.clone(),
+            )
+            .await?;
+            Self::set_app_server_client_info(
+                existing_thread.as_ref(),
+                app_server_client_name,
+                app_server_client_version,
+                mcp_elicitations_auto_deny,
             )
             .await?;
 

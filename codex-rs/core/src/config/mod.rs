@@ -591,6 +591,9 @@ pub struct Config {
     /// to 127.0.0.1 (using `mcp_oauth_callback_port` when provided).
     pub mcp_oauth_callback_url: Option<String>,
 
+    /// Runtime-only MCP elicitation compatibility override.
+    pub mcp_elicitations_auto_deny: bool,
+
     /// Combined provider map (defaults plus user-defined providers).
     pub model_providers: HashMap<String, ModelProviderInfo>,
 
@@ -1115,6 +1118,7 @@ impl Config {
                 .features
                 .enabled(Feature::SkillMcpDependencyInstall),
             approval_policy: self.permissions.approval_policy.clone(),
+            elicitations_auto_deny: self.mcp_elicitations_auto_deny,
             codex_linux_sandbox_exe: self.codex_linux_sandbox_exe.clone(),
             use_legacy_landlock: self.features.use_legacy_landlock(),
             apps_enabled: self.features.enabled(Feature::Apps),
@@ -2998,6 +3002,7 @@ impl Config {
             ),
             mcp_oauth_callback_port: cfg.mcp_oauth_callback_port,
             mcp_oauth_callback_url: cfg.mcp_oauth_callback_url.clone(),
+            mcp_elicitations_auto_deny: false,
             model_providers,
             project_doc_max_bytes: cfg.project_doc_max_bytes.unwrap_or(AGENTS_MD_MAX_BYTES),
             project_doc_fallback_filenames: cfg

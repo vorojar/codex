@@ -347,10 +347,15 @@ impl TurnRequestProcessor {
                 .inspect_err(|error| {
                     self.track_error_response(&request_id, error, /*error_type*/ None);
                 })?;
+        let mcp_elicitations_auto_deny = mcp_elicitations_auto_deny_for_app_server_client(
+            app_server_client_name.as_deref(),
+            app_server_client_version.as_deref(),
+        );
         Self::set_app_server_client_info(
             thread.as_ref(),
             app_server_client_name,
             app_server_client_version,
+            mcp_elicitations_auto_deny,
         )
         .await
         .inspect_err(|error| {
@@ -560,9 +565,14 @@ impl TurnRequestProcessor {
         thread: &CodexThread,
         app_server_client_name: Option<String>,
         app_server_client_version: Option<String>,
+        mcp_elicitations_auto_deny: bool,
     ) -> Result<(), JSONRPCErrorError> {
         thread
-            .set_app_server_client_info(app_server_client_name, app_server_client_version)
+            .set_app_server_client_info(
+                app_server_client_name,
+                app_server_client_version,
+                mcp_elicitations_auto_deny,
+            )
             .await
             .map_err(|err| JSONRPCErrorError {
                 code: INTERNAL_ERROR_CODE,

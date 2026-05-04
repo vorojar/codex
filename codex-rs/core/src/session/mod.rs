@@ -614,6 +614,7 @@ impl Codex {
             metrics_service_name,
             app_server_client_name: None,
             app_server_client_version: None,
+            mcp_elicitations_auto_deny: config.mcp_elicitations_auto_deny,
             session_source,
             dynamic_tools,
             persist_extended_history,
@@ -749,11 +750,13 @@ impl Codex {
         &self,
         app_server_client_name: Option<String>,
         app_server_client_version: Option<String>,
+        mcp_elicitations_auto_deny: bool,
     ) -> ConstraintResult<()> {
         self.session
             .update_settings(SessionSettingsUpdate {
                 app_server_client_name,
                 app_server_client_version,
+                mcp_elicitations_auto_deny: Some(mcp_elicitations_auto_deny),
                 ..Default::default()
             })
             .await
