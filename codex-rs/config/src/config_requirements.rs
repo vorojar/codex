@@ -1684,6 +1684,29 @@ allowed_approvals_reviewers = ["user"]
         }
     }
 
+    fn app_tool_requirements(
+        app_id: &str,
+        tool_name: &str,
+        approval_mode: AppToolApproval,
+    ) -> AppsRequirementsToml {
+        AppsRequirementsToml {
+            apps: BTreeMap::from([(
+                app_id.to_string(),
+                AppRequirementToml {
+                    enabled: None,
+                    tools: Some(AppToolsRequirementsToml {
+                        tools: BTreeMap::from([(
+                            tool_name.to_string(),
+                            AppToolRequirementToml {
+                                approval_mode: Some(approval_mode),
+                            },
+                        )]),
+                    }),
+                },
+            )]),
+        }
+    }
+
     #[test]
     fn merge_app_requirements_descending_unions_distinct_apps() {
         let mut merged = apps_requirements(&[("connector_high", Some(false))]);
@@ -1754,59 +1777,47 @@ allowed_approvals_reviewers = ["user"]
 
     #[test]
     fn merge_app_requirements_descending_preserves_higher_tool_approval_mode() {
-        let mut merged = AppsRequirementsToml {
-            apps: BTreeMap::from([(
-                "connector_123123".to_string(),
-                AppRequirementToml {
-                    enabled: None,
-                    tools: Some(AppToolsRequirementsToml {
-                        tools: BTreeMap::from([(
-                            "calendar/list_events".to_string(),
-                            AppToolRequirementToml {
-                                approval_mode: Some(AppToolApproval::Approve),
-                            },
-                        )]),
-                    }),
-                },
-            )]),
-        };
-        let lower = AppsRequirementsToml {
-            apps: BTreeMap::from([(
-                "connector_123123".to_string(),
-                AppRequirementToml {
-                    enabled: None,
-                    tools: Some(AppToolsRequirementsToml {
-                        tools: BTreeMap::from([(
-                            "calendar/list_events".to_string(),
-                            AppToolRequirementToml {
-                                approval_mode: Some(AppToolApproval::Prompt),
-                            },
-                        )]),
-                    }),
-                },
-            )]),
-        };
+        let mut merged = app_tool_requirements(
+            "connector_123123",
+            "calendar/list_events",
+            AppToolApproval::Approve,
+        );
+        let lower = app_tool_requirements(
+            "connector_123123",
+            "calendar/list_events",
+            AppToolApproval::Prompt,
+        );
 
         merge_app_requirements_descending(&mut merged, lower);
 
         assert_eq!(
             merged,
-            AppsRequirementsToml {
-                apps: BTreeMap::from([(
-                    "connector_123123".to_string(),
-                    AppRequirementToml {
-                        enabled: None,
-                        tools: Some(AppToolsRequirementsToml {
-                            tools: BTreeMap::from([(
-                                "calendar/list_events".to_string(),
-                                AppToolRequirementToml {
-                                    approval_mode: Some(AppToolApproval::Approve),
-                                },
-                            )]),
-                        }),
-                    },
-                )]),
-            }
+            app_tool_requirements(
+                "connector_123123",
+                "calendar/list_events",
+                AppToolApproval::Approve,
+            )
+        );
+    }
+
+    #[test]
+    fn merge_app_requirements_descending_uses_lower_tool_approval_when_higher_missing() {
+        let mut merged = apps_requirements(&[("connector_123123", None)]);
+        let lower = app_tool_requirements(
+            "connector_123123",
+            "calendar/list_events",
+            AppToolApproval::Approve,
+        );
+
+        merge_app_requirements_descending(&mut merged, lower);
+
+        assert_eq!(
+            merged,
+            app_tool_requirements(
+                "connector_123123",
+                "calendar/list_events",
+                AppToolApproval::Approve,
+            )
         );
     }
 
