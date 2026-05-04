@@ -1257,6 +1257,7 @@ impl App {
                     service_tier.map(|service_tier| service_tier.request_value().to_string());
                 let mut edits = ConfigEditsBuilder::new(&self.config.codex_home)
                     .with_profile(profile)
+                    .set_service_tier(service_tier)
                     .set_service_tier_id(self.config.service_tier_id.clone());
                 if service_tier.is_none() {
                     self.config.notices.fast_default_opt_out = Some(true);

@@ -4642,6 +4642,34 @@ async fn set_model_updates_profile() -> anyhow::Result<()> {
 }
 
 #[tokio::test]
+async fn clearing_service_tier_id_also_clears_legacy_service_tier() -> anyhow::Result<()> {
+    let codex_home = TempDir::new()?;
+    let config_path = codex_home.path().join(CONFIG_TOML_FILE);
+
+    tokio::fs::write(
+        &config_path,
+        r#"
+service_tier = "fast"
+service_tier_id = "priority"
+"#,
+    )
+    .await?;
+
+    ConfigEditsBuilder::new(codex_home.path())
+        .set_service_tier(/*service_tier*/ None)
+        .set_service_tier_id(/*service_tier_id*/ None)
+        .apply()
+        .await?;
+
+    let serialized = tokio::fs::read_to_string(config_path).await?;
+    let parsed: ConfigToml = toml::from_str(&serialized)?;
+
+    assert_eq!((parsed.service_tier, parsed.service_tier_id), (None, None));
+
+    Ok(())
+}
+
+#[tokio::test]
 async fn set_model_updates_existing_profile() -> anyhow::Result<()> {
     let codex_home = TempDir::new()?;
     let config_path = codex_home.path().join(CONFIG_TOML_FILE);
