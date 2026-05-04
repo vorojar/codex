@@ -636,11 +636,25 @@ fn apply_requirements_apps_constraints(
     };
 
     for (app_id, requirement) in &requirements_apps_config.apps {
-        if requirement.enabled != Some(false) {
-            continue;
+        if requirement.enabled == Some(false) {
+            let app = apps_config.apps.entry(app_id.clone()).or_default();
+            app.enabled = false;
         }
+
+        let Some(requirement_tools) = requirement.tools.as_ref() else {
+            continue;
+        };
         let app = apps_config.apps.entry(app_id.clone()).or_default();
-        app.enabled = false;
+        let app_tools = app.tools.get_or_insert_with(Default::default);
+        for (tool_name, tool_requirement) in &requirement_tools.tools {
+            if let Some(approval_mode) = tool_requirement.approval_mode {
+                app_tools
+                    .tools
+                    .entry(tool_name.clone())
+                    .or_default()
+                    .approval_mode = Some(approval_mode);
+            }
+        }
     }
 }
 

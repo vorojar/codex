@@ -2,6 +2,8 @@ use super::*;
 use crate::config::CONFIG_TOML_FILE;
 use crate::config::ConfigBuilder;
 use codex_config::AppRequirementToml;
+use codex_config::AppToolRequirementToml;
+use codex_config::AppToolsRequirementsToml;
 use codex_config::AppsRequirementsToml;
 use codex_config::CloudRequirementsLoader;
 use codex_config::ConfigLayerStack;
@@ -503,6 +505,7 @@ fn requirements_disabled_connector_overrides_enabled_connector() {
             "connector_123123".to_string(),
             AppRequirementToml {
                 enabled: Some(false),
+                tools: None,
             },
         )]),
     };
@@ -535,6 +538,7 @@ fn requirements_enabled_does_not_override_disabled_connector() {
             "connector_123123".to_string(),
             AppRequirementToml {
                 enabled: Some(true),
+                tools: None,
             },
         )]),
     };
@@ -568,6 +572,7 @@ enabled = true
                 "connector_123123".to_string(),
                 AppRequirementToml {
                     enabled: Some(false),
+                    tools: None,
                 },
             )]),
         }),
@@ -611,6 +616,7 @@ async fn cloud_requirements_disable_connector_applies_without_user_apps_table() 
                 "connector_123123".to_string(),
                 AppRequirementToml {
                     enabled: Some(false),
+                    tools: None,
                 },
             )]),
         }),
@@ -661,6 +667,7 @@ async fn local_requirements_disable_connector_overrides_user_apps_config() {
                 "connector_123123".to_string(),
                 AppRequirementToml {
                     enabled: Some(false),
+                    tools: None,
                 },
             )]),
         }),
@@ -712,6 +719,7 @@ async fn local_requirements_disable_connector_applies_without_user_apps_table() 
                 "connector_123123".to_string(),
                 AppRequirementToml {
                     enabled: Some(false),
+                    tools: None,
                 },
             )]),
         }),
@@ -753,6 +761,7 @@ async fn with_app_enabled_state_preserves_unrelated_disabled_connector() {
                 "connector_drive".to_string(),
                 AppRequirementToml {
                     enabled: Some(false),
+                    tools: None,
                 },
             )]),
         }),
@@ -800,6 +809,176 @@ fn app_tool_policy_honors_default_app_enabled_false() {
         AppToolPolicy {
             enabled: false,
             approval: AppToolApproval::Auto,
+        }
+    );
+}
+
+#[test]
+fn requirements_tool_approval_overrides_user_tool_approval() {
+    let mut effective_apps = AppsConfigToml {
+        default: None,
+        apps: HashMap::from([(
+            "connector_123123".to_string(),
+            AppConfig {
+                enabled: true,
+                tools: Some(AppToolsConfig {
+                    tools: HashMap::from([(
+                        "calendar/list_events".to_string(),
+                        AppToolConfig {
+                            enabled: None,
+                            approval_mode: Some(AppToolApproval::Prompt),
+                        },
+                    )]),
+                }),
+                ..Default::default()
+            },
+        )]),
+    };
+    let requirements_apps = AppsRequirementsToml {
+        apps: BTreeMap::from([(
+            "connector_123123".to_string(),
+            AppRequirementToml {
+                enabled: None,
+                tools: Some(AppToolsRequirementsToml {
+                    tools: BTreeMap::from([(
+                        "calendar/list_events".to_string(),
+                        AppToolRequirementToml {
+                            approval_mode: Some(AppToolApproval::Approve),
+                        },
+                    )]),
+                }),
+            },
+        )]),
+    };
+
+    apply_requirements_apps_constraints(&mut effective_apps, Some(&requirements_apps));
+
+    assert_eq!(
+        effective_apps
+            .apps
+            .get("connector_123123")
+            .and_then(|app| app.tools.as_ref())
+            .and_then(|tools| tools.tools.get("calendar/list_events"))
+            .and_then(|tool| tool.approval_mode),
+        Some(AppToolApproval::Approve)
+    );
+}
+
+#[tokio::test]
+async fn cloud_requirements_tool_approval_overrides_user_apps_config() {
+    let codex_home = tempdir().expect("tempdir should succeed");
+    std::fs::write(
+        codex_home.path().join(CONFIG_TOML_FILE),
+        r#"
+[apps.connector_123123.tools."calendar/list_events"]
+approval_mode = "prompt"
+"#,
+    )
+    .expect("write config");
+
+    let requirements = ConfigRequirementsToml {
+        apps: Some(AppsRequirementsToml {
+            apps: BTreeMap::from([(
+                "connector_123123".to_string(),
+                AppRequirementToml {
+                    enabled: None,
+                    tools: Some(AppToolsRequirementsToml {
+                        tools: BTreeMap::from([(
+                            "calendar/list_events".to_string(),
+                            AppToolRequirementToml {
+                                approval_mode: Some(AppToolApproval::Approve),
+                            },
+                        )]),
+                    }),
+                },
+            )]),
+        }),
+        ..Default::default()
+    };
+
+    let config = ConfigBuilder::default()
+        .codex_home(codex_home.path().to_path_buf())
+        .fallback_cwd(Some(codex_home.path().to_path_buf()))
+        .cloud_requirements(CloudRequirementsLoader::new(async move {
+            Ok(Some(requirements))
+        }))
+        .build()
+        .await
+        .expect("config should build");
+
+    let policy = app_tool_policy(
+        &config,
+        Some("connector_123123"),
+        "calendar/list_events",
+        /*tool_title*/ None,
+        /*annotations*/ None,
+    );
+    assert_eq!(
+        policy,
+        AppToolPolicy {
+            enabled: true,
+            approval: AppToolApproval::Approve,
+        }
+    );
+}
+
+#[tokio::test]
+async fn local_requirements_tool_approval_overrides_user_apps_config() {
+    let codex_home = tempdir().expect("tempdir should succeed");
+    let config_toml_path =
+        AbsolutePathBuf::try_from(codex_home.path().join(CONFIG_TOML_FILE)).expect("abs path");
+    let mut config = ConfigBuilder::default()
+        .codex_home(codex_home.path().to_path_buf())
+        .fallback_cwd(Some(codex_home.path().to_path_buf()))
+        .build()
+        .await
+        .expect("config should build");
+
+    let requirements = ConfigRequirementsToml {
+        apps: Some(AppsRequirementsToml {
+            apps: BTreeMap::from([(
+                "connector_123123".to_string(),
+                AppRequirementToml {
+                    enabled: None,
+                    tools: Some(AppToolsRequirementsToml {
+                        tools: BTreeMap::from([(
+                            "calendar/list_events".to_string(),
+                            AppToolRequirementToml {
+                                approval_mode: Some(AppToolApproval::Approve),
+                            },
+                        )]),
+                    }),
+                },
+            )]),
+        }),
+        ..Default::default()
+    };
+    config.config_layer_stack =
+        ConfigLayerStack::new(Vec::new(), ConfigRequirements::default(), requirements)
+            .expect("requirements stack")
+            .with_user_config(
+                &config_toml_path,
+                toml::from_str::<toml::Value>(
+                    r#"
+[apps.connector_123123.tools."calendar/list_events"]
+approval_mode = "prompt"
+"#,
+                )
+                .expect("apps config"),
+            );
+
+    let policy = app_tool_policy(
+        &config,
+        Some("connector_123123"),
+        "calendar/list_events",
+        /*tool_title*/ None,
+        /*annotations*/ None,
+    );
+    assert_eq!(
+        policy,
+        AppToolPolicy {
+            enabled: true,
+            approval: AppToolApproval::Approve,
         }
     );
 }
