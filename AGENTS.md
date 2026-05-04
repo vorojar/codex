@@ -110,10 +110,10 @@ See `codex-rs/tui/styles.md`.
 
 When reviewing or adding tests:
 
-- Ask whether the test makes sense.
-- Ask whether it actually asserts something valuable that you care about.
-- Ask how much the test would need to change if the surrounding system were refactored.
-- Ask whether you or someone else would notice the regression if Codex auto-updated the test.
+- Ask yourself whether the test makes sense.
+- Ask yourself whether it actually asserts something valuable that you care about.
+- Ask yourself how much the test would need to change if the surrounding system were refactored.
+- Ask yourself whether you or someone else would notice the regression if Codex auto-updated the test.
 
 If a unit test mostly covers deep implementation details, static data, removed behavior, or requires heavy monkeypatching, prefer deleting it and writing an integration test that protects meaningful end-to-end behavior instead.
 
