@@ -420,8 +420,7 @@ fn invalid_pre_tool_use_reason_message(decision: &PreToolUsePermissionDecisionWi
         PreToolUsePermissionDecisionWire::Defer => "defer",
     };
     format!(
-        "PreToolUse hook returned permissionDecision:{} without a non-empty permissionDecisionReason",
-        decision
+        "PreToolUse hook returned permissionDecision:{decision} without a non-empty permissionDecisionReason"
     )
 }
 
