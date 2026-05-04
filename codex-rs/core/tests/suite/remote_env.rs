@@ -218,10 +218,9 @@ async fn exec_command_routes_across_empty_single_and_multiple_turn_environments(
         return Ok(());
     };
 
-    let server = start_mock_server().await;
-
+    let no_env_server = start_mock_server().await;
     let no_env_mock = mount_sse_once(
-        &server,
+        &no_env_server,
         sse(vec![
             ev_response_created("resp-no-env"),
             ev_assistant_message("msg-no-env", "done"),
@@ -229,7 +228,7 @@ async fn exec_command_routes_across_empty_single_and_multiple_turn_environments(
         ]),
     )
     .await;
-    unified_exec_test(&server)
+    unified_exec_test(&no_env_server)
         .await?
         .submit_turn_with_environments("route exec command", Some(vec![]))
         .await?;
@@ -239,7 +238,8 @@ async fn exec_command_routes_across_empty_single_and_multiple_turn_environments(
         "exec_command should be omitted without turn environments; got {no_env_tools:?}",
     );
 
-    let single_env_test = unified_exec_test(&server).await?;
+    let single_env_server = start_mock_server().await;
+    let single_env_test = unified_exec_test(&single_env_server).await?;
     let local_cwd = TempDir::new()?;
     fs::write(local_cwd.path().join("marker.txt"), "local-routing")?;
     let local_selection = TurnEnvironmentSelection {
@@ -248,7 +248,7 @@ async fn exec_command_routes_across_empty_single_and_multiple_turn_environments(
     };
     let single_env_output = exec_command_routing_output(
         &single_env_test,
-        &server,
+        &single_env_server,
         "call-single-env",
         json!({ "cmd": "cat marker.txt" }),
         Some(vec![local_selection.clone()]),
@@ -263,7 +263,8 @@ async fn exec_command_routes_across_empty_single_and_multiple_turn_environments(
         "single-env command should not route to remote: {single_env_output}",
     );
 
-    let multi_env_test = unified_exec_test(&server).await?;
+    let multi_env_server = start_mock_server().await;
+    let multi_env_test = unified_exec_test(&multi_env_server).await?;
     let local_cwd = TempDir::new()?;
     fs::write(local_cwd.path().join("marker.txt"), "local-routing")?;
     let local_selection = TurnEnvironmentSelection {
@@ -285,7 +286,7 @@ async fn exec_command_routes_across_empty_single_and_multiple_turn_environments(
     };
     let multi_env_output = exec_command_routing_output(
         &multi_env_test,
-        &server,
+        &multi_env_server,
         "call-multi-env",
         json!({
             "cmd": "cat marker.txt",
