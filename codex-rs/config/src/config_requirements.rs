@@ -649,9 +649,9 @@ impl AppsRequirementsToml {
     }
 }
 
-/// Merge app requirements from a lower-precedence source into an existing
-/// higher-precedence set. Lower-precedence disables remain effective, while
-/// exact tool approval settings keep the higher-precedence value when present.
+/// Merge app requirements from a lower-precedence source into an existing higher-precedence set.
+/// This lets managed sources (for example Cloud/MDM) enforce setting disablement across layers,
+/// while exact tool approval settings keep the higher-precedence value when present.
 pub(crate) fn merge_app_requirements_descending(
     base: &mut AppsRequirementsToml,
     incoming: AppsRequirementsToml,
