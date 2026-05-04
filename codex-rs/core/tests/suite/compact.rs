@@ -2024,7 +2024,6 @@ async fn auto_compact_persists_rollout_entries() {
     });
     let test = builder.build(&server).await.unwrap();
     let codex = test.codex.clone();
-    let session_configured = test.session_configured;
 
     codex
         .submit(Op::UserInput {
@@ -2068,10 +2067,10 @@ async fn auto_compact_persists_rollout_entries() {
         .unwrap();
     wait_for_event(&codex, |ev| matches!(ev, EventMsg::TurnComplete(_))).await;
 
+    let rollout_path = codex.current_rollout_path().await.expect("rollout path");
     codex.submit(Op::Shutdown).await.unwrap();
     wait_for_event(&codex, |ev| matches!(ev, EventMsg::ShutdownComplete)).await;
 
-    let rollout_path = session_configured.rollout_path.expect("rollout path");
     let text = std::fs::read_to_string(&rollout_path).unwrap_or_else(|e| {
         panic!(
             "failed to read rollout file {}: {e}",
@@ -2079,7 +2078,7 @@ async fn auto_compact_persists_rollout_entries() {
         )
     });
 
-    let mut turn_context_count = 0usize;
+    let mut rollout_items = Vec::new();
     for line in text.lines() {
         let trimmed = line.trim();
         if trimmed.is_empty() {
@@ -2088,7 +2087,15 @@ async fn auto_compact_persists_rollout_entries() {
         let Ok(entry): Result<RolloutLine, _> = serde_json::from_str(trimmed) else {
             continue;
         };
-        match entry.item {
+        rollout_items.push(entry.item);
+    }
+    let rollout_items =
+        materialize_rollout_items_for_replay(test.config.codex_home.as_path(), &rollout_items)
+            .await;
+
+    let mut turn_context_count = 0usize;
+    for item in rollout_items {
+        match item {
             RolloutItem::TurnContext(_) => {
                 turn_context_count += 1;
             }

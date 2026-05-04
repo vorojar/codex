@@ -188,18 +188,18 @@ async fn materialize_rollout_items_for_replay_at_depth(
                     };
                 match RolloutRecorder::load_rollout_items(&resolved_path).await {
                     Ok((parent_items, _, _)) => {
-                        let parent_prefix = truncate_rollout_before_nth_user_message_from_start(
-                            &parent_items,
-                            reference.nth_user_message,
-                        );
                         let parent_materialized =
                             Box::pin(materialize_rollout_items_for_replay_at_depth(
                                 codex_home,
-                                &parent_prefix,
+                                &parent_items,
                                 depth + 1,
                             ))
                             .await;
-                        materialized.extend(parent_materialized);
+                        let parent_prefix = truncate_rollout_before_nth_user_message_from_start(
+                            &parent_materialized,
+                            reference.nth_user_message,
+                        );
+                        materialized.extend(parent_prefix);
                     }
                     Err(err) => {
                         warn!(

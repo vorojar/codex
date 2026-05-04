@@ -246,6 +246,61 @@ async fn materializes_fork_reference_by_segment_id_after_source_rollover() {
 }
 
 #[tokio::test]
+async fn materializes_fork_reference_before_truncating_rollout_references() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let thread_id = ThreadId::new();
+    let old_segment_id = SegmentId::new();
+    let current_segment_id = SegmentId::new();
+
+    let old_path = temp.path().join("old.jsonl");
+    let current_path = temp.path().join("current.jsonl");
+
+    write_rollout(
+        &old_path,
+        &[
+            session_meta_item(thread_id, old_segment_id),
+            RolloutItem::ResponseItem(user_msg("u1")),
+            RolloutItem::ResponseItem(assistant_msg("a1")),
+        ],
+    )
+    .await;
+    write_rollout(
+        &current_path,
+        &[
+            session_meta_item(thread_id, current_segment_id),
+            RolloutItem::RolloutReference(RolloutReferenceItem {
+                rollout_path: old_path,
+                thread_id: None,
+                segment_id: None,
+                max_depth: 2,
+            }),
+            RolloutItem::ResponseItem(user_msg("u2")),
+            RolloutItem::ResponseItem(assistant_msg("a2")),
+            RolloutItem::ResponseItem(user_msg("u3")),
+        ],
+    )
+    .await;
+
+    let fork_items = vec![
+        RolloutItem::ForkReference(ForkReferenceItem {
+            rollout_path: current_path,
+            thread_id: Some(thread_id),
+            segment_id: Some(current_segment_id),
+            nth_user_message: 2,
+        }),
+        RolloutItem::ResponseItem(user_msg("child request")),
+    ];
+
+    let materialized = materialize_rollout_items_for_replay(temp.path(), &fork_items).await;
+    let text = serde_json::to_string(&materialized).expect("serialize materialized rollout");
+
+    assert!(text.contains("u1"));
+    assert!(text.contains("u2"));
+    assert!(!text.contains("u3"));
+    assert!(text.contains("child request"));
+}
+
+#[tokio::test]
 async fn materializes_rollout_reference_with_bounded_depth() {
     let temp = tempfile::tempdir().expect("tempdir");
     let thread_id = ThreadId::new();
