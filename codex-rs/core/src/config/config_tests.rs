@@ -6348,6 +6348,7 @@ async fn test_precedence_fixture_with_o3_profile() -> std::io::Result<()> {
             review_model: None,
             model_context_window: None,
             model_auto_compact_token_limit: None,
+            service_tier: None,
             service_tier_id: None,
             model_provider_id: "openai".to_string(),
             model_provider: fixture.openai_provider.clone(),
@@ -6507,6 +6508,34 @@ async fn explicit_null_service_tier_override_sets_fast_default_opt_out() -> std:
 }
 
 #[tokio::test]
+async fn service_tier_id_takes_precedence_over_service_tier() -> std::io::Result<()> {
+    let fixture = create_test_fixture()?;
+    let mut cfg = fixture.cfg.clone();
+    cfg.service_tier = Some(ServiceTier::Fast);
+    cfg.service_tier_id = Some("flex".to_string());
+
+    let config = Config::load_from_base_config_with_overrides(
+        cfg,
+        ConfigOverrides {
+            cwd: Some(fixture.cwd_path()),
+            ..Default::default()
+        },
+        fixture.codex_home(),
+    )
+    .await?;
+
+    assert_eq!(
+        config,
+        Config {
+            service_tier: Some(ServiceTier::Fast),
+            service_tier_id: Some("flex".to_string()),
+            ..config.clone()
+        }
+    );
+    Ok(())
+}
+
+#[tokio::test]
 async fn fast_default_opt_out_notice_config_is_respected() -> std::io::Result<()> {
     let fixture = create_test_fixture()?;
     let mut cfg = fixture.cfg.clone();
@@ -6550,6 +6579,7 @@ async fn test_precedence_fixture_with_gpt3_profile() -> std::io::Result<()> {
         review_model: None,
         model_context_window: None,
         model_auto_compact_token_limit: None,
+        service_tier: None,
         service_tier_id: None,
         model_provider_id: "openai-custom".to_string(),
         model_provider: fixture.openai_custom_provider.clone(),
@@ -6706,6 +6736,7 @@ async fn test_precedence_fixture_with_zdr_profile() -> std::io::Result<()> {
         review_model: None,
         model_context_window: None,
         model_auto_compact_token_limit: None,
+        service_tier: None,
         service_tier_id: None,
         model_provider_id: "openai".to_string(),
         model_provider: fixture.openai_provider.clone(),
@@ -6847,6 +6878,7 @@ async fn test_precedence_fixture_with_gpt5_profile() -> std::io::Result<()> {
         review_model: None,
         model_context_window: None,
         model_auto_compact_token_limit: None,
+        service_tier: None,
         service_tier_id: None,
         model_provider_id: "openai".to_string(),
         model_provider: fixture.openai_provider.clone(),

@@ -11,6 +11,7 @@ use crate::types::WindowsToml;
 use codex_features::FeaturesToml;
 use codex_protocol::config_types::ReasoningSummary;
 use codex_protocol::config_types::SandboxMode;
+use codex_protocol::config_types::ServiceTier;
 use codex_protocol::config_types::Verbosity;
 use codex_protocol::config_types::WebSearchMode;
 use codex_protocol::openai_models::ReasoningEffort;
@@ -22,7 +23,10 @@ use codex_protocol::protocol::AskForApproval;
 #[schemars(deny_unknown_fields)]
 pub struct ConfigProfile {
     pub model: Option<String>,
-    /// Optional explicit service tier id preference for new turns.
+    /// Optional explicit service tier preference for new turns (`fast` or `flex`).
+    pub service_tier: Option<ServiceTier>,
+    /// Optional explicit service tier id preference for new turns. Takes precedence over
+    /// `service_tier` when both are set.
     pub service_tier_id: Option<String>,
     /// The key in the `model_providers` map identifying the
     /// [`ModelProviderInfo`] to use.

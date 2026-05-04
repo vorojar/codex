@@ -748,7 +748,8 @@ pub(crate) struct ChatWidget {
     /// where the overlay may briefly treat new tail content as already cached.
     active_cell_revision: u64,
     config: Config,
-    /// Runtime value resolved by core. `config.service_tier_id` remains the explicit user choice.
+    /// Runtime value resolved by core. `config.service_tier_id`/`config.service_tier`
+    /// remain the explicit user choice.
     effective_service_tier: Option<ServiceTier>,
     /// The unmasked collaboration mode settings (always Default mode).
     ///
@@ -5802,10 +5803,14 @@ impl ChatWidget {
             .personality
             .filter(|_| self.config.features.enabled(Feature::Personality))
             .filter(|_| self.current_model_supports_personality());
-        let service_tier = match self.config.service_tier_id.clone() {
-            Some(service_tier_id) => Some(Some(service_tier_id)),
-            None if self.config.notices.fast_default_opt_out == Some(true) => Some(None),
-            None => None,
+        let service_tier = match (
+            self.config.service_tier_id.clone(),
+            self.config.service_tier,
+        ) {
+            (Some(service_tier_id), _) => Some(Some(service_tier_id)),
+            (None, Some(service_tier)) => Some(Some(service_tier.request_value().to_string())),
+            (None, None) if self.config.notices.fast_default_opt_out == Some(true) => Some(None),
+            (None, None) => None,
         };
         let permission_profile = self.config.permissions.permission_profile();
         let op = AppCommand::user_turn(

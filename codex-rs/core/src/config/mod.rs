@@ -82,6 +82,7 @@ use codex_protocol::config_types::ForcedLoginMethod;
 use codex_protocol::config_types::Personality;
 use codex_protocol::config_types::ReasoningSummary;
 use codex_protocol::config_types::SandboxMode;
+use codex_protocol::config_types::ServiceTier;
 use codex_protocol::config_types::ShellEnvironmentPolicy;
 use codex_protocol::config_types::ServiceTier;
 use codex_protocol::config_types::TrustLevel;
@@ -399,10 +400,11 @@ pub struct Config {
     /// Optional override of model selection.
     pub model: Option<String>,
 
-    /// Effective legacy service tier preference for new turns (`fast` or `flex`).
+    /// Effective legacy service tier preference for new turns.
     pub service_tier: Option<ServiceTier>,
 
-    /// Effective service tier id preference for new turns.
+    /// Effective service tier id preference for new turns. Takes precedence over
+    /// `service_tier` when both are set.
     pub service_tier_id: Option<String>,
 
     /// Model used specifically for review sessions.
@@ -2654,7 +2656,11 @@ impl Config {
         let model = model.or(config_profile.model).or(cfg.model);
         let mut notices = cfg.notice.unwrap_or_default();
         let service_tier = match service_tier_override {
-            Some(service_tier) => service_tier,
+            Some(Some(service_tier)) => Some(service_tier),
+            Some(None) => {
+                notices.fast_default_opt_out = Some(true);
+                None
+            }
             None => config_profile.service_tier.or(cfg.service_tier),
         };
         let service_tier = match service_tier {
@@ -2673,10 +2679,11 @@ impl Config {
                 notices.fast_default_opt_out = Some(true);
                 None
             }
-            None => config_profile
-                .service_tier_id
-                .or(cfg.service_tier_id)
-                .or_else(|| service_tier.map(|tier| tier.request_value().to_string())),
+            None => config_profile.service_tier_id.or(cfg.service_tier_id).or_else(|| {
+                service_tier
+                    .as_ref()
+                    .map(|service_tier| service_tier.request_value().to_string())
+            }),
         };
         let service_tier_id =
             match service_tier_id.as_deref() {
