@@ -360,6 +360,11 @@ async fn run_command_under_windows_session(
         WindowsSandboxLevel::from_config(config),
         WindowsSandboxLevel::Elevated
     );
+    let file_system_sandbox_policy = config.permissions.file_system_sandbox_policy();
+    let protected_metadata_targets = windows_debug_protected_metadata_targets(
+        &file_system_sandbox_policy,
+        sandbox_policy_cwd.as_path(),
+    );
 
     let spawned = if use_elevated {
         spawn_windows_sandbox_session_elevated(
@@ -372,7 +377,7 @@ async fn run_command_under_windows_session(
             None,
             /*tty*/ false,
             /*stdin_open*/ true,
-            &[],
+            &protected_metadata_targets,
             config.permissions.windows_sandbox_private_desktop,
         )
         .await
@@ -387,7 +392,7 @@ async fn run_command_under_windows_session(
             None,
             /*tty*/ false,
             /*stdin_open*/ true,
-            &[],
+            &protected_metadata_targets,
             config.permissions.windows_sandbox_private_desktop,
         )
         .await
@@ -459,6 +464,31 @@ async fn run_command_under_windows_session(
     })
     .await;
     std::process::exit(exit_code);
+}
+
+#[cfg(target_os = "windows")]
+fn windows_debug_protected_metadata_targets(
+    file_system_sandbox_policy: &codex_protocol::permissions::FileSystemSandboxPolicy,
+    cwd: &std::path::Path,
+) -> Vec<codex_windows_sandbox::ProtectedMetadataTarget> {
+    let mut targets = Vec::new();
+    for writable_root in file_system_sandbox_policy.get_writable_roots_with_cwd(cwd) {
+        for metadata_name in writable_root.protected_metadata_names {
+            let path = writable_root.root.join(metadata_name);
+            let mode = if std::fs::symlink_metadata(path.as_path()).is_ok() {
+                codex_windows_sandbox::ProtectedMetadataMode::ExistingDeny
+            } else {
+                codex_windows_sandbox::ProtectedMetadataMode::MissingCreationMonitor
+            };
+            targets.push(codex_windows_sandbox::ProtectedMetadataTarget {
+                path: path.as_path().to_path_buf(),
+                mode,
+            });
+        }
+    }
+    targets.sort_by(|a, b| a.path.cmp(&b.path));
+    targets.dedup_by(|a, b| a.path == b.path && a.mode == b.mode);
+    targets
 }
 
 async fn spawn_debug_sandbox_child(
