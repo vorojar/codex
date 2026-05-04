@@ -1,6 +1,8 @@
 use crate::policy_transforms::should_require_platform_sandbox;
 use codex_protocol::models::PermissionProfile;
+use std::io::ErrorKind;
 use std::io::Read;
+use std::os::fd::AsRawFd;
 use std::path::Path;
 use std::path::PathBuf;
 use std::process::Command;
@@ -33,6 +35,7 @@ const USER_NAMESPACE_FAILURES: [&str; 4] = [
 ];
 const SYSTEM_BWRAP_PROBE_TIMEOUT: Duration = Duration::from_millis(500);
 const SYSTEM_BWRAP_PROBE_POLL_INTERVAL: Duration = Duration::from_millis(50);
+const SYSTEM_BWRAP_PROBE_STDERR_LIMIT_BYTES: u64 = 64 * 1024;
 
 pub fn system_bwrap_warning(permission_profile: &PermissionProfile) -> Option<String> {
     if !should_warn_about_system_bwrap(permission_profile) {
@@ -91,8 +94,21 @@ fn system_bwrap_has_user_namespace_access(system_bwrap_path: &Path, timeout: Dur
         match child.try_wait() {
             Ok(Some(status)) => {
                 let stderr = child.stderr.take().map_or_else(Vec::new, |mut stderr| {
+                    let fd = stderr.as_raw_fd();
+                    let flags = unsafe { libc::fcntl(fd, libc::F_GETFL) };
+                    if flags < 0
+                        || unsafe { libc::fcntl(fd, libc::F_SETFL, flags | libc::O_NONBLOCK) } < 0
+                    {
+                        return Vec::new();
+                    }
+
                     let mut bytes = Vec::new();
-                    let _ = stderr.read_to_end(&mut bytes);
+                    let mut stderr = stderr.take(SYSTEM_BWRAP_PROBE_STDERR_LIMIT_BYTES);
+                    if let Err(err) = stderr.read_to_end(&mut bytes)
+                        && err.kind() != ErrorKind::WouldBlock
+                    {
+                        return bytes;
+                    }
                     bytes
                 });
                 let output = Output {

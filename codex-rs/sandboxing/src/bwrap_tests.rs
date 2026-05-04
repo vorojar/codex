@@ -65,6 +65,25 @@ exit 0
 }
 
 #[test]
+fn system_bwrap_probe_does_not_wait_for_descendants_holding_stderr_open() {
+    let fake_bwrap = write_fake_bwrap(
+        r#"#!/bin/sh
+echo 'No permissions to create a new namespace' >&2
+sleep 1 &
+exit 1
+"#,
+    );
+    let fake_bwrap_path: &Path = fake_bwrap.as_ref();
+    let started_at = Instant::now();
+
+    assert!(!system_bwrap_has_user_namespace_access(
+        fake_bwrap_path,
+        Duration::from_millis(100),
+    ));
+    assert!(started_at.elapsed() < Duration::from_millis(500));
+}
+
+#[test]
 fn detects_wsl1_proc_version_formats() {
     assert!(proc_version_indicates_wsl1(
         "Linux version 4.4.0-22621-Microsoft"
