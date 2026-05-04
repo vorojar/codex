@@ -647,6 +647,28 @@ async fn exec_windows_sandbox(
                 .collect::<Vec<_>>()
         })
         .unwrap_or_default();
+    let protected_metadata_targets = windows_sandbox_filesystem_overrides
+        .map(|overrides| {
+            overrides
+                .protected_metadata_targets
+                .iter()
+                .map(|target| {
+                    let mode = match target.mode {
+                        WindowsProtectedMetadataMode::ExistingDeny => {
+                            codex_windows_sandbox::ProtectedMetadataMode::ExistingDeny
+                        }
+                        WindowsProtectedMetadataMode::MissingCreationMonitor => {
+                            codex_windows_sandbox::ProtectedMetadataMode::MissingCreationMonitor
+                        }
+                    };
+                    codex_windows_sandbox::ProtectedMetadataTarget {
+                        path: target.path.to_path_buf(),
+                        mode,
+                    }
+                })
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
     let spawn_res = tokio::task::spawn_blocking(move || {
         if use_elevated {
             run_windows_sandbox_capture_elevated(
@@ -665,7 +687,7 @@ async fn exec_windows_sandbox(
                         elevated_read_roots_include_platform_defaults,
                     write_roots_override: elevated_write_roots_override.as_deref(),
                     deny_write_paths_override: &elevated_deny_write_paths,
-                    protected_metadata_targets: &[],
+                    protected_metadata_targets: &protected_metadata_targets,
                 },
             )
         } else {
@@ -678,6 +700,7 @@ async fn exec_windows_sandbox(
                 env,
                 timeout_ms,
                 &additional_deny_write_paths,
+                &protected_metadata_targets,
                 windows_sandbox_private_desktop,
             )
         }

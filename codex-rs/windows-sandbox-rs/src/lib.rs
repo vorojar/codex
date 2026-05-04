@@ -256,6 +256,7 @@ pub use stub::run_windows_sandbox_legacy_preflight;
 
 #[cfg(target_os = "windows")]
 mod windows_impl {
+    use super::ProtectedMetadataTarget;
     use super::acl::add_allow_ace;
     use super::acl::add_deny_write_ace;
     use super::acl::allow_null_device;
@@ -348,6 +349,7 @@ mod windows_impl {
             env_map,
             timeout_ms,
             &[],
+            &[],
             use_private_desktop,
         )
     }
@@ -362,6 +364,7 @@ mod windows_impl {
         mut env_map: HashMap<String, String>,
         timeout_ms: Option<u64>,
         additional_deny_write_paths: &[PathBuf],
+        _protected_metadata_targets: &[ProtectedMetadataTarget],
         use_private_desktop: bool,
     ) -> Result<CaptureResult> {
         let common = prepare_legacy_spawn_context(
