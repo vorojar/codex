@@ -80,6 +80,8 @@ mod session;
 pub use acl::add_deny_write_ace;
 
 #[cfg(target_os = "windows")]
+pub use acl::allow_named_pipe_device;
+#[cfg(target_os = "windows")]
 pub use acl::allow_null_device;
 #[cfg(target_os = "windows")]
 pub use acl::ensure_allow_mask_aces;
@@ -261,6 +263,7 @@ mod windows_impl {
     use super::ProtectedMetadataTarget;
     use super::acl::add_allow_ace;
     use super::acl::add_deny_write_ace;
+    use super::acl::allow_named_pipe_device;
     use super::acl::allow_null_device;
     use super::acl::revoke_ace;
     use super::allow::AllowDenyPaths;
@@ -429,6 +432,7 @@ mod windows_impl {
                     let mut tmp = bytes;
                     let psid2 = tmp.as_mut_ptr() as *mut c_void;
                     allow_null_device(psid2);
+                    allow_named_pipe_device(psid2);
                 }
                 windows_sys::Win32::Foundation::CloseHandle(base);
             }
@@ -477,8 +481,10 @@ mod windows_impl {
                 }
             }
             allow_null_device(psid_generic);
+            allow_named_pipe_device(psid_generic);
             if let Some(psid) = psid_workspace {
                 allow_null_device(psid);
+                allow_named_pipe_device(psid);
             }
         }
         let (stdin_pair, stdout_pair, stderr_pair) = unsafe { setup_stdio_pipes()? };
@@ -662,7 +668,9 @@ mod windows_impl {
                 let _ = add_deny_write_ace(p, psid_generic);
             }
             allow_null_device(psid_generic);
+            allow_named_pipe_device(psid_generic);
             allow_null_device(psid_workspace);
+            allow_named_pipe_device(psid_workspace);
         }
 
         Ok(())

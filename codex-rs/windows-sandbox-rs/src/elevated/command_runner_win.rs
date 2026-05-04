@@ -27,6 +27,7 @@ use codex_windows_sandbox::SpawnReady;
 use codex_windows_sandbox::SpawnRequest;
 use codex_windows_sandbox::StderrMode;
 use codex_windows_sandbox::StdinMode;
+use codex_windows_sandbox::allow_named_pipe_device;
 use codex_windows_sandbox::allow_null_device;
 use codex_windows_sandbox::create_readonly_token_with_caps_and_user_from;
 use codex_windows_sandbox::create_workspace_write_token_with_caps_and_user_from;
@@ -256,8 +257,10 @@ fn spawn_ipc_process(req: &SpawnRequest) -> Result<IpcSpawnedProcess> {
         // These ACL adjustments need the raw SID values, but ownership stays with `cap_psids`.
         // We do not manually `LocalFree` anything here; the wrappers handle every return path.
         allow_null_device(cap_psid_ptrs[0]);
+        allow_named_pipe_device(cap_psid_ptrs[0]);
         for psid in &cap_psid_ptrs {
             allow_null_device(*psid);
+            allow_named_pipe_device(*psid);
         }
     }
 

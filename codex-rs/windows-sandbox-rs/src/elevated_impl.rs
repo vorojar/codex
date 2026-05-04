@@ -23,6 +23,7 @@ pub struct ElevatedSandboxCaptureRequest<'a> {
 
 mod windows_impl {
     use super::ElevatedSandboxCaptureRequest;
+    use crate::acl::allow_named_pipe_device;
     use crate::acl::allow_null_device;
     use crate::cap::load_or_create_cap_sids;
     use crate::env::ensure_non_interactive_pager;
@@ -189,6 +190,7 @@ mod windows_impl {
 
         unsafe {
             allow_null_device(psid_to_use);
+            allow_named_pipe_device(psid_to_use);
         }
 
         (|| -> Result<CaptureResult> {

@@ -46,6 +46,7 @@ use windows_sys::Win32::Storage::FileSystem::FILE_WRITE_EA;
 use windows_sys::Win32::Storage::FileSystem::OPEN_EXISTING;
 use windows_sys::Win32::Storage::FileSystem::READ_CONTROL;
 use windows_sys::Win32::Storage::FileSystem::DELETE;
+const SE_FILE_OBJECT: u32 = 1;
 const SE_KERNEL_OBJECT: u32 = 6;
 const INHERIT_ONLY_ACE: u8 = 0x08;
 const GENERIC_WRITE_MASK: u32 = 0x4000_0000;
@@ -568,19 +569,20 @@ pub unsafe fn revoke_ace(path: &Path, psid: *mut c_void) {
     }
 }
 
-/// Grants RX to the null device for the given SID to support stdout/stderr redirection.
-///
-/// # Safety
-/// Caller must ensure `psid` is a valid SID pointer.
-pub unsafe fn allow_null_device(psid: *mut c_void) {
+unsafe fn allow_opened_object_path(
+    psid: *mut c_void,
+    path: &str,
+    object_type: u32,
+    flags_and_attributes: u32,
+) {
     let desired = 0x00020000 | 0x00040000; // READ_CONTROL | WRITE_DAC
     let h = CreateFileW(
-        to_wide(r"\\\\.\\NUL").as_ptr(),
+        to_wide(path).as_ptr(),
         desired,
-        FILE_SHARE_READ | FILE_SHARE_WRITE,
+        FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
         std::ptr::null_mut(),
         OPEN_EXISTING,
-        FILE_ATTRIBUTE_NORMAL,
+        flags_and_attributes,
         0,
     );
     if h == 0 || h == INVALID_HANDLE_VALUE {
@@ -590,7 +592,7 @@ pub unsafe fn allow_null_device(psid: *mut c_void) {
     let mut p_dacl: *mut ACL = std::ptr::null_mut();
     let code = GetSecurityInfo(
         h,
-        SE_KERNEL_OBJECT as i32,
+        object_type as i32,
         DACL_SECURITY_INFORMATION,
         std::ptr::null_mut(),
         std::ptr::null_mut(),
@@ -617,7 +619,7 @@ pub unsafe fn allow_null_device(psid: *mut c_void) {
         if code2 == ERROR_SUCCESS {
             let _ = SetSecurityInfo(
                 h,
-                SE_KERNEL_OBJECT as i32,
+                object_type as i32,
                 DACL_SECURITY_INFORMATION,
                 std::ptr::null_mut(),
                 std::ptr::null_mut(),
@@ -633,6 +635,78 @@ pub unsafe fn allow_null_device(psid: *mut c_void) {
         LocalFree(p_sd as HLOCAL);
     }
     CloseHandle(h);
+}
+
+unsafe fn allow_named_file_object_path(psid: *mut c_void, path: &str, allow_mask: u32) {
+    let mut p_sd: *mut c_void = std::ptr::null_mut();
+    let mut p_dacl: *mut ACL = std::ptr::null_mut();
+    let code = GetNamedSecurityInfoW(
+        to_wide(path).as_ptr(),
+        SE_FILE_OBJECT as i32,
+        DACL_SECURITY_INFORMATION,
+        std::ptr::null_mut(),
+        std::ptr::null_mut(),
+        &mut p_dacl,
+        std::ptr::null_mut(),
+        &mut p_sd,
+    );
+    if code != ERROR_SUCCESS {
+        if !p_sd.is_null() {
+            LocalFree(p_sd as HLOCAL);
+        }
+        return;
+    }
+    let trustee = TRUSTEE_W {
+        pMultipleTrustee: std::ptr::null_mut(),
+        MultipleTrusteeOperation: 0,
+        TrusteeForm: TRUSTEE_IS_SID,
+        TrusteeType: TRUSTEE_IS_UNKNOWN,
+        ptstrName: psid as *mut u16,
+    };
+    let mut explicit: EXPLICIT_ACCESS_W = std::mem::zeroed();
+    explicit.grfAccessPermissions = allow_mask;
+    explicit.grfAccessMode = 2; // SET_ACCESS
+    explicit.grfInheritance = 0;
+    explicit.Trustee = trustee;
+    let mut p_new_dacl: *mut ACL = std::ptr::null_mut();
+    let code2 = SetEntriesInAclW(1, &explicit, p_dacl, &mut p_new_dacl);
+    if code2 == ERROR_SUCCESS {
+        let _ = SetNamedSecurityInfoW(
+            to_wide(path).as_ptr() as *mut u16,
+            SE_FILE_OBJECT as i32,
+            DACL_SECURITY_INFORMATION,
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+            p_new_dacl,
+            std::ptr::null_mut(),
+        );
+        if !p_new_dacl.is_null() {
+            LocalFree(p_new_dacl as HLOCAL);
+        }
+    }
+    if !p_sd.is_null() {
+        LocalFree(p_sd as HLOCAL);
+    }
+}
+
+/// Grants access to the null device for the given SID to support stdout/stderr redirection.
+///
+/// # Safety
+/// Caller must ensure `psid` is a valid SID pointer.
+pub unsafe fn allow_null_device(psid: *mut c_void) {
+    allow_opened_object_path(psid, "\\\\.\\NUL", SE_KERNEL_OBJECT, FILE_ATTRIBUTE_NORMAL);
+}
+
+/// Grants access to the named pipe namespace for the given SID.
+///
+/// MSYS and Git for Windows create signal pipes during process startup. Restricted tokens need an
+/// explicit allow on the pipe namespace, otherwise those child processes fail during initialization
+/// with `ERROR_ACCESS_DENIED`.
+///
+/// # Safety
+/// Caller must ensure `psid` is a valid SID pointer.
+pub unsafe fn allow_named_pipe_device(psid: *mut c_void) {
+    allow_named_file_object_path(psid, "\\\\.\\pipe\\", FILE_DELETE_CHILD);
 }
 const CONTAINER_INHERIT_ACE: u32 = 0x2;
 const OBJECT_INHERIT_ACE: u32 = 0x1;

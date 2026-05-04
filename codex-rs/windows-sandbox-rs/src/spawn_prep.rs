@@ -1,5 +1,6 @@
 use crate::acl::add_allow_ace;
 use crate::acl::add_deny_write_ace;
+use crate::acl::allow_named_pipe_device;
 use crate::acl::allow_null_device;
 use crate::allow::AllowDenyPaths;
 use crate::allow::compute_allow_paths;
@@ -206,6 +207,7 @@ pub(crate) fn allow_null_device_for_workspace_write(is_workspace_write: bool) {
                 let mut tmp = bytes;
                 let psid = tmp.as_mut_ptr() as *mut c_void;
                 allow_null_device(psid);
+                allow_named_pipe_device(psid);
             }
             CloseHandle(base);
         }
@@ -249,8 +251,10 @@ pub(crate) fn apply_legacy_session_acl_rules(
             }
         }
         allow_null_device(psid_generic.as_ptr());
+        allow_named_pipe_device(psid_generic.as_ptr());
         if let Some(psid_workspace) = psid_workspace {
             allow_null_device(psid_workspace.as_ptr());
+            allow_named_pipe_device(psid_workspace.as_ptr());
             if persist_aces && matches!(policy, SandboxPolicy::WorkspaceWrite { .. }) {
                 let _ = protect_workspace_codex_dir(current_dir, psid_workspace.as_ptr());
                 let _ = protect_workspace_agents_dir(current_dir, psid_workspace.as_ptr());
@@ -325,6 +329,7 @@ pub(crate) fn prepare_elevated_spawn_context(
 
     unsafe {
         allow_null_device(psid_to_use.as_ptr());
+        allow_named_pipe_device(psid_to_use.as_ptr());
     }
 
     Ok(ElevatedSpawnContext {
