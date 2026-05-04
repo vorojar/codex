@@ -259,6 +259,7 @@ pub(super) async fn make_chatwidget_manual(
         current_status: StatusIndicatorState::working(),
         active_hook_cell: None,
         ambient_pet,
+        pet_image_support_override: None,
         retry_status_header: None,
         pending_status_indicator_restore: false,
         suppress_queue_autosend: false,
