@@ -134,11 +134,12 @@ fn bootstrap_request_error(context: &'static str, err: TypedRequestError) -> col
 
 fn is_missing_collaboration_mode_list_error(err: &TypedRequestError) -> bool {
     match err {
-        TypedRequestError::Server { method, source } if method == "collaborationMode/list" => {
-            source.code == JSONRPC_METHOD_NOT_FOUND_ERROR_CODE
-                || (source.code == JSONRPC_INVALID_REQUEST_ERROR_CODE
-                    && source.message.contains("collaborationMode/list")
-                    && source.message.contains("unknown variant"))
+        TypedRequestError::Server { method, source } => {
+            method == "collaborationMode/list"
+                && (source.code == JSONRPC_METHOD_NOT_FOUND_ERROR_CODE
+                    || (source.code == JSONRPC_INVALID_REQUEST_ERROR_CODE
+                        && source.message.contains("collaborationMode/list")
+                        && source.message.contains("unknown variant")))
         }
         TypedRequestError::Transport { .. } | TypedRequestError::Deserialize { .. } => false,
     }
