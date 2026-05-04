@@ -240,7 +240,7 @@ async fn memories_startup_phase1_uses_live_thread_service_tier() -> anyhow::Resu
     let server = start_mock_server().await;
     let home = Arc::new(TempDir::new()?);
     let test = build_test_codex(&server, home).await?;
-    assert_eq!(test.config.service_tier, None);
+    assert_eq!(test.config.service_tier_id, None);
 
     test.codex
         .submit(Op::OverrideTurnContext {

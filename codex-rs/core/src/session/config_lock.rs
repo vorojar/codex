@@ -109,10 +109,7 @@ fn save_session_resolved_fields(sc: &SessionConfiguration, lock_config: &mut Con
     lock_config.model = Some(sc.collaboration_mode.model().to_string());
     lock_config.model_reasoning_effort = sc.collaboration_mode.reasoning_effort();
     lock_config.model_reasoning_summary = sc.model_reasoning_summary;
-    lock_config.service_tier = sc
-        .service_tier
-        .as_deref()
-        .and_then(codex_protocol::config_types::ServiceTier::from_request_value);
+    lock_config.service_tier_id = sc.service_tier.clone();
     lock_config.instructions = Some(sc.base_instructions.clone());
     lock_config.developer_instructions = sc.developer_instructions.clone();
     lock_config.compact_prompt = sc.compact_prompt.clone();
@@ -291,7 +288,7 @@ mod tests {
         assert_eq!(lock.model, None);
         assert_eq!(lock.model_reasoning_effort, None);
         assert_eq!(lock.model_reasoning_summary, None);
-        assert_eq!(lock.service_tier, None);
+        assert_eq!(lock.service_tier_id, None);
         assert_eq!(lock.instructions, None);
         assert_eq!(lock.developer_instructions, None);
         assert_eq!(lock.compact_prompt, None);

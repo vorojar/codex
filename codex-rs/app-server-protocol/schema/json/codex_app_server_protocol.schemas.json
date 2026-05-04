@@ -7134,7 +7134,7 @@
               }
             ]
           },
-          "service_tier": {
+          "service_tier_id": {
             "type": [
               "string",
               "null"
@@ -12738,7 +12738,7 @@
               }
             ]
           },
-          "service_tier": {
+          "service_tier_id": {
             "type": [
               "string",
               "null"

@@ -617,7 +617,8 @@ impl App {
 
     pub(super) fn fresh_session_config(&self) -> Config {
         let mut config = self.config.clone();
-        config.service_tier = self
+        config.service_tier = self.chat_widget.configured_service_tier();
+        config.service_tier_id = self
             .chat_widget
             .configured_service_tier()
             .map(|service_tier| service_tier.request_value().to_string());

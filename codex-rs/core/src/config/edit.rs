@@ -6,7 +6,6 @@ use codex_config::types::McpServerConfig;
 use codex_config::types::ToolSuggestDisabledTool;
 use codex_features::FEATURES;
 use codex_protocol::config_types::Personality;
-use codex_protocol::config_types::ServiceTier;
 use codex_protocol::config_types::TrustLevel;
 use codex_protocol::openai_models::ReasoningEffort;
 use std::collections::BTreeMap;
@@ -31,8 +30,8 @@ pub enum ConfigEdit {
         model: Option<String>,
         effort: Option<ReasoningEffort>,
     },
-    /// Update the service tier preference for future turns.
-    SetServiceTier { service_tier: Option<ServiceTier> },
+    /// Update the service tier id preference for future turns.
+    SetServiceTierId { service_tier_id: Option<String> },
     /// Update the active (or default) model personality.
     SetModelPersonality { personality: Option<Personality> },
     /// Toggle the acknowledgement flag under `[notice]`.
@@ -525,9 +524,11 @@ impl ConfigDocument {
                 );
                 mutated
             }),
-            ConfigEdit::SetServiceTier { service_tier } => Ok(self.write_profile_value(
-                &["service_tier"],
-                service_tier.map(|service_tier| value(service_tier.to_string())),
+            ConfigEdit::SetServiceTierId { service_tier_id } => Ok(self.write_profile_value(
+                &["service_tier_id"],
+                service_tier_id
+                    .as_ref()
+                    .map(|service_tier_id| value(service_tier_id.clone())),
             )),
             ConfigEdit::SetModelPersonality { personality } => Ok(self.write_profile_value(
                 &["personality"],
@@ -1105,8 +1106,9 @@ impl ConfigEditsBuilder {
         self
     }
 
-    pub fn set_service_tier(mut self, service_tier: Option<ServiceTier>) -> Self {
-        self.edits.push(ConfigEdit::SetServiceTier { service_tier });
+    pub fn set_service_tier_id(mut self, service_tier_id: Option<String>) -> Self {
+        self.edits
+            .push(ConfigEdit::SetServiceTierId { service_tier_id });
         self
     }
 

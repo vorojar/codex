@@ -4328,7 +4328,7 @@ async fn fresh_session_config_uses_current_service_tier() {
     let config = app.fresh_session_config();
 
     assert_eq!(
-        config.service_tier,
+        config.service_tier_id,
         Some(
             codex_protocol::config_types::ServiceTier::Fast
                 .request_value()

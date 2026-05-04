@@ -584,8 +584,8 @@ impl Codex {
         let account_plan_type = auth_manager
             .auth_cached()
             .and_then(|auth| auth.account_plan_type());
-        let service_tier = get_service_tier(
-            config.service_tier.clone(),
+        let service_tier = get_service_tier_id(
+            config.service_tier_id.clone(),
             config.notices.fast_default_opt_out.unwrap_or(false),
             account_plan_type,
             config.features.enabled(Feature::FastMode),
@@ -776,14 +776,14 @@ impl Codex {
     }
 }
 
-fn get_service_tier(
-    configured_service_tier: Option<String>,
+fn get_service_tier_id(
+    configured_service_tier_id: Option<String>,
     fast_default_opt_out: bool,
     account_plan_type: Option<AccountPlanType>,
     fast_mode_enabled: bool,
 ) -> Option<String> {
-    if configured_service_tier.is_some() || fast_default_opt_out || !fast_mode_enabled {
-        return configured_service_tier;
+    if configured_service_tier_id.is_some() || fast_default_opt_out || !fast_mode_enabled {
+        return configured_service_tier_id;
     }
 
     account_plan_type

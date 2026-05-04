@@ -700,7 +700,7 @@ async fn track_turn_resolved_config_analytics(
             reasoning_summary: Some(turn_context.reasoning_summary),
             service_tier: turn_context
                 .config
-                .service_tier
+                .service_tier_id
                 .as_deref()
                 .and_then(ServiceTier::from_request_value),
             approval_policy: turn_context.approval_policy.value(),

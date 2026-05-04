@@ -657,13 +657,9 @@
         "sandbox_mode": {
           "$ref": "#/definitions/SandboxMode"
         },
-        "service_tier": {
-          "allOf": [
-            {
-              "$ref": "#/definitions/ServiceTier"
-            }
-          ],
-          "description": "Optional explicit service tier preference for new turns (`fast` or `flex`)."
+        "service_tier_id": {
+          "description": "Optional explicit service tier id preference for new turns.",
+          "type": "string"
         },
         "tools": {
           "$ref": "#/definitions/ToolsToml"
@@ -2149,13 +2145,6 @@
         }
       },
       "type": "object"
-    },
-    "ServiceTier": {
-      "enum": [
-        "fast",
-        "flex"
-      ],
-      "type": "string"
     },
     "ShellEnvironmentPolicyInherit": {
       "oneOf": [
@@ -4388,13 +4377,9 @@
       ],
       "description": "Sandbox configuration to apply if `sandbox` is `WorkspaceWrite`."
     },
-    "service_tier": {
-      "allOf": [
-        {
-          "$ref": "#/definitions/ServiceTier"
-        }
-      ],
-      "description": "Optional explicit service tier preference for new turns (`fast` or `flex`)."
+    "service_tier_id": {
+      "description": "Optional explicit service tier id preference for new turns.",
+      "type": "string"
     },
     "shell_environment_policy": {
       "allOf": [
