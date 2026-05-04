@@ -395,6 +395,21 @@ fn windows_restricted_token_skips_external_sandbox_policies() {
 }
 
 #[test]
+fn windows_restricted_token_skips_danger_full_access_policies() {
+    let policy = SandboxPolicy::DangerFullAccess;
+    let file_system_policy = FileSystemSandboxPolicy::from(&policy);
+
+    assert_eq!(
+        should_use_windows_restricted_token_sandbox(
+            SandboxType::WindowsRestrictedToken,
+            &policy,
+            &file_system_policy,
+        ),
+        false
+    );
+}
+
+#[test]
 fn windows_restricted_token_runs_for_legacy_restricted_policies() {
     let policy = SandboxPolicy::new_read_only_policy();
     let file_system_policy = FileSystemSandboxPolicy::from(&policy);

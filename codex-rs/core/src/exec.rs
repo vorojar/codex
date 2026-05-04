@@ -435,7 +435,7 @@ pub(crate) async fn execute_exec_request(
         windows_sandbox_level,
         windows_sandbox_private_desktop,
         permission_profile: _,
-        file_system_sandbox_policy: _,
+        file_system_sandbox_policy,
         network_sandbox_policy,
         windows_sandbox_filesystem_overrides,
         arg0,
@@ -463,6 +463,7 @@ pub(crate) async fn execute_exec_request(
         after_spawn,
         sandbox,
         &sandbox_policy,
+        &file_system_sandbox_policy,
         windows_sandbox_filesystem_overrides.as_ref(),
     )
     .await;
@@ -477,12 +478,17 @@ async fn get_raw_output_result(
     after_spawn: Option<Box<dyn FnOnce() + Send>>,
     #[cfg_attr(not(windows), allow(unused_variables))] sandbox: SandboxType,
     #[cfg_attr(not(windows), allow(unused_variables))] sandbox_policy: &SandboxPolicy,
+    #[cfg_attr(not(windows), allow(unused_variables))] file_system_sandbox_policy: &FileSystemSandboxPolicy,
     #[cfg_attr(not(windows), allow(unused_variables))] windows_sandbox_filesystem_overrides: Option<
         &WindowsSandboxFilesystemOverrides,
     >,
 ) -> Result<RawExecToolCallOutput> {
     #[cfg(target_os = "windows")]
-    if sandbox == SandboxType::WindowsRestrictedToken {
+    if should_use_windows_restricted_token_sandbox(
+        sandbox,
+        sandbox_policy,
+        file_system_sandbox_policy,
+    ) {
         return exec_windows_sandbox(params, sandbox_policy, windows_sandbox_filesystem_overrides)
             .await;
     }
