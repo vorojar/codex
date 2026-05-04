@@ -941,7 +941,11 @@ allow_local_binding = true
                 Err(err) => panic!("rebuild config layer stack with network requirements: {err}"),
             };
     });
-    let test = builder.build_remote_aware(server).await?;
+    // TODO: switch this back to `build_remote_aware` once remote exec-server
+    // sandboxing can enforce managed-network proxy denials inside the remote
+    // environment. Until then, these tests intentionally cover the local
+    // sandbox/proxy path only.
+    let test = builder.build(server).await?;
     assert!(
         test.config.permissions.network.is_some(),
         "expected managed network proxy config to be present"
