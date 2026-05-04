@@ -137,6 +137,8 @@ export type { FsRemoveParams } from "./FsRemoveParams";
 export type { FsRemoveResponse } from "./FsRemoveResponse";
 export type { FsUnwatchParams } from "./FsUnwatchParams";
 export type { FsUnwatchResponse } from "./FsUnwatchResponse";
+export type { FsUploadFileParams } from "./FsUploadFileParams";
+export type { FsUploadFileResponse } from "./FsUploadFileResponse";
 export type { FsWatchParams } from "./FsWatchParams";
 export type { FsWatchResponse } from "./FsWatchResponse";
 export type { FsWriteFileParams } from "./FsWriteFileParams";

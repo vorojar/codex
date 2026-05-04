@@ -19,6 +19,8 @@ use codex_app_server_protocol::FsRemoveParams;
 use codex_app_server_protocol::FsRemoveResponse;
 use codex_app_server_protocol::FsUnwatchParams;
 use codex_app_server_protocol::FsUnwatchResponse;
+use codex_app_server_protocol::FsUploadFileParams;
+use codex_app_server_protocol::FsUploadFileResponse;
 use codex_app_server_protocol::FsWatchParams;
 use codex_app_server_protocol::FsWatchResponse;
 use codex_app_server_protocol::FsWriteFileParams;
@@ -28,23 +30,30 @@ use codex_exec_server::CopyOptions;
 use codex_exec_server::CreateDirectoryOptions;
 use codex_exec_server::ExecutorFileSystem;
 use codex_exec_server::RemoveOptions;
+use codex_utils_absolute_path::AbsolutePathBuf;
 use std::io;
+use std::path::Path;
+use std::path::PathBuf;
 use std::sync::Arc;
+use uuid::Uuid;
 
 #[derive(Clone)]
 pub(crate) struct FsRequestProcessor {
     file_system: Arc<dyn ExecutorFileSystem>,
     fs_watch_manager: FsWatchManager,
+    codex_home: PathBuf,
 }
 
 impl FsRequestProcessor {
     pub(crate) fn new(
         file_system: Arc<dyn ExecutorFileSystem>,
         fs_watch_manager: FsWatchManager,
+        codex_home: PathBuf,
     ) -> Self {
         Self {
             file_system,
             fs_watch_manager,
+            codex_home,
         }
     }
 
@@ -80,6 +89,37 @@ impl FsRequestProcessor {
             .await
             .map_err(map_fs_error)?;
         Ok(FsWriteFileResponse {})
+    }
+
+    pub(crate) async fn upload_file(
+        &self,
+        params: FsUploadFileParams,
+    ) -> Result<FsUploadFileResponse, JSONRPCErrorError> {
+        let file_name = sanitize_upload_file_name(&params.file_name)?;
+        let bytes = STANDARD.decode(params.data_base64).map_err(|err| {
+            invalid_request(format!(
+                "fs/uploadFile requires valid base64 dataBase64: {err}"
+            ))
+        })?;
+        let upload_dir = absolute_path(
+            self.codex_home
+                .join("uploads")
+                .join(Uuid::now_v7().to_string()),
+        )?;
+        let upload_path = absolute_path(upload_dir.as_path().join(file_name))?;
+        self.file_system
+            .create_directory(
+                &upload_dir,
+                CreateDirectoryOptions { recursive: true },
+                /*sandbox*/ None,
+            )
+            .await
+            .map_err(map_fs_error)?;
+        self.file_system
+            .write_file(&upload_path, bytes, /*sandbox*/ None)
+            .await
+            .map_err(map_fs_error)?;
+        Ok(FsUploadFileResponse { path: upload_path })
     }
 
     pub(crate) async fn create_directory(
@@ -189,6 +229,18 @@ impl FsRequestProcessor {
     ) -> Result<FsUnwatchResponse, JSONRPCErrorError> {
         self.fs_watch_manager.unwatch(connection_id, params).await
     }
+}
+
+fn sanitize_upload_file_name(file_name: &str) -> Result<&str, JSONRPCErrorError> {
+    Path::new(file_name)
+        .file_name()
+        .and_then(|name| name.to_str())
+        .filter(|name| !name.is_empty())
+        .ok_or_else(|| invalid_request("fs/uploadFile requires a fileName".to_string()))
+}
+
+fn absolute_path(path: PathBuf) -> Result<AbsolutePathBuf, JSONRPCErrorError> {
+    AbsolutePathBuf::try_from(path).map_err(|err| internal_error(err.to_string()))
 }
 
 fn map_fs_error(err: io::Error) -> JSONRPCErrorError {

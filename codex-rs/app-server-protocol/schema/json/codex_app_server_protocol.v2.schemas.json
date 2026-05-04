@@ -1768,6 +1768,30 @@
             },
             "method": {
               "enum": [
+                "fs/uploadFile"
+              ],
+              "title": "Fs/uploadFileRequestMethod",
+              "type": "string"
+            },
+            "params": {
+              "$ref": "#/definitions/FsUploadFileParams"
+            }
+          },
+          "required": [
+            "id",
+            "method",
+            "params"
+          ],
+          "title": "Fs/uploadFileRequest",
+          "type": "object"
+        },
+        {
+          "properties": {
+            "id": {
+              "$ref": "#/definitions/RequestId"
+            },
+            "method": {
+              "enum": [
                 "fs/createDirectory"
               ],
               "title": "Fs/createDirectoryRequestMethod",
@@ -5674,6 +5698,45 @@
       "$schema": "http://json-schema.org/draft-07/schema#",
       "description": "Successful response for `fs/unwatch`.",
       "title": "FsUnwatchResponse",
+      "type": "object"
+    },
+    "FsUploadFileParams": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "description": "Upload a local client file into Codex-managed host storage.",
+      "properties": {
+        "dataBase64": {
+          "description": "File contents encoded as base64.",
+          "type": "string"
+        },
+        "fileName": {
+          "description": "User-visible file name. App-server stores only the final path component.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "dataBase64",
+        "fileName"
+      ],
+      "title": "FsUploadFileParams",
+      "type": "object"
+    },
+    "FsUploadFileResponse": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "description": "Codex-managed host path created by `fs/uploadFile`.",
+      "properties": {
+        "path": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/AbsolutePathBuf"
+            }
+          ],
+          "description": "Absolute path to the uploaded file on the app-server host."
+        }
+      },
+      "required": [
+        "path"
+      ],
+      "title": "FsUploadFileResponse",
       "type": "object"
     },
     "FsWatchParams": {

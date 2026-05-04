@@ -447,6 +447,7 @@ impl MessageProcessor {
                 .local_environment()
                 .get_filesystem(),
             fs_watch_manager,
+            config.codex_home.to_path_buf(),
         );
         let windows_sandbox_processor = WindowsSandboxRequestProcessor::new(
             outgoing.clone(),
@@ -890,6 +891,11 @@ impl MessageProcessor {
             ClientRequest::FsWriteFile { params, .. } => self
                 .fs_processor
                 .write_file(params)
+                .await
+                .map(|response| Some(response.into())),
+            ClientRequest::FsUploadFile { params, .. } => self
+                .fs_processor
+                .upload_file(params)
                 .await
                 .map(|response| Some(response.into())),
             ClientRequest::FsCreateDirectory { params, .. } => self

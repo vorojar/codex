@@ -1258,6 +1258,24 @@
       ],
       "type": "object"
     },
+    "FsUploadFileParams": {
+      "description": "Upload a local client file into Codex-managed host storage.",
+      "properties": {
+        "dataBase64": {
+          "description": "File contents encoded as base64.",
+          "type": "string"
+        },
+        "fileName": {
+          "description": "User-visible file name. App-server stores only the final path component.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "dataBase64",
+        "fileName"
+      ],
+      "type": "object"
+    },
     "FsWatchParams": {
       "description": "Start filesystem watch notifications for an absolute path.",
       "properties": {
@@ -5337,6 +5355,30 @@
         "params"
       ],
       "title": "Fs/writeFileRequest",
+      "type": "object"
+    },
+    {
+      "properties": {
+        "id": {
+          "$ref": "#/definitions/RequestId"
+        },
+        "method": {
+          "enum": [
+            "fs/uploadFile"
+          ],
+          "title": "Fs/uploadFileRequestMethod",
+          "type": "string"
+        },
+        "params": {
+          "$ref": "#/definitions/FsUploadFileParams"
+        }
+      },
+      "required": [
+        "id",
+        "method",
+        "params"
+      ],
+      "title": "Fs/uploadFileRequest",
       "type": "object"
     },
     {

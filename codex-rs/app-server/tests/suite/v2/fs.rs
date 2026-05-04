@@ -10,6 +10,8 @@ use codex_app_server_protocol::FsGetMetadataResponse;
 use codex_app_server_protocol::FsReadDirectoryEntry;
 use codex_app_server_protocol::FsReadFileResponse;
 use codex_app_server_protocol::FsUnwatchParams;
+use codex_app_server_protocol::FsUploadFileParams;
+use codex_app_server_protocol::FsUploadFileResponse;
 use codex_app_server_protocol::FsWatchResponse;
 use codex_app_server_protocol::FsWriteFileParams;
 use codex_app_server_protocol::JSONRPCNotification;
@@ -295,6 +297,37 @@ async fn fs_methods_cover_current_fs_utils_surface() -> Result<()> {
         !copied_dir.exists(),
         "fs/remove should default to recursive+force for directory trees"
     );
+
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn fs_upload_file_writes_into_codex_managed_storage() -> Result<()> {
+    let codex_home = TempDir::new()?;
+    let mut mcp = initialized_mcp(&codex_home).await?;
+
+    let request_id = mcp
+        .send_fs_upload_file_request(FsUploadFileParams {
+            file_name: "../note.txt".to_string(),
+            data_base64: STANDARD.encode("hello from upload"),
+        })
+        .await?;
+    let response: FsUploadFileResponse = to_response(
+        timeout(
+            DEFAULT_READ_TIMEOUT,
+            mcp.read_stream_until_response_message(RequestId::Integer(request_id)),
+        )
+        .await??,
+    )?;
+
+    let path = response.path.as_path();
+    let canonical_codex_home = std::fs::canonicalize(codex_home.path())?;
+    assert!(path.starts_with(canonical_codex_home.join("uploads")));
+    assert_eq!(
+        path.file_name().and_then(|name| name.to_str()),
+        Some("note.txt")
+    );
+    assert_eq!(std::fs::read_to_string(path)?, "hello from upload");
 
     Ok(())
 }

@@ -3208,6 +3208,26 @@ pub struct FsWriteFileParams {
 #[ts(export_to = "v2/")]
 pub struct FsWriteFileResponse {}
 
+/// Upload a local client file into Codex-managed host storage.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "v2/")]
+pub struct FsUploadFileParams {
+    /// User-visible file name. App-server stores only the final path component.
+    pub file_name: String,
+    /// File contents encoded as base64.
+    pub data_base64: String,
+}
+
+/// Codex-managed host path created by `fs/uploadFile`.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "v2/")]
+pub struct FsUploadFileResponse {
+    /// Absolute path to the uploaded file on the app-server host.
+    pub path: AbsolutePathBuf,
+}
+
 /// Create a directory on the host filesystem.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, JsonSchema, TS)]
 #[serde(rename_all = "camelCase")]
@@ -9187,6 +9207,27 @@ mod tests {
 
         let decoded = serde_json::from_value::<FsWriteFileParams>(value)
             .expect("deserialize fs/writeFile params");
+        assert_eq!(decoded, params);
+    }
+
+    #[test]
+    fn fs_upload_file_params_round_trip_with_base64_data() {
+        let params = FsUploadFileParams {
+            file_name: "example.bin".to_string(),
+            data_base64: "AAE=".to_string(),
+        };
+
+        let value = serde_json::to_value(&params).expect("serialize fs/uploadFile params");
+        assert_eq!(
+            value,
+            json!({
+                "fileName": "example.bin",
+                "dataBase64": "AAE=",
+            })
+        );
+
+        let decoded = serde_json::from_value::<FsUploadFileParams>(value)
+            .expect("deserialize fs/uploadFile params");
         assert_eq!(decoded, params);
     }
 

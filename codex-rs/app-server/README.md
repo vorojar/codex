@@ -189,6 +189,7 @@ Example with notification opt-out:
 - `process/exited` — experimental; notification emitted when a `process/spawn` session exits.
 - `fs/readFile` — read an absolute file path and return `{ dataBase64 }`.
 - `fs/writeFile` — write an absolute file path from base64-encoded `{ dataBase64 }`; returns `{}`.
+- `fs/uploadFile` — write client-provided base64 bytes into Codex-managed host storage and return the absolute host `{ path }`.
 - `fs/createDirectory` — create an absolute directory path; `recursive` defaults to `true`.
 - `fs/getMetadata` — return metadata for an absolute path: `isDirectory`, `isFile`, `isSymlink`, `createdAtMs`, and `modifiedAtMs`.
 - `fs/readDirectory` — list direct child entries for an absolute directory path; each entry contains `fileName`, `isDirectory`, and `isFile`, and `fileName` is just the child name, not a path.
@@ -1102,20 +1103,27 @@ All filesystem paths in this section must be absolute.
     "dataBase64": "aGVsbG8="
 } }
 { "id": 41, "result": {} }
-{ "method": "fs/getMetadata", "id": 42, "params": {
-    "path": "/tmp/example/nested/note.txt"
+{ "method": "fs/uploadFile", "id": 42, "params": {
+    "fileName": "notes.txt",
+    "dataBase64": "aGVsbG8="
 } }
 { "id": 42, "result": {
+    "path": "/Users/me/.codex/uploads/019a7f95-9d35-75e2-9d0e-82bd8cf1af58/notes.txt"
+} }
+{ "method": "fs/getMetadata", "id": 43, "params": {
+    "path": "/tmp/example/nested/note.txt"
+} }
+{ "id": 43, "result": {
     "isDirectory": false,
     "isFile": true,
     "isSymlink": false,
     "createdAtMs": 1730910000000,
     "modifiedAtMs": 1730910000000
 } }
-{ "method": "fs/readFile", "id": 43, "params": {
+{ "method": "fs/readFile", "id": 44, "params": {
     "path": "/tmp/example/nested/note.txt"
 } }
-{ "id": 43, "result": {
+{ "id": 44, "result": {
     "dataBase64": "aGVsbG8="
 } }
 ```
@@ -1124,6 +1132,7 @@ All filesystem paths in this section must be absolute.
 - `fs/createDirectory` defaults `recursive` to `true` when omitted.
 - `fs/remove` defaults both `recursive` and `force` to `true` when omitted.
 - `fs/readFile` always returns base64 bytes via `dataBase64`, and `fs/writeFile` always expects base64 bytes in `dataBase64`.
+- `fs/uploadFile` accepts a client-visible `fileName`, stores only its final path component, and chooses the destination under `$CODEX_HOME/uploads/<uuid>/` so clients do not pick arbitrary host paths.
 - `fs/copy` handles both file copies and directory-tree copies; it requires `recursive: true` when `sourcePath` is a directory. Recursive copies traverse regular files, directories, and symlinks; other entry types are skipped.
 
 ### Example: Filesystem watch
