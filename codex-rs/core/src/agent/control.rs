@@ -152,6 +152,11 @@ impl AgentControl {
         }
     }
 
+    pub(crate) fn with_session_id(mut self, session_id: SessionId) -> Self {
+        self.session_id = session_id;
+        self
+    }
+
     pub(crate) fn session_id(&self) -> SessionId {
         self.session_id
     }

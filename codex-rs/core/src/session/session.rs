@@ -1,5 +1,6 @@
 use super::*;
 use crate::goals::GoalRuntimeState;
+use codex_protocol::SessionId;
 use codex_protocol::permissions::FileSystemPath;
 use codex_protocol::permissions::FileSystemSpecialPath;
 use tokio::sync::Semaphore;
@@ -802,7 +803,12 @@ impl Session {
                     config.analytics_enabled,
                 )
             });
-            let session_id = agent_control.session_id();
+            let session_id = if session_configuration.session_source.is_non_root_agent() {
+                agent_control.session_id()
+            } else {
+                SessionId::from(thread_id)
+            };
+            let agent_control = agent_control.with_session_id(session_id);
             let services = SessionServices {
                 // Initialize the MCP connection manager with an uninitialized
                 // instance. It will be replaced with one created via
