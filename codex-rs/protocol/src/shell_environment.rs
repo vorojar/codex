@@ -2,6 +2,8 @@ use crate::config_types::EnvironmentVariablePattern;
 use crate::config_types::ShellEnvironmentPolicy;
 use crate::config_types::ShellEnvironmentPolicyInherit;
 use std::collections::HashMap;
+#[cfg(target_os = "linux")]
+use std::path::PathBuf;
 
 pub const CODEX_THREAD_ID_ENV_VAR: &str = "CODEX_THREAD_ID";
 
@@ -22,7 +24,11 @@ pub fn create_env_from_vars<I>(
 where
     I: IntoIterator<Item = (String, String)>,
 {
-    let mut env_map = populate_env(vars, policy, thread_id);
+    let vars = vars.into_iter().collect::<Vec<_>>();
+    let mut env_map = populate_env(vars.iter().cloned(), policy, thread_id);
+
+    #[cfg(target_os = "linux")]
+    maybe_seed_wsl_state_home(&mut env_map, &vars);
 
     if cfg!(target_os = "windows") {
         // This is a workaround to address the failures we are seeing in the
@@ -41,6 +47,37 @@ where
         }
     }
     env_map
+}
+
+#[cfg(target_os = "linux")]
+fn maybe_seed_wsl_state_home(env_map: &mut HashMap<String, String>, vars: &[(String, String)]) {
+    let already_set = env_map
+        .get("XDG_STATE_HOME")
+        .is_some_and(|value| !value.is_empty());
+    if already_set || !is_wsl_env(vars) {
+        return;
+    }
+
+    let temp_root = env_map
+        .get("TMPDIR")
+        .filter(|value| !value.is_empty())
+        .cloned()
+        .unwrap_or_else(|| "/tmp".to_string());
+    let state_home = PathBuf::from(temp_root).join("codex-state");
+    env_map.insert(
+        "XDG_STATE_HOME".to_string(),
+        state_home.to_string_lossy().into_owned(),
+    );
+}
+
+#[cfg(target_os = "linux")]
+fn is_wsl_env(vars: &[(String, String)]) -> bool {
+    vars.iter()
+        .any(|(key, value)| key == "WSL_DISTRO_NAME" && !value.is_empty())
+        || std::env::var_os("WSL_DISTRO_NAME").is_some()
+        || std::fs::read_to_string("/proc/version")
+            .map(|version| version.to_lowercase().contains("microsoft"))
+            .unwrap_or(false)
 }
 
 pub fn populate_env<I>(
@@ -246,5 +283,52 @@ mod non_windows_tests {
         ]);
 
         assert_eq!(result, expected);
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn create_env_seeds_xdg_state_home_for_wsl_when_missing() {
+        let vars = make_vars(&[
+            ("PATH", "/usr/bin"),
+            ("TMPDIR", "/tmp/codex"),
+            ("WSL_DISTRO_NAME", "Ubuntu"),
+        ]);
+
+        let policy = ShellEnvironmentPolicy {
+            inherit: ShellEnvironmentPolicyInherit::All,
+            ignore_default_excludes: true,
+            ..Default::default()
+        };
+
+        let result = create_env_from_vars(vars, &policy, /*thread_id*/ None);
+
+        assert_eq!(
+            result.get("XDG_STATE_HOME"),
+            Some(&"/tmp/codex/codex-state".to_string())
+        );
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn create_env_preserves_existing_xdg_state_home_for_wsl() {
+        let vars = make_vars(&[
+            ("PATH", "/usr/bin"),
+            ("TMPDIR", "/tmp/codex"),
+            ("WSL_DISTRO_NAME", "Ubuntu"),
+            ("XDG_STATE_HOME", "/home/codex/.local/state"),
+        ]);
+
+        let policy = ShellEnvironmentPolicy {
+            inherit: ShellEnvironmentPolicyInherit::All,
+            ignore_default_excludes: true,
+            ..Default::default()
+        };
+
+        let result = create_env_from_vars(vars, &policy, /*thread_id*/ None);
+
+        assert_eq!(
+            result.get("XDG_STATE_HOME"),
+            Some(&"/home/codex/.local/state".to_string())
+        );
     }
 }
