@@ -9,6 +9,7 @@ use crate::process::StderrMode;
 use crate::process::StdinMode;
 use crate::process::read_handle_loop;
 use crate::process::spawn_process_with_pipes;
+use crate::setup::ProtectedMetadataTarget;
 use crate::spawn_prep::LocalSid;
 use crate::spawn_prep::allow_null_device_for_workspace_write;
 use crate::spawn_prep::apply_legacy_session_acl_rules;
@@ -286,6 +287,7 @@ pub(crate) async fn spawn_windows_sandbox_session_legacy(
     timeout_ms: Option<u64>,
     tty: bool,
     stdin_open: bool,
+    _protected_metadata_targets: &[ProtectedMetadataTarget],
     use_private_desktop: bool,
 ) -> Result<SpawnedProcess> {
     let common = prepare_legacy_spawn_context(

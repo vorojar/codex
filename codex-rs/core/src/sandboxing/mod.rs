@@ -41,7 +41,7 @@ pub(crate) struct ExecServerEnvConfig {
     pub(crate) local_policy_env: HashMap<String, String>,
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct ExecRequest {
     pub command: Vec<String>,
     pub cwd: AbsolutePathBuf,

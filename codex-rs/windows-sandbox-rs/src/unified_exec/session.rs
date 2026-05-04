@@ -9,6 +9,7 @@
 
 mod backends;
 
+use crate::setup::ProtectedMetadataTarget;
 use anyhow::Result;
 use codex_utils_pty::SpawnedProcess;
 use std::collections::HashMap;
@@ -25,6 +26,7 @@ pub async fn spawn_windows_sandbox_session_legacy(
     timeout_ms: Option<u64>,
     tty: bool,
     stdin_open: bool,
+    protected_metadata_targets: &[ProtectedMetadataTarget],
     use_private_desktop: bool,
 ) -> Result<SpawnedProcess> {
     backends::legacy::spawn_windows_sandbox_session_legacy(
@@ -37,6 +39,7 @@ pub async fn spawn_windows_sandbox_session_legacy(
         timeout_ms,
         tty,
         stdin_open,
+        protected_metadata_targets,
         use_private_desktop,
     )
     .await
@@ -53,6 +56,7 @@ pub async fn spawn_windows_sandbox_session_elevated(
     timeout_ms: Option<u64>,
     tty: bool,
     stdin_open: bool,
+    protected_metadata_targets: &[ProtectedMetadataTarget],
     use_private_desktop: bool,
 ) -> Result<SpawnedProcess> {
     backends::elevated::spawn_windows_sandbox_session_elevated(
@@ -65,6 +69,7 @@ pub async fn spawn_windows_sandbox_session_elevated(
         timeout_ms,
         tty,
         stdin_open,
+        protected_metadata_targets,
         use_private_desktop,
     )
     .await

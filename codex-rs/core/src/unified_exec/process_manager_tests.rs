@@ -135,6 +135,68 @@ fn exec_server_process_id_matches_unified_exec_process_id() {
     assert_eq!(exec_server_process_id(/*process_id*/ 4321), "4321");
 }
 
+#[test]
+fn open_session_prepares_windows_metadata_overrides_for_unified_exec() {
+    let temp_dir = tempfile::TempDir::new().expect("tempdir");
+    let cwd: codex_utils_absolute_path::AbsolutePathBuf = dunce::canonicalize(temp_dir.path())
+        .expect("canonical temp dir")
+        .try_into()
+        .expect("absolute temp dir");
+    let permission_profile = codex_protocol::models::PermissionProfile::workspace_write_with(
+        &[],
+        codex_protocol::permissions::NetworkSandboxPolicy::Restricted,
+        /*exclude_tmpdir_env_var*/ true,
+        /*exclude_slash_tmp*/ true,
+    );
+    let (file_system_sandbox_policy, network_sandbox_policy) =
+        permission_profile.to_runtime_permissions();
+    let request = ExecRequest {
+        command: vec![
+            "cmd.exe".to_string(),
+            "/c".to_string(),
+            "echo ok".to_string(),
+        ],
+        cwd: cwd.clone(),
+        env: HashMap::new(),
+        exec_server_env_config: None,
+        network: None,
+        expiration: crate::exec::ExecExpiration::DefaultTimeout,
+        capture_policy: crate::exec::ExecCapturePolicy::ShellTool,
+        sandbox: codex_sandboxing::SandboxType::WindowsRestrictedToken,
+        windows_sandbox_policy_cwd: cwd.clone(),
+        windows_sandbox_level: codex_protocol::config_types::WindowsSandboxLevel::RestrictedToken,
+        windows_sandbox_private_desktop: false,
+        permission_profile,
+        file_system_sandbox_policy,
+        network_sandbox_policy,
+        windows_sandbox_filesystem_overrides: None,
+        arg0: None,
+    };
+
+    let prepared = prepare_exec_request_for_open_session(&request).expect("prepare request");
+    let overrides = prepared
+        .windows_sandbox_filesystem_overrides
+        .expect("metadata overrides");
+
+    assert_eq!(
+        overrides.protected_metadata_targets,
+        vec![
+            crate::exec::WindowsProtectedMetadataTarget {
+                path: cwd.join(".agents"),
+                mode: crate::exec::WindowsProtectedMetadataMode::MissingCreationMonitor,
+            },
+            crate::exec::WindowsProtectedMetadataTarget {
+                path: cwd.join(".codex"),
+                mode: crate::exec::WindowsProtectedMetadataMode::MissingCreationMonitor,
+            },
+            crate::exec::WindowsProtectedMetadataTarget {
+                path: cwd.join(".git"),
+                mode: crate::exec::WindowsProtectedMetadataMode::MissingCreationMonitor,
+            },
+        ]
+    );
+}
+
 #[tokio::test]
 async fn network_denial_fallback_message_names_sandbox_network_proxy() {
     let message = network_denial_message_for_session(/*session*/ None, /*deferred*/ None).await;

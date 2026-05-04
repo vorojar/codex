@@ -372,6 +372,7 @@ async fn run_command_under_windows_session(
             None,
             /*tty*/ false,
             /*stdin_open*/ true,
+            &[],
             config.permissions.windows_sandbox_private_desktop,
         )
         .await
@@ -386,6 +387,7 @@ async fn run_command_under_windows_session(
             None,
             /*tty*/ false,
             /*stdin_open*/ true,
+            &[],
             config.permissions.windows_sandbox_private_desktop,
         )
         .await

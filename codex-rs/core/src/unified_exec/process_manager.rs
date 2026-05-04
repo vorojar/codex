@@ -11,6 +11,8 @@ use tokio::time::Duration;
 use tokio::time::Instant;
 use tokio_util::sync::CancellationToken;
 
+#[cfg(target_os = "windows")]
+use crate::exec::WindowsProtectedMetadataMode;
 use crate::exec_env::CODEX_THREAD_ID_ENV_VAR;
 use crate::exec_env::create_env;
 use crate::exec_policy::ExecApprovalRequest;
@@ -161,6 +163,45 @@ fn exec_server_params_for_request(
         pipe_stdin: false,
         arg0: request.arg0.clone(),
     }
+}
+
+fn prepare_exec_request_for_open_session(
+    request: &ExecRequest,
+) -> Result<ExecRequest, UnifiedExecError> {
+    let mut request = request.clone();
+    crate::exec::ensure_windows_sandbox_filesystem_overrides(&mut request)
+        .map_err(UnifiedExecError::create_process)?;
+    Ok(request)
+}
+
+#[cfg(target_os = "windows")]
+fn protected_metadata_targets_for_windows_session(
+    request: &ExecRequest,
+) -> Vec<codex_windows_sandbox::ProtectedMetadataTarget> {
+    request
+        .windows_sandbox_filesystem_overrides
+        .as_ref()
+        .map(|overrides| {
+            overrides
+                .protected_metadata_targets
+                .iter()
+                .map(|target| {
+                    let mode = match target.mode {
+                        WindowsProtectedMetadataMode::ExistingDeny => {
+                            codex_windows_sandbox::ProtectedMetadataMode::ExistingDeny
+                        }
+                        WindowsProtectedMetadataMode::MissingCreationMonitor => {
+                            codex_windows_sandbox::ProtectedMetadataMode::MissingCreationMonitor
+                        }
+                    };
+                    codex_windows_sandbox::ProtectedMetadataTarget {
+                        path: target.path.to_path_buf(),
+                        mode,
+                    }
+                })
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
 /// Borrowed process state prepared for a `write_stdin` or poll operation.
@@ -873,6 +914,7 @@ impl UnifiedExecProcessManager {
         mut spawn_lifecycle: SpawnLifecycleHandle,
         environment: &codex_exec_server::Environment,
     ) -> Result<UnifiedExecProcess, UnifiedExecError> {
+        let request = prepare_exec_request_for_open_session(request)?;
         let inherited_fds = spawn_lifecycle.inherited_fds();
 
         #[cfg(target_os = "windows")]
@@ -888,6 +930,8 @@ impl UnifiedExecProcessManager {
                     "windows sandbox: failed to resolve codex_home: {err}"
                 ))
             })?;
+            let protected_metadata_targets =
+                protected_metadata_targets_for_windows_session(&request);
             let spawned = match request.windows_sandbox_level {
                 codex_protocol::config_types::WindowsSandboxLevel::Elevated => {
                     codex_windows_sandbox::spawn_windows_sandbox_session_elevated(
@@ -900,6 +944,7 @@ impl UnifiedExecProcessManager {
                         None,
                         tty,
                         tty,
+                        &protected_metadata_targets,
                         request.windows_sandbox_private_desktop,
                     )
                     .await
@@ -916,6 +961,7 @@ impl UnifiedExecProcessManager {
                         None,
                         tty,
                         tty,
+                        &protected_metadata_targets,
                         request.windows_sandbox_private_desktop,
                     )
                     .await
@@ -938,7 +984,7 @@ impl UnifiedExecProcessManager {
 
             let started = environment
                 .get_exec_backend()
-                .start(exec_server_params_for_request(process_id, request, tty))
+                .start(exec_server_params_for_request(process_id, &request, tty))
                 .await
                 .map_err(|err| UnifiedExecError::create_process(err.to_string()))?;
             spawn_lifecycle.after_spawn();

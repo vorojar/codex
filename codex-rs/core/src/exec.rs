@@ -407,39 +407,18 @@ pub fn build_exec_request(
             ExecRequest::from_sandbox_exec_request(request, options, windows_sandbox_policy_cwd)
         })
         .map_err(CodexErr::from)?;
-    let use_windows_elevated_backend = windows_sandbox_uses_elevated_backend(
-        exec_req.windows_sandbox_level,
-        exec_req.network.is_some(),
-    );
-    let sandbox_policy = exec_req.compatibility_sandbox_policy();
-    exec_req.windows_sandbox_filesystem_overrides = if use_windows_elevated_backend {
-        resolve_windows_elevated_filesystem_overrides(
-            exec_req.sandbox,
-            &sandbox_policy,
-            &exec_req.file_system_sandbox_policy,
-            exec_req.network_sandbox_policy,
-            sandbox_cwd,
-            use_windows_elevated_backend,
-        )
-    } else {
-        resolve_windows_restricted_token_filesystem_overrides(
-            exec_req.sandbox,
-            &sandbox_policy,
-            &exec_req.file_system_sandbox_policy,
-            exec_req.network_sandbox_policy,
-            sandbox_cwd,
-            exec_req.windows_sandbox_level,
-        )
-    }
-    .map_err(CodexErr::UnsupportedOperation)?;
+    ensure_windows_sandbox_filesystem_overrides(&mut exec_req)
+        .map_err(CodexErr::UnsupportedOperation)?;
     Ok(exec_req)
 }
 
 pub(crate) async fn execute_exec_request(
-    exec_request: ExecRequest,
+    mut exec_request: ExecRequest,
     stdout_stream: Option<StdoutStream>,
     after_spawn: Option<Box<dyn FnOnce() + Send>>,
 ) -> Result<ExecToolCallOutput> {
+    ensure_windows_sandbox_filesystem_overrides(&mut exec_request)
+        .map_err(CodexErr::UnsupportedOperation)?;
     let sandbox_policy = exec_request.compatibility_sandbox_policy();
     let ExecRequest {
         command,
@@ -487,6 +466,36 @@ pub(crate) async fn execute_exec_request(
     .await;
     let duration = start.elapsed();
     finalize_exec_result(raw_output_result, sandbox, duration)
+}
+
+pub(crate) fn ensure_windows_sandbox_filesystem_overrides(
+    exec_req: &mut ExecRequest,
+) -> std::result::Result<(), String> {
+    let use_windows_elevated_backend = windows_sandbox_uses_elevated_backend(
+        exec_req.windows_sandbox_level,
+        exec_req.network.is_some(),
+    );
+    let sandbox_policy = exec_req.compatibility_sandbox_policy();
+    exec_req.windows_sandbox_filesystem_overrides = if use_windows_elevated_backend {
+        resolve_windows_elevated_filesystem_overrides(
+            exec_req.sandbox,
+            &sandbox_policy,
+            &exec_req.file_system_sandbox_policy,
+            exec_req.network_sandbox_policy,
+            &exec_req.windows_sandbox_policy_cwd,
+            use_windows_elevated_backend,
+        )
+    } else {
+        resolve_windows_restricted_token_filesystem_overrides(
+            exec_req.sandbox,
+            &sandbox_policy,
+            &exec_req.file_system_sandbox_policy,
+            exec_req.network_sandbox_policy,
+            &exec_req.windows_sandbox_policy_cwd,
+            exec_req.windows_sandbox_level,
+        )
+    }?;
+    Ok(())
 }
 
 async fn get_raw_output_result(

@@ -162,6 +162,7 @@ fn legacy_non_tty_cmd_emits_output() {
             Some(5_000),
             /*tty*/ false,
             /*stdin_open*/ false,
+            &[],
             /*use_private_desktop*/ true,
         )
         .await
@@ -202,6 +203,7 @@ fn legacy_non_tty_powershell_emits_output() {
             Some(5_000),
             /*tty*/ false,
             /*stdin_open*/ false,
+            &[],
             /*use_private_desktop*/ true,
         )
         .await
@@ -426,6 +428,7 @@ fn legacy_tty_powershell_emits_output_and_accepts_input() {
             Some(10_000),
             /*tty*/ true,
             /*stdin_open*/ true,
+            &[],
             /*use_private_desktop*/ true,
         )
         .await
@@ -474,6 +477,7 @@ fn legacy_tty_cmd_emits_output_and_accepts_input() {
             Some(10_000),
             /*tty*/ true,
             /*stdin_open*/ true,
+            &[],
             /*use_private_desktop*/ true,
         )
         .await
@@ -525,6 +529,7 @@ fn legacy_tty_cmd_default_desktop_emits_output_and_accepts_input() {
             Some(10_000),
             /*tty*/ true,
             /*stdin_open*/ true,
+            &[],
             /*use_private_desktop*/ false,
         )
         .await
