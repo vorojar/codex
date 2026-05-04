@@ -2939,11 +2939,7 @@ impl CodexMessageProcessor {
         let mut overrides = ConfigOverrides {
             model,
             model_provider,
-            service_tier: service_tier.map(|service_tier| {
-                service_tier.and_then(|service_tier| {
-                    codex_protocol::config_types::ServiceTier::from_request_value(&service_tier)
-                })
-            }),
+            service_tier,
             cwd: cwd.map(PathBuf::from),
             approval_policy: approval_policy
                 .map(codex_app_server_protocol::AskForApproval::to_core),

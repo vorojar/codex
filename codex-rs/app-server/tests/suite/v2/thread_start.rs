@@ -328,7 +328,7 @@ model_reasoning_effort = "high"
 }
 
 #[tokio::test]
-async fn thread_start_accepts_flex_service_tier() -> Result<()> {
+async fn thread_start_accepts_arbitrary_service_tier_id() -> Result<()> {
     let server = create_mock_responses_server_repeating_assistant("Done").await;
 
     let codex_home = TempDir::new()?;
@@ -337,9 +337,10 @@ async fn thread_start_accepts_flex_service_tier() -> Result<()> {
     let mut mcp = McpProcess::new(codex_home.path()).await?;
     timeout(DEFAULT_READ_TIMEOUT, mcp.initialize()).await??;
 
+    let service_tier_id = "experimental-tier-id".to_string();
     let req_id = mcp
         .send_thread_start_request(ThreadStartParams {
-            service_tier: Some(Some("flex".to_string())),
+            service_tier: Some(Some(service_tier_id.clone())),
             ..Default::default()
         })
         .await?;
@@ -351,7 +352,7 @@ async fn thread_start_accepts_flex_service_tier() -> Result<()> {
     .await??;
     let ThreadStartResponse { service_tier, .. } = to_response::<ThreadStartResponse>(resp)?;
 
-    assert_eq!(service_tier, Some("flex".to_string()));
+    assert_eq!(service_tier, Some(service_tier_id));
     Ok(())
 }
 

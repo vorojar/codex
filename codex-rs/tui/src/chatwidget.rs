@@ -4819,7 +4819,10 @@ impl ChatWidget {
         let active_cell = Some(Self::placeholder_session_header_cell(&config));
 
         let current_cwd = Some(config.cwd.to_path_buf());
-        let effective_service_tier = config.service_tier;
+        let effective_service_tier = config
+            .service_tier
+            .as_deref()
+            .and_then(ServiceTier::from_request_value);
         let current_terminal_info = terminal_info();
         let runtime_keymap = RuntimeKeymap::from_config(&config.tui_keymap).ok();
         let default_keymap = RuntimeKeymap::defaults();
@@ -5798,8 +5801,8 @@ impl ChatWidget {
             .personality
             .filter(|_| self.config.features.enabled(Feature::Personality))
             .filter(|_| self.current_model_supports_personality());
-        let service_tier = match self.config.service_tier {
-            Some(service_tier) => Some(Some(service_tier.request_value().to_string())),
+        let service_tier = match self.config.service_tier.clone() {
+            Some(service_tier) => Some(Some(service_tier)),
             None if self.config.notices.fast_default_opt_out == Some(true) => Some(None),
             None => None,
         };
@@ -9206,7 +9209,8 @@ impl ChatWidget {
 
     /// Set Fast mode in the widget's config copy.
     pub(crate) fn set_service_tier(&mut self, service_tier: Option<ServiceTier>) {
-        self.config.service_tier = service_tier;
+        self.config.service_tier =
+            service_tier.map(|service_tier| service_tier.request_value().to_string());
         self.effective_service_tier = service_tier;
     }
 
@@ -9215,7 +9219,10 @@ impl ChatWidget {
     }
 
     pub(crate) fn configured_service_tier(&self) -> Option<ServiceTier> {
-        self.config.service_tier
+        self.config
+            .service_tier
+            .as_deref()
+            .and_then(ServiceTier::from_request_value)
     }
 
     pub(crate) fn fast_default_opt_out(&self) -> Option<bool> {
