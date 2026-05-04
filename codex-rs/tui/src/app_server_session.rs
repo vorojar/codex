@@ -105,6 +105,7 @@ use codex_app_server_protocol::TurnStartResponse;
 use codex_app_server_protocol::TurnSteerParams;
 use codex_app_server_protocol::TurnSteerResponse;
 use codex_app_server_protocol::UserInput;
+use codex_models_manager::collaboration_mode_presets::builtin_collaboration_mode_presets;
 use codex_otel::TelemetryAuthMode;
 use codex_protocol::ThreadId;
 use codex_protocol::approvals::GuardianAssessmentEvent;
@@ -124,8 +125,23 @@ use color_eyre::eyre::WrapErr;
 use std::collections::HashMap;
 use std::path::PathBuf;
 
+const JSONRPC_INVALID_REQUEST_ERROR_CODE: i64 = -32600;
+const JSONRPC_METHOD_NOT_FOUND_ERROR_CODE: i64 = -32601;
+
 fn bootstrap_request_error(context: &'static str, err: TypedRequestError) -> color_eyre::Report {
     color_eyre::eyre::eyre!("{context}: {err}")
+}
+
+fn is_missing_collaboration_mode_list_error(err: &TypedRequestError) -> bool {
+    match err {
+        TypedRequestError::Server { method, source } if method == "collaborationMode/list" => {
+            source.code == JSONRPC_METHOD_NOT_FOUND_ERROR_CODE
+                || (source.code == JSONRPC_INVALID_REQUEST_ERROR_CODE
+                    && source.message.contains("collaborationMode/list")
+                    && source.message.contains("unknown variant"))
+        }
+        TypedRequestError::Transport { .. } | TypedRequestError::Deserialize { .. } => false,
+    }
 }
 
 /// Data collected during the TUI bootstrap phase that the main event loop
@@ -221,21 +237,36 @@ impl AppServerSession {
             .map(model_preset_from_api_model)
             .collect::<Vec<_>>();
         let collaboration_modes_request_id = self.next_request_id();
-        let collaboration_modes: CollaborationModeListResponse = self
+        let collaboration_modes_response: std::result::Result<
+            CollaborationModeListResponse,
+            TypedRequestError,
+        > = self
             .client
             .request_typed(ClientRequest::CollaborationModeList {
                 request_id: collaboration_modes_request_id,
                 params: CollaborationModeListParams::default(),
             })
-            .await
-            .map_err(|err| {
-                bootstrap_request_error("collaborationMode/list failed during TUI bootstrap", err)
-            })?;
-        let collaboration_modes = collaboration_modes
-            .data
-            .into_iter()
-            .map(collaboration_mode_mask_from_api_mask)
-            .collect::<Vec<_>>();
+            .await;
+        let collaboration_modes = match collaboration_modes_response {
+            Ok(collaboration_modes) => collaboration_modes
+                .data
+                .into_iter()
+                .map(collaboration_mode_mask_from_api_mask)
+                .collect::<Vec<_>>(),
+            Err(err) if self.is_remote() && is_missing_collaboration_mode_list_error(&err) => {
+                tracing::debug!(
+                    %err,
+                    "remote app-server does not support collaborationMode/list; using built-in collaboration modes"
+                );
+                builtin_collaboration_mode_presets()
+            }
+            Err(err) => {
+                return Err(bootstrap_request_error(
+                    "collaborationMode/list failed during TUI bootstrap",
+                    err,
+                ));
+            }
+        };
         let default_model = config
             .model
             .clone()
@@ -1550,6 +1581,39 @@ mod tests {
             .build()
             .await
             .expect("config should build")
+    }
+
+    fn collaboration_mode_list_server_error(code: i64, message: &str) -> TypedRequestError {
+        TypedRequestError::Server {
+            method: "collaborationMode/list".to_string(),
+            source: JSONRPCErrorError {
+                code,
+                message: message.to_string(),
+                data: None,
+            },
+        }
+    }
+
+    #[test]
+    fn detects_missing_collaboration_mode_list_errors() {
+        assert!(is_missing_collaboration_mode_list_error(
+            &collaboration_mode_list_server_error(
+                JSONRPC_METHOD_NOT_FOUND_ERROR_CODE,
+                "Method not found"
+            )
+        ));
+        assert!(is_missing_collaboration_mode_list_error(
+            &collaboration_mode_list_server_error(
+                JSONRPC_INVALID_REQUEST_ERROR_CODE,
+                "Invalid request: unknown variant `collaborationMode/list`"
+            )
+        ));
+        assert!(!is_missing_collaboration_mode_list_error(
+            &collaboration_mode_list_server_error(
+                JSONRPC_INVALID_REQUEST_ERROR_CODE,
+                "Experimental API `collaborationMode/list` is not enabled"
+            )
+        ));
     }
 
     #[tokio::test]
