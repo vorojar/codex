@@ -352,7 +352,6 @@ use codex_protocol::protocol::EventMsg;
 use codex_protocol::protocol::GitInfo as CoreGitInfo;
 use codex_protocol::protocol::InitialHistory;
 use codex_protocol::protocol::McpAuthStatus as CoreMcpAuthStatus;
-use codex_protocol::protocol::McpServerRefreshConfig;
 use codex_protocol::protocol::Op;
 use codex_protocol::protocol::RateLimitSnapshot as CoreRateLimitSnapshot;
 use codex_protocol::protocol::RealtimeVoicesList;
@@ -728,32 +727,35 @@ impl CodexMessageProcessor {
         self.clear_plugin_related_caches();
     }
 
-    pub(crate) fn effective_plugins_changed_callback(
-        &self,
-        config: Config,
-    ) -> Arc<dyn Fn() + Send + Sync> {
+    pub(crate) fn effective_plugins_changed_callback(&self) -> Arc<dyn Fn() + Send + Sync> {
         let thread_manager = Arc::clone(&self.thread_manager);
+        let config_manager = self.config_manager.clone();
         Arc::new(move || {
-            Self::spawn_effective_plugins_changed_task(Arc::clone(&thread_manager), config.clone());
+            Self::spawn_effective_plugins_changed_task(
+                Arc::clone(&thread_manager),
+                config_manager.clone(),
+            );
         })
     }
 
-    fn on_effective_plugins_changed(&self, config: Config) {
-        Self::spawn_effective_plugins_changed_task(Arc::clone(&self.thread_manager), config);
+    fn on_effective_plugins_changed(&self) {
+        Self::spawn_effective_plugins_changed_task(
+            Arc::clone(&self.thread_manager),
+            self.config_manager.clone(),
+        );
     }
 
-    fn spawn_effective_plugins_changed_task(thread_manager: Arc<ThreadManager>, config: Config) {
+    fn spawn_effective_plugins_changed_task(
+        thread_manager: Arc<ThreadManager>,
+        config_manager: ConfigManager,
+    ) {
         tokio::spawn(async move {
             thread_manager.plugins_manager().clear_cache();
             thread_manager.skills_manager().clear_cache();
             if thread_manager.list_thread_ids().await.is_empty() {
                 return;
             }
-            if let Err(err) =
-                Self::queue_mcp_server_refresh_for_config(&thread_manager, &config).await
-            {
-                warn!("failed to queue MCP refresh after effective plugins changed: {err:?}");
-            }
+            Self::queue_mcp_server_refresh(&thread_manager, &config_manager).await;
         });
     }
 
@@ -773,7 +775,7 @@ impl CodexMessageProcessor {
         {
             Ok(config) => {
                 let refresh_thread_manager = Arc::clone(thread_manager);
-                let refresh_config = config.clone();
+                let refresh_config_manager = config_manager.clone();
                 thread_manager
                     .plugins_manager()
                     .maybe_start_remote_installed_plugins_cache_refresh(
@@ -782,7 +784,7 @@ impl CodexMessageProcessor {
                         Some(Arc::new(move || {
                             Self::spawn_effective_plugins_changed_task(
                                 Arc::clone(&refresh_thread_manager),
-                                refresh_config.clone(),
+                                refresh_config_manager.clone(),
                             );
                         })),
                     );
@@ -5320,53 +5322,28 @@ impl CodexMessageProcessor {
         &self,
         _params: Option<()>,
     ) -> Result<McpServerRefreshResponse, JSONRPCErrorError> {
-        let config = self.load_latest_config(/*fallback_cwd*/ None).await?;
-        Self::queue_mcp_server_refresh_for_config(&self.thread_manager, &config).await?;
+        self.load_latest_config(/*fallback_cwd*/ None).await?;
+        Self::queue_mcp_server_refresh(&self.thread_manager, &self.config_manager).await;
         Ok(McpServerRefreshResponse {})
     }
 
-    async fn queue_mcp_server_refresh_for_config(
+    async fn queue_mcp_server_refresh(
         thread_manager: &Arc<ThreadManager>,
-        config: &Config,
-    ) -> Result<(), JSONRPCErrorError> {
-        let configured_servers = thread_manager
-            .mcp_manager()
-            .configured_servers(config)
-            .await;
-        let mcp_servers = match serde_json::to_value(configured_servers) {
-            Ok(value) => value,
-            Err(err) => {
-                return Err(JSONRPCErrorError {
-                    code: INTERNAL_ERROR_CODE,
-                    message: format!("failed to serialize MCP servers: {err}"),
-                    data: None,
-                });
-            }
-        };
-
-        let mcp_oauth_credentials_store_mode =
-            match serde_json::to_value(config.mcp_oauth_credentials_store_mode) {
-                Ok(value) => value,
-                Err(err) => {
-                    return Err(JSONRPCErrorError {
-                        code: INTERNAL_ERROR_CODE,
-                        message: format!(
-                            "failed to serialize MCP OAuth credentials store mode: {err}"
-                        ),
-                        data: None,
-                    });
-                }
-            };
-
-        let refresh_config = McpServerRefreshConfig {
-            mcp_servers,
-            mcp_oauth_credentials_store_mode,
-        };
-
+        config_manager: &ConfigManager,
+    ) {
         // Refresh requests are queued per thread; each thread rebuilds MCP connections on its next
         // active turn to avoid work for threads that never resume.
-        thread_manager.refresh_mcp_servers(refresh_config).await;
-        Ok(())
+        let config_manager = config_manager.clone();
+        thread_manager
+            .refresh_mcp_servers(move |thread_config| {
+                let config_manager = config_manager.clone();
+                async move {
+                    config_manager
+                        .load_latest_config(Some(thread_config.cwd.to_path_buf()))
+                        .await
+                }
+            })
+            .await;
     }
 
     async fn mcp_server_oauth_login_response(

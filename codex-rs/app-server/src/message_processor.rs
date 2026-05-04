@@ -311,7 +311,7 @@ impl MessageProcessor {
         if matches!(plugin_startup_tasks, crate::PluginStartupTasks::Start) {
             // Keep plugin startup warmups aligned at app-server startup.
             let on_effective_plugins_changed =
-                codex_message_processor.effective_plugins_changed_callback((*config).clone());
+                codex_message_processor.effective_plugins_changed_callback();
             thread_manager
                 .plugins_manager()
                 .maybe_start_plugin_startup_tasks_for_config(

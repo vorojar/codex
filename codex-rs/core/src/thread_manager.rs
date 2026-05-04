@@ -64,6 +64,7 @@ use futures::StreamExt;
 use futures::stream::FuturesUnordered;
 use std::collections::HashMap;
 use std::collections::HashSet;
+use std::future::Future;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
@@ -455,7 +456,11 @@ impl ThreadManager {
         self.state.list_thread_ids().await
     }
 
-    pub async fn refresh_mcp_servers(&self, refresh_config: McpServerRefreshConfig) {
+    pub async fn refresh_mcp_servers<F, Fut>(&self, load_refreshed_config: F)
+    where
+        F: Fn(Config) -> Fut,
+        Fut: Future<Output = std::io::Result<Config>>,
+    {
         let threads = self
             .state
             .threads
@@ -465,9 +470,42 @@ impl ThreadManager {
             .cloned()
             .collect::<Vec<_>>();
         for thread in threads {
+            let thread_config = thread.config().await;
+            let refreshed_config = match load_refreshed_config((*thread_config).clone()).await {
+                Ok(config) => config,
+                Err(err) => {
+                    warn!("failed to load refreshed MCP config for thread: {err}");
+                    continue;
+                }
+            };
+            let config = match thread_config.with_refreshed_mcp_config(&refreshed_config) {
+                Ok(config) => config,
+                Err(err) => {
+                    warn!("failed to build refreshed MCP config for thread: {err}");
+                    continue;
+                }
+            };
+            let mcp_servers = self.state.mcp_manager.configured_servers(&config).await;
+            let refresh_config = match (
+                serde_json::to_value(mcp_servers),
+                serde_json::to_value(config.mcp_oauth_credentials_store_mode),
+            ) {
+                (Ok(mcp_servers), Ok(mcp_oauth_credentials_store_mode)) => McpServerRefreshConfig {
+                    mcp_servers,
+                    mcp_oauth_credentials_store_mode,
+                },
+                (Err(err), _) => {
+                    warn!("failed to serialize refreshed MCP servers: {err}");
+                    continue;
+                }
+                (_, Err(err)) => {
+                    warn!("failed to serialize refreshed MCP OAuth store mode: {err}");
+                    continue;
+                }
+            };
             if let Err(err) = thread
                 .submit(Op::RefreshMcpServers {
-                    config: refresh_config.clone(),
+                    config: refresh_config,
                 })
                 .await
             {

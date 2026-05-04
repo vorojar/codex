@@ -36,7 +36,7 @@ impl CodexMessageProcessor {
             &plugins_input,
             auth.clone(),
             &roots,
-            Some(self.effective_plugins_changed_callback(config.clone())),
+            Some(self.effective_plugins_changed_callback()),
         );
 
         let config_for_marketplace_listing = plugins_input.clone();
@@ -491,7 +491,7 @@ impl CodexMessageProcessor {
             }
         };
 
-        self.on_effective_plugins_changed(config.clone());
+        self.on_effective_plugins_changed();
 
         let plugin_mcp_servers = load_plugin_mcp_servers(result.installed_path.as_path()).await;
         if !plugin_mcp_servers.is_empty() {
@@ -602,7 +602,7 @@ impl CodexMessageProcessor {
             .maybe_start_remote_installed_plugins_cache_refresh_after_mutation(
                 &config.plugins_config_input(),
                 auth.clone(),
-                Some(self.effective_plugins_changed_callback(config.clone())),
+                Some(self.effective_plugins_changed_callback()),
             );
 
         let mut plugin_metadata =
@@ -719,7 +719,7 @@ impl CodexMessageProcessor {
             .await
             .map_err(Self::plugin_uninstall_error)?;
         match self.load_latest_config(/*fallback_cwd*/ None).await {
-            Ok(config) => self.on_effective_plugins_changed(config),
+            Ok(_) => self.on_effective_plugins_changed(),
             Err(err) => {
                 warn!(
                     "failed to reload config after plugin uninstall, clearing plugin-related caches only: {err:?}"
@@ -820,12 +820,12 @@ impl CodexMessageProcessor {
         ) {
             let plugins_manager = self.thread_manager.plugins_manager();
             if plugins_manager.clear_remote_installed_plugins_cache() {
-                self.on_effective_plugins_changed(config.clone());
+                self.on_effective_plugins_changed();
             }
             plugins_manager.maybe_start_remote_installed_plugins_cache_refresh_after_mutation(
                 &config.plugins_config_input(),
                 auth.clone(),
-                Some(self.effective_plugins_changed_callback(config.clone())),
+                Some(self.effective_plugins_changed_callback()),
             );
         }
 
