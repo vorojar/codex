@@ -95,7 +95,8 @@ pub struct ExecParams {
     pub arg0: Option<String>,
 }
 
-/// Resolved filesystem overrides for the Windows sandbox backends.
+/// Layer: Windows adapter layer. Resolved filesystem overrides for the Windows
+/// sandbox backends.
 ///
 /// The unelevated restricted-token backend only consumes extra deny-write
 /// carveouts on top of the legacy `WorkspaceWrite` allow set. The elevated
@@ -109,6 +110,25 @@ pub(crate) struct WindowsSandboxFilesystemOverrides {
     pub(crate) read_roots_include_platform_defaults: bool,
     pub(crate) write_roots_override: Option<Vec<PathBuf>>,
     pub(crate) additional_deny_write_paths: Vec<AbsolutePathBuf>,
+}
+
+/// Layer: Windows adapter layer. This is the Windows projection of
+/// `WritableRoot::protected_metadata_names` from `FileSystemSandboxPolicy`.
+#[allow(dead_code)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub(crate) struct WindowsProtectedMetadataTarget {
+    pub(crate) path: AbsolutePathBuf,
+    pub(crate) mode: WindowsProtectedMetadataMode,
+}
+
+/// Layer: Windows adapter layer. The enforcement layer needs to know why a
+/// protected metadata path is absent instead of treating every missing path as
+/// an existing filesystem object.
+#[allow(dead_code)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub(crate) enum WindowsProtectedMetadataMode {
+    ExistingDeny,
+    MissingCreationMonitor,
 }
 
 fn windows_sandbox_uses_elevated_backend(
