@@ -24,7 +24,7 @@ use crate::tools::handlers::implicit_granted_permissions;
 use crate::tools::handlers::normalize_and_validate_additional_permissions;
 use crate::tools::handlers::parse_arguments;
 use crate::tools::handlers::parse_arguments_with_base_path;
-use crate::tools::handlers::resolve_workdir_base_path;
+use crate::tools::handlers::resolve_tool_environment;
 use crate::tools::hook_names::HookToolName;
 use crate::tools::orchestrator::ToolOrchestrator;
 use crate::tools::registry::PostToolUsePayload;
@@ -35,6 +35,7 @@ use crate::tools::runtimes::shell::ShellRequest;
 use crate::tools::runtimes::shell::ShellRuntime;
 use crate::tools::runtimes::shell::ShellRuntimeBackend;
 use crate::tools::sandboxing::ToolCtx;
+use codex_exec_server::Environment;
 use codex_features::Feature;
 use codex_protocol::models::AdditionalPermissionProfile;
 use codex_protocol::protocol::ExecCommandSource;
@@ -78,6 +79,7 @@ fn shell_command_payload_command(payload: &ToolPayload) -> Option<String> {
 struct RunExecLikeArgs {
     tool_name: String,
     exec_params: ExecParams,
+    environment: Arc<Environment>,
     hook_command: String,
     additional_permissions: Option<AdditionalPermissionProfile>,
     prefix_rule: Option<Vec<String>>,
@@ -94,10 +96,11 @@ impl ShellHandler {
         params: &ShellToolCallParams,
         turn_context: &TurnContext,
         thread_id: ThreadId,
+        cwd: codex_utils_absolute_path::AbsolutePathBuf,
     ) -> ExecParams {
         ExecParams {
             command: params.command.clone(),
-            cwd: turn_context.resolve_path(params.workdir.clone()),
+            cwd,
             expiration: params.timeout_ms.into(),
             capture_policy: ExecCapturePolicy::ShellTool,
             env: create_env(&turn_context.shell_environment_policy, Some(thread_id)),
@@ -145,6 +148,7 @@ impl ShellCommandHandler {
         turn_context: &TurnContext,
         thread_id: ThreadId,
         allow_login_shell: bool,
+        cwd: codex_utils_absolute_path::AbsolutePathBuf,
     ) -> Result<ExecParams, FunctionCallError> {
         let shell = session.user_shell();
         let use_login_shell = Self::resolve_use_login_shell(params.login, allow_login_shell)?;
@@ -152,7 +156,7 @@ impl ShellCommandHandler {
 
         Ok(ExecParams {
             command,
-            cwd: turn_context.resolve_path(params.workdir.clone()),
+            cwd,
             expiration: params.timeout_ms.into(),
             capture_policy: ExecCapturePolicy::ShellTool,
             env: create_env(&turn_context.shell_environment_policy, Some(thread_id)),
@@ -241,14 +245,25 @@ impl ToolHandler for ShellHandler {
 
         match payload {
             ToolPayload::Function { arguments } => {
-                let cwd = resolve_workdir_base_path(&arguments, &turn.cwd)?;
-                let params: ShellToolCallParams = parse_arguments_with_base_path(&arguments, &cwd)?;
+                let Some(target_environment) = resolve_tool_environment(turn.as_ref(), &arguments)?
+                else {
+                    return Err(FunctionCallError::RespondToModel(
+                        "shell is unavailable in this session".to_string(),
+                    ));
+                };
+                let params: ShellToolCallParams =
+                    parse_arguments_with_base_path(&arguments, &target_environment.cwd)?;
                 let prefix_rule = params.prefix_rule.clone();
-                let exec_params =
-                    Self::to_exec_params(&params, turn.as_ref(), session.conversation_id);
+                let exec_params = Self::to_exec_params(
+                    &params,
+                    turn.as_ref(),
+                    session.conversation_id,
+                    target_environment.cwd,
+                );
                 Self::run_exec_like(RunExecLikeArgs {
                     tool_name: tool_name.display(),
                     exec_params,
+                    environment: target_environment.environment,
                     hook_command: codex_shell_command::parse_command::shlex_join(&params.command),
                     additional_permissions: params.additional_permissions.clone(),
                     prefix_rule,
@@ -262,11 +277,21 @@ impl ToolHandler for ShellHandler {
                 .await
             }
             ToolPayload::LocalShell { params } => {
-                let exec_params =
-                    Self::to_exec_params(&params, turn.as_ref(), session.conversation_id);
+                let Some(turn_environment) = turn.environments.primary() else {
+                    return Err(FunctionCallError::RespondToModel(
+                        "shell is unavailable in this session".to_string(),
+                    ));
+                };
+                let exec_params = Self::to_exec_params(
+                    &params,
+                    turn.as_ref(),
+                    session.conversation_id,
+                    turn.resolve_path(params.workdir.clone()),
+                );
                 Self::run_exec_like(RunExecLikeArgs {
                     tool_name: tool_name.display(),
                     exec_params,
+                    environment: Arc::clone(&turn_environment.environment),
                     hook_command: codex_shell_command::parse_command::shlex_join(&params.command),
                     additional_permissions: None,
                     prefix_rule: None,
@@ -360,29 +385,37 @@ impl ToolHandler for ShellCommandHandler {
             )));
         };
 
-        let cwd = resolve_workdir_base_path(&arguments, &turn.cwd)?;
-        let params: ShellCommandToolCallParams = parse_arguments_with_base_path(&arguments, &cwd)?;
-        let workdir = turn.resolve_path(params.workdir.clone());
+        let Some(target_environment) = resolve_tool_environment(turn.as_ref(), &arguments)? else {
+            return Err(FunctionCallError::RespondToModel(
+                "shell is unavailable in this session".to_string(),
+            ));
+        };
+        let params: ShellCommandToolCallParams =
+            parse_arguments_with_base_path(&arguments, &target_environment.cwd)?;
         maybe_emit_implicit_skill_invocation(
             session.as_ref(),
             turn.as_ref(),
             &params.command,
-            &workdir,
+            &target_environment.cwd,
         )
         .await;
         let prefix_rule = params.prefix_rule.clone();
+        let hook_command = params.command.clone();
+        let additional_permissions = params.additional_permissions.clone();
         let exec_params = Self::to_exec_params(
             &params,
             session.as_ref(),
             turn.as_ref(),
             session.conversation_id,
             turn.tools_config.allow_login_shell,
+            target_environment.cwd,
         )?;
         ShellHandler::run_exec_like(RunExecLikeArgs {
             tool_name: tool_name.display(),
             exec_params,
-            hook_command: params.command,
-            additional_permissions: params.additional_permissions.clone(),
+            environment: target_environment.environment,
+            hook_command,
+            additional_permissions,
             prefix_rule,
             session,
             turn,
@@ -400,6 +433,7 @@ impl ShellHandler {
         let RunExecLikeArgs {
             tool_name,
             exec_params,
+            environment,
             hook_command,
             additional_permissions,
             prefix_rule,
@@ -412,12 +446,7 @@ impl ShellHandler {
         } = args;
 
         let mut exec_params = exec_params;
-        let Some(turn_environment) = turn.environments.primary() else {
-            return Err(FunctionCallError::RespondToModel(
-                "shell is unavailable in this session".to_string(),
-            ));
-        };
-        let fs = turn_environment.environment.get_filesystem();
+        let fs = environment.get_filesystem();
 
         let dependency_env = session.dependency_env().await;
         if !dependency_env.is_empty() {

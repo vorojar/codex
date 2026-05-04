@@ -27,13 +27,16 @@ use codex_utils_absolute_path::AbsolutePathBufGuard;
 use serde::Deserialize;
 use serde_json::Value;
 use std::path::Path;
+use std::sync::Arc;
 
 use crate::function_tool::FunctionCallError;
 use crate::sandboxing::SandboxPermissions;
 use crate::session::session::Session;
+use crate::session::turn_context::TurnContext;
 pub(crate) use crate::tools::code_mode::CodeModeExecuteHandler;
 pub(crate) use crate::tools::code_mode::CodeModeWaitHandler;
 pub use apply_patch::ApplyPatchHandler;
+use codex_exec_server::Environment;
 use codex_protocol::models::AdditionalPermissionProfile;
 use codex_protocol::protocol::AskForApproval;
 pub use dynamic::DynamicToolHandler;
@@ -84,6 +87,60 @@ fn resolve_workdir_base_path(
         .and_then(Value::as_str)
         .filter(|workdir| !workdir.is_empty())
         .map_or_else(|| default_cwd.clone(), |workdir| default_cwd.join(workdir)))
+}
+
+pub(crate) struct ResolvedToolEnvironment {
+    pub(crate) environment: Arc<Environment>,
+    pub(crate) cwd: AbsolutePathBuf,
+}
+
+#[derive(Deserialize)]
+struct ToolEnvironmentArgs {
+    #[serde(default)]
+    environment_id: Option<String>,
+    // Keep this raw until after environment selection; relative paths must be
+    // resolved against the selected environment cwd, not the process cwd.
+    #[serde(default)]
+    workdir: Option<String>,
+}
+
+pub(crate) fn resolve_tool_environment(
+    turn: &TurnContext,
+    arguments: &str,
+) -> Result<Option<ResolvedToolEnvironment>, FunctionCallError> {
+    let args: ToolEnvironmentArgs = parse_arguments(arguments)?;
+    let Some(turn_environment) = args
+        .environment_id
+        .as_deref()
+        .map_or_else(
+            || Ok(turn.environments.primary()),
+            |environment_id| {
+                turn.environments
+                    .turn_environments
+                    .iter()
+                    .find(|environment| environment.environment_id == environment_id)
+                    .map(Some)
+                    .ok_or_else(|| format!("unknown turn environment id `{environment_id}`"))
+            },
+        )
+        .map_err(FunctionCallError::RespondToModel)?
+    else {
+        return Ok(None);
+    };
+
+    let cwd = args
+        .workdir
+        .as_deref()
+        .filter(|workdir| !workdir.is_empty())
+        .map_or_else(
+            || turn_environment.cwd.clone(),
+            |workdir| turn_environment.cwd.join(workdir),
+        );
+
+    Ok(Some(ResolvedToolEnvironment {
+        environment: Arc::clone(&turn_environment.environment),
+        cwd,
+    }))
 }
 
 /// Validates feature/policy constraints for `with_additional_permissions` and
