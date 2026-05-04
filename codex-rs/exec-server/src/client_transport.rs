@@ -1,6 +1,14 @@
 use std::process::Stdio;
+#[cfg(unix)]
+use std::thread::sleep;
+#[cfg(unix)]
+use std::thread::spawn;
 use std::time::Duration;
 
+#[cfg(unix)]
+use codex_utils_pty::process_group::kill_process_group;
+#[cfg(unix)]
+use codex_utils_pty::process_group::terminate_process_group;
 use tokio::io::AsyncBufReadExt;
 use tokio::io::BufReader;
 use tokio::process::Child;
@@ -21,6 +29,8 @@ use crate::connection::JsonRpcConnection;
 const ENVIRONMENT_CLIENT_NAME: &str = "codex-environment";
 const ENVIRONMENT_CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
 const ENVIRONMENT_INITIALIZE_TIMEOUT: Duration = Duration::from_secs(5);
+#[cfg(unix)]
+const STDIO_CHILD_TERM_GRACE_PERIOD: Duration = Duration::from_millis(500);
 
 impl ExecServerTransport {
     pub(crate) async fn connect_for_environment(self) -> Result<ExecServerClient, ExecServerError> {
@@ -80,11 +90,13 @@ impl ExecServerClient {
     ) -> Result<Self, ExecServerError> {
         let shell_command = args.shell_command.clone();
         let mut child = shell_command_process(&shell_command)
+            .kill_on_drop(true)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .spawn()
             .map_err(ExecServerError::Spawn)?;
+        let process_id = child.id();
 
         let stdin = child.stdin.take().ok_or_else(|| {
             ExecServerError::Protocol("spawned exec-server command has no stdin".to_string())
@@ -114,7 +126,10 @@ impl ExecServerClient {
                 stdin,
                 format!("exec-server stdio command `{shell_command}`"),
             )
-            .with_transport_lifetime(Box::new(StdioChildGuard { child: Some(child) })),
+            .with_transport_lifetime(Box::new(StdioChildGuard {
+                child: Some(child),
+                process_id,
+            })),
             args.into(),
         )
         .await
@@ -123,34 +138,69 @@ impl ExecServerClient {
 
 struct StdioChildGuard {
     child: Option<Child>,
+    process_id: Option<u32>,
 }
 
 impl Drop for StdioChildGuard {
     fn drop(&mut self) {
-        let Some(child) = self.child.take() else {
+        let Some(mut child) = self.child.take() else {
             return;
         };
 
-        match Handle::try_current() {
-            Ok(handle) => {
-                let _terminate_task = handle.spawn(terminate_stdio_child(child));
-            }
-            Err(_) => {
-                terminate_stdio_child_now(child);
-            }
+        terminate_stdio_child_process(self.process_id, &mut child);
+
+        if let Ok(handle) = Handle::try_current() {
+            let _wait_task = handle.spawn(wait_stdio_child(child));
         }
     }
 }
 
-async fn terminate_stdio_child(mut child: Child) {
-    kill_stdio_child(&mut child);
+async fn wait_stdio_child(mut child: Child) {
     if let Err(err) = child.wait().await {
         debug!("failed to wait for exec-server stdio child: {err}");
     }
 }
 
-fn terminate_stdio_child_now(mut child: Child) {
-    kill_stdio_child(&mut child);
+#[cfg(unix)]
+fn terminate_stdio_child_process(process_group_id: Option<u32>, child: &mut Child) {
+    let Some(process_group_id) = process_group_id else {
+        kill_stdio_child(child);
+        return;
+    };
+
+    let should_escalate = match terminate_process_group(process_group_id) {
+        Ok(exists) => exists,
+        Err(err) => {
+            debug!("failed to terminate exec-server stdio process group {process_group_id}: {err}");
+            false
+        }
+    };
+    if should_escalate {
+        spawn(move || {
+            sleep(STDIO_CHILD_TERM_GRACE_PERIOD);
+            if let Err(err) = kill_process_group(process_group_id) {
+                debug!("failed to kill exec-server stdio process group {process_group_id}: {err}");
+            }
+        });
+    }
+}
+
+#[cfg(windows)]
+fn terminate_stdio_child_process(process_id: Option<u32>, child: &mut Child) {
+    if let Some(process_id) = process_id {
+        let _ = std::process::Command::new("taskkill")
+            .arg("/PID")
+            .arg(process_id.to_string())
+            .arg("/T")
+            .arg("/F")
+            .output();
+    }
+    kill_stdio_child(child);
+}
+
+#[cfg(not(any(unix, windows)))]
+fn terminate_stdio_child_process(_process_id: Option<u32>, child: &mut Child) {
+    kill_stdio_child(child);
 }
 
 fn kill_stdio_child(child: &mut Child) {
@@ -171,6 +221,7 @@ fn shell_command_process(shell_command: &str) -> Command {
     {
         let mut command = Command::new("sh");
         command.arg("-lc").arg(shell_command);
+        command.process_group(0);
         command
     }
 }

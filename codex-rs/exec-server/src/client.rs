@@ -860,6 +860,10 @@ mod tests {
     use codex_app_server_protocol::JSONRPCNotification;
     use codex_app_server_protocol::JSONRPCResponse;
     use pretty_assertions::assert_eq;
+    #[cfg(unix)]
+    use std::path::Path;
+    #[cfg(unix)]
+    use std::process::Command;
     use tokio::io::AsyncBufReadExt;
     use tokio::io::AsyncWrite;
     use tokio::io::AsyncWriteExt;
@@ -867,6 +871,8 @@ mod tests {
     use tokio::io::duplex;
     use tokio::sync::mpsc;
     use tokio::time::Duration;
+    #[cfg(unix)]
+    use tokio::time::sleep;
     use tokio::time::timeout;
 
     use super::ExecServerClient;
@@ -924,6 +930,76 @@ mod tests {
         .expect("stdio client should connect");
 
         assert_eq!(client.session_id().as_deref(), Some("stdio-test"));
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn dropping_stdio_client_terminates_shell_process_group() {
+        let tempdir = tempfile::tempdir().expect("tempdir should be created");
+        let pid_file = tempdir.path().join("child.pid");
+        let shell_command = format!(
+            "read _line; \
+             (trap 'exit 0' TERM; while true; do sleep 1; done) & \
+             child=$!; \
+             echo \"$child\" > {}; \
+             printf '%s\\n' '{{\"id\":1,\"result\":{{\"sessionId\":\"stdio-test\"}}}}'; \
+             read _line; \
+             wait \"$child\"",
+            shell_quote(pid_file.as_path()),
+        );
+
+        let client = ExecServerClient::connect_stdio_command(StdioExecServerConnectArgs {
+            shell_command,
+            client_name: "stdio-test-client".to_string(),
+            initialize_timeout: Duration::from_secs(1),
+            resume_session_id: None,
+        })
+        .await
+        .expect("stdio client should connect");
+        let child_pid = read_pid_file(pid_file.as_path()).await;
+        assert!(
+            process_exists(child_pid),
+            "wrapper child process should be running before client drop"
+        );
+
+        drop(client);
+
+        for _ in 0..20 {
+            if !process_exists(child_pid) {
+                return;
+            }
+            sleep(Duration::from_millis(100)).await;
+        }
+        panic!("wrapper child process {child_pid} should exit after client drop");
+    }
+
+    #[cfg(unix)]
+    async fn read_pid_file(path: &Path) -> u32 {
+        for _ in 0..20 {
+            if let Ok(contents) = std::fs::read_to_string(path) {
+                return contents
+                    .trim()
+                    .parse()
+                    .expect("pid file should contain a pid");
+            }
+            sleep(Duration::from_millis(50)).await;
+        }
+        panic!("pid file {} should be written", path.display());
+    }
+
+    #[cfg(unix)]
+    fn process_exists(pid: u32) -> bool {
+        Command::new("kill")
+            .arg("-0")
+            .arg(pid.to_string())
+            .status()
+            .is_ok_and(|status| status.success())
+    }
+
+    #[cfg(unix)]
+    fn shell_quote(path: &Path) -> String {
+        let value = path.to_string_lossy();
+        format!("'{}'", value.replace('\'', "'\\''"))
     }
 
     #[tokio::test]
