@@ -550,7 +550,7 @@ async fn lookup_session_target_by_name_with_app_server(
     let response = app_server
         .thread_list(ThreadListParams {
             cursor: None,
-            limit: Some(100),
+            limit: Some(1),
             sort_key: Some(AppServerThreadSortKey::UpdatedAt),
             sort_direction: None,
             model_providers: None,
