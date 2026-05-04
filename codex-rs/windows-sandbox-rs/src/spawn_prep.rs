@@ -218,6 +218,7 @@ pub(crate) fn allow_null_device_for_workspace_write(is_workspace_write: bool) {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn apply_legacy_session_acl_rules(
     policy: &SandboxPolicy,
     sandbox_policy_cwd: &Path,

@@ -201,8 +201,7 @@ impl MissingCreationMonitor {
                         record_monitor_error(
                             &errors,
                             format!(
-                                "unexpected protected metadata wait result {wait_result} for {}",
-                                parent_display_for_listener
+                                "unexpected protected metadata wait result {wait_result} for {parent_display_for_listener}"
                             ),
                         );
                         break;
@@ -217,8 +216,7 @@ impl MissingCreationMonitor {
                     FindCloseChangeNotification(change_handle);
                 }
                 anyhow!(
-                    "failed to start protected metadata monitor for {}: {err}",
-                    parent_display
+                    "failed to start protected metadata monitor for {parent_display}: {err}"
                 )
             })
     }
@@ -403,7 +401,7 @@ fn unique_paths(paths: Vec<PathBuf>) -> Vec<PathBuf> {
 
 fn existing_metadata_path(path: &Path) -> Result<Option<PathBuf>> {
     match std::fs::symlink_metadata(path) {
-        Ok(_) => return Ok(Some(path.to_path_buf())),
+        Ok(_) => return Ok(matching_metadata_child(path)?.or_else(|| Some(path.to_path_buf()))),
         Err(err) if err.kind() == io::ErrorKind::NotFound => {}
         Err(err) => {
             return Err(err)
@@ -411,6 +409,10 @@ fn existing_metadata_path(path: &Path) -> Result<Option<PathBuf>> {
         }
     }
 
+    matching_metadata_child(path)
+}
+
+fn matching_metadata_child(path: &Path) -> Result<Option<PathBuf>> {
     let Some(parent) = path.parent() else {
         return Ok(None);
     };
@@ -512,7 +514,7 @@ mod tests {
         let target = temp_dir.path().join(".git");
         let created = temp_dir.path().join(".GIT");
         let runtime = prepare_protected_metadata_targets(&[ProtectedMetadataTarget {
-            path: target.clone(),
+            path: target,
             mode: ProtectedMetadataMode::MissingCreationMonitor,
         }])
         .into_runtime()
