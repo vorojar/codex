@@ -1278,16 +1278,12 @@ async fn run_ratatui_app(
                 }
             }
         } else if cli.fork_last {
-            let filter_cwd = if remote_mode {
-                latest_session_cwd_filter(
-                    remote_mode,
-                    remote_cwd_override.as_deref(),
-                    &config,
-                    cli.fork_show_all,
-                )
-            } else {
-                None
-            };
+            let filter_cwd = latest_session_cwd_filter(
+                remote_mode,
+                remote_cwd_override.as_deref(),
+                &config,
+                cli.fork_show_all,
+            );
             let Some(app_server) = app_server.as_mut() else {
                 unreachable!("app server should be initialized for --fork --last");
             };
@@ -1882,6 +1878,33 @@ mod tests {
             params.cwd,
             Some(ThreadListCwdFilter::One(String::from("repo/on/server")))
         );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn latest_session_cwd_filter_respects_scope_options() -> std::io::Result<()> {
+        let temp_dir = TempDir::new()?;
+        let config = build_config(&temp_dir).await?;
+        let remote_cwd = Path::new("repo/on/server");
+
+        let local_filter = latest_session_cwd_filter(
+            /*remote_mode*/ false, /*remote_cwd_override*/ None, &config,
+            /*show_all*/ false,
+        );
+        let show_all_filter = latest_session_cwd_filter(
+            /*remote_mode*/ false, /*remote_cwd_override*/ None, &config,
+            /*show_all*/ true,
+        );
+        let remote_filter = latest_session_cwd_filter(
+            /*remote_mode*/ true,
+            Some(remote_cwd),
+            &config,
+            /*show_all*/ false,
+        );
+
+        assert_eq!(local_filter, Some(config.cwd.as_path()));
+        assert_eq!(show_all_filter, None);
+        assert_eq!(remote_filter, Some(remote_cwd));
         Ok(())
     }
 
