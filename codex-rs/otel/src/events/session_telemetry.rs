@@ -856,8 +856,6 @@ impl SessionTelemetry {
             .iter()
             .filter(|item| matches!(item, UserInput::LocalImage { .. }))
             .count();
-        let image_telemetry = image_input_telemetry(items);
-
         let prompt_to_log = if self.metadata.log_user_prompts {
             prompt.as_str()
         } else {
@@ -870,26 +868,49 @@ impl SessionTelemetry {
             prompt_length = %prompt.chars().count(),
             prompt = %prompt_to_log,
         );
-        if let Some(image_telemetry) = image_telemetry {
-            trace_event!(
-                self,
-                event.name = "codex.user_prompt",
-                prompt_length = %prompt.chars().count(),
-                text_input_count = text_input_count as i64,
-                image_input_count = image_input_count as i64,
-                local_image_input_count = local_image_input_count as i64,
-                image_input_types = %image_telemetry.image_types,
-                image_input_mime_types = %image_telemetry.mime_types,
-                image_input_details = %image_telemetry.details_json,
+        trace_event!(
+            self,
+            event.name = "codex.user_prompt",
+            prompt_length = %prompt.chars().count(),
+            text_input_count = text_input_count as i64,
+            image_input_count = image_input_count as i64,
+            local_image_input_count = local_image_input_count as i64,
+        );
+    }
+
+    pub fn record_turn_image_input(&self, turn_span: &Span, items: &[UserInput]) {
+        let remote_image_input_count = items
+            .iter()
+            .filter(|item| matches!(item, UserInput::Image { .. }))
+            .count();
+        let local_image_input_count = items
+            .iter()
+            .filter(|item| matches!(item, UserInput::LocalImage { .. }))
+            .count();
+        let image_input_count = remote_image_input_count + local_image_input_count;
+
+        turn_span.record("codex.turn.image_input_count", image_input_count as i64);
+        turn_span.record(
+            "codex.turn.remote_image_input_count",
+            remote_image_input_count as i64,
+        );
+        turn_span.record(
+            "codex.turn.local_image_input_count",
+            local_image_input_count as i64,
+        );
+
+        if let Some(image_telemetry) = image_input_telemetry(items) {
+            turn_span.record(
+                "codex.turn.image_input_types",
+                image_telemetry.image_types.as_str(),
             );
-        } else {
-            trace_event!(
-                self,
-                event.name = "codex.user_prompt",
-                prompt_length = %prompt.chars().count(),
-                text_input_count = text_input_count as i64,
-                image_input_count = image_input_count as i64,
-                local_image_input_count = local_image_input_count as i64,
+            turn_span.record(
+                "codex.turn.image_input_mime_types",
+                image_telemetry.mime_types.as_str(),
+            );
+            turn_span.record(
+                "codex.turn.image_input_details",
+                image_telemetry.details_json.as_str(),
             );
         }
     }

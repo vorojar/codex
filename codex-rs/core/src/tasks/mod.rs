@@ -378,7 +378,16 @@ impl Session {
             codex.turn.token_usage.output_tokens = field::Empty,
             codex.turn.token_usage.reasoning_output_tokens = field::Empty,
             codex.turn.token_usage.total_tokens = field::Empty,
+            codex.turn.image_input_count = field::Empty,
+            codex.turn.remote_image_input_count = field::Empty,
+            codex.turn.local_image_input_count = field::Empty,
+            codex.turn.image_input_types = field::Empty,
+            codex.turn.image_input_mime_types = field::Empty,
+            codex.turn.image_input_details = field::Empty,
         );
+        turn_context
+            .session_telemetry
+            .record_turn_image_input(&task_span, &input);
         let handle = tokio::spawn(
             async move {
                 let ctx_for_finish = Arc::clone(&ctx);

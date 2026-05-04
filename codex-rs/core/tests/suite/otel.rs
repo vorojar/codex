@@ -564,7 +564,7 @@ async fn process_sse_emits_completed_telemetry() {
 }
 
 #[tokio::test(flavor = "current_thread")]
-async fn turn_and_completed_response_spans_record_token_usage() {
+async fn turn_span_records_token_usage_and_image_metadata() {
     let buffer: &'static Mutex<Vec<u8>> = Box::leak(Box::new(Mutex::new(Vec::new())));
     let subscriber = tracing_subscriber::fmt()
         .with_level(true)
@@ -601,6 +601,10 @@ async fn turn_and_completed_response_spans_record_token_usage() {
                 .features
                 .disable(Feature::GhostCommit)
                 .expect("test config should allow feature update");
+            config
+                .features
+                .disable(Feature::ShellSnapshot)
+                .expect("test config should allow feature update");
         })
         .build(&server)
         .await
@@ -609,10 +613,15 @@ async fn turn_and_completed_response_spans_record_token_usage() {
     codex
         .submit(Op::UserInput {
             environments: None,
-            items: vec![UserInput::Text {
-                text: "hello".into(),
-                text_elements: Vec::new(),
-            }],
+            items: vec![
+                UserInput::Text {
+                    text: "hello".into(),
+                    text_elements: Vec::new(),
+                },
+                UserInput::Image {
+                    image_url: "DATA:image/jpeg;BASE64,AAAA".to_string(),
+                },
+            ],
             final_output_json_schema: None,
             responsesapi_client_metadata: None,
         })
@@ -643,8 +652,15 @@ async fn turn_and_completed_response_spans_record_token_usage() {
                 && line.contains("codex.turn.token_usage.output_tokens=5")
                 && line.contains("codex.turn.token_usage.reasoning_output_tokens=2")
                 && line.contains("codex.turn.token_usage.total_tokens=9")
+                && line.contains("codex.turn.image_input_count=1")
+                && line.contains("codex.turn.remote_image_input_count=1")
+                && line.contains("codex.turn.local_image_input_count=0")
+                && line.contains("codex.turn.image_input_types=\"jpeg\"")
+                && line.contains("codex.turn.image_input_mime_types=\"image/jpeg\"")
+                && line.contains("\\\"source\\\":\\\"data_url\\\"")
+                && line.contains("\\\"byte_length\\\":3")
         }),
-        "missing regular turn span token usage\nlogs:\n{logs}"
+        "missing regular turn span token usage and image metadata\nlogs:\n{logs}"
     );
 }
 
