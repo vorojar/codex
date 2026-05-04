@@ -520,9 +520,9 @@ impl App {
     /// thread creation so that the `/agent` picker and keyboard navigation are pre-populated even
     /// if the TUI did not witness the original spawn events.
     ///
-    /// The loaded-thread list is fetched in full (no pagination) and the spawn tree is walked
-    /// by `find_loaded_subagent_threads_for_primary`. Each discovered subagent is registered via
-    /// `upsert_agent_picker_thread`, which writes to both `AgentNavigationState` and the
+    /// The loaded-thread summary list is fetched in full (no pagination) and the spawn tree is
+    /// walked by `find_loaded_subagent_threads_for_primary`. Each discovered subagent is registered
+    /// via `upsert_agent_picker_thread`, which writes to both `AgentNavigationState` and the
     /// `ChatWidget` metadata map.
     pub(super) async fn backfill_loaded_subagent_threads(
         &mut self,
@@ -532,45 +532,33 @@ impl App {
             return false;
         };
 
-        let loaded_thread_ids = match app_server
+        let loaded_threads = match app_server
             .thread_loaded_list(ThreadLoadedListParams {
                 cursor: None,
                 limit: None,
+                include_summaries: true,
             })
             .await
         {
-            Ok(response) => response.data,
+            Ok(response) => response,
             Err(err) => {
                 tracing::warn!(%err, "failed to list loaded threads for subagent backfill");
                 return false;
             }
         };
 
-        let mut threads = Vec::new();
-        let mut had_read_error = false;
-        for thread_id in loaded_thread_ids {
-            let Ok(thread_id) = ThreadId::from_string(&thread_id) else {
-                tracing::warn!("ignoring loaded thread with invalid id during subagent backfill");
-                continue;
-            };
-
-            if thread_id == primary_thread_id {
-                continue;
-            }
-
-            match app_server
-                .thread_read(thread_id, /*include_turns*/ false)
-                .await
-            {
-                Ok(thread) => threads.push(thread),
-                Err(err) => {
-                    had_read_error = true;
-                    tracing::warn!(thread_id = %thread_id, %err, "failed to read loaded thread");
-                }
-            }
+        let had_summary_gap = loaded_threads.summaries.len() != loaded_threads.data.len();
+        if had_summary_gap {
+            tracing::warn!(
+                loaded_thread_count = loaded_threads.data.len(),
+                loaded_summary_count = loaded_threads.summaries.len(),
+                "loaded thread summary response omitted entries"
+            );
         }
 
-        for thread in find_loaded_subagent_threads_for_primary(threads, primary_thread_id) {
+        for thread in
+            find_loaded_subagent_threads_for_primary(loaded_threads.summaries, primary_thread_id)
+        {
             self.upsert_agent_picker_thread(
                 thread.thread_id,
                 thread.agent_nickname,
@@ -579,7 +567,7 @@ impl App {
             );
         }
 
-        !had_read_error
+        !had_summary_gap
     }
 
     /// Returns the adjacent thread id for keyboard navigation, backfilling from the server if the

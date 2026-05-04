@@ -461,8 +461,8 @@ impl AppServerSession {
     /// Lists thread ids that the app server currently holds in memory.
     ///
     /// Used by `App::backfill_loaded_subagent_threads` to discover subagent threads that were
-    /// spawned before the TUI connected. The caller then fetches full metadata per thread via
-    /// `thread_read` and walks the spawn tree.
+    /// spawned before the TUI connected. That caller requests summaries and walks the spawn tree
+    /// without issuing a `thread/read` for each loaded thread.
     pub(crate) async fn thread_loaded_list(
         &mut self,
         params: ThreadLoadedListParams,

@@ -76,9 +76,13 @@ async fn thread_unsubscribe_keeps_thread_loaded_until_idle_timeout() -> Result<(
         mcp.read_stream_until_response_message(RequestId::Integer(list_id)),
     )
     .await??;
-    let ThreadLoadedListResponse { data, next_cursor } =
-        to_response::<ThreadLoadedListResponse>(list_resp)?;
+    let ThreadLoadedListResponse {
+        data,
+        summaries,
+        next_cursor,
+    } = to_response::<ThreadLoadedListResponse>(list_resp)?;
     assert_eq!(data, vec![thread_id]);
+    assert_eq!(summaries, Vec::new());
     assert_eq!(next_cursor, None);
 
     Ok(())

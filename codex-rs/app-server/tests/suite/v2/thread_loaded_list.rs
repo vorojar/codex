@@ -6,6 +6,7 @@ use codex_app_server_protocol::JSONRPCResponse;
 use codex_app_server_protocol::RequestId;
 use codex_app_server_protocol::ThreadLoadedListParams;
 use codex_app_server_protocol::ThreadLoadedListResponse;
+use codex_app_server_protocol::ThreadLoadedSummary;
 use codex_app_server_protocol::ThreadStartParams;
 use codex_app_server_protocol::ThreadStartResponse;
 use pretty_assertions::assert_eq;
@@ -16,7 +17,7 @@ use tokio::time::timeout;
 const DEFAULT_READ_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
 
 #[tokio::test]
-async fn thread_loaded_list_returns_loaded_thread_ids() -> Result<()> {
+async fn thread_loaded_list_returns_loaded_thread_ids_and_summaries() -> Result<()> {
     let server = create_mock_responses_server_repeating_assistant("Done").await;
     let codex_home = TempDir::new()?;
     create_config_toml(codex_home.path(), &server.uri())?;
@@ -27,7 +28,10 @@ async fn thread_loaded_list_returns_loaded_thread_ids() -> Result<()> {
     let thread_id = start_thread(&mut mcp).await?;
 
     let list_id = mcp
-        .send_thread_loaded_list_request(ThreadLoadedListParams::default())
+        .send_thread_loaded_list_request(ThreadLoadedListParams {
+            include_summaries: true,
+            ..Default::default()
+        })
         .await?;
     let resp: JSONRPCResponse = timeout(
         DEFAULT_READ_TIMEOUT,
@@ -36,10 +40,20 @@ async fn thread_loaded_list_returns_loaded_thread_ids() -> Result<()> {
     .await??;
     let ThreadLoadedListResponse {
         mut data,
+        summaries,
         next_cursor,
     } = to_response::<ThreadLoadedListResponse>(resp)?;
     data.sort();
-    assert_eq!(data, vec![thread_id]);
+    assert_eq!(data, vec![thread_id.clone()]);
+    assert_eq!(
+        summaries,
+        vec![ThreadLoadedSummary {
+            id: thread_id,
+            parent_thread_id: None,
+            agent_nickname: None,
+            agent_role: None,
+        }]
+    );
     assert_eq!(next_cursor, None);
 
     Ok(())
@@ -64,6 +78,7 @@ async fn thread_loaded_list_paginates() -> Result<()> {
         .send_thread_loaded_list_request(ThreadLoadedListParams {
             cursor: None,
             limit: Some(1),
+            include_summaries: false,
         })
         .await?;
     let resp: JSONRPCResponse = timeout(
@@ -73,15 +88,18 @@ async fn thread_loaded_list_paginates() -> Result<()> {
     .await??;
     let ThreadLoadedListResponse {
         data: first_page,
+        summaries: first_summaries,
         next_cursor,
     } = to_response::<ThreadLoadedListResponse>(resp)?;
     assert_eq!(first_page, vec![expected[0].clone()]);
+    assert_eq!(first_summaries, Vec::new());
     assert_eq!(next_cursor, Some(expected[0].clone()));
 
     let list_id = mcp
         .send_thread_loaded_list_request(ThreadLoadedListParams {
             cursor: next_cursor,
             limit: Some(1),
+            include_summaries: false,
         })
         .await?;
     let resp: JSONRPCResponse = timeout(
@@ -91,9 +109,11 @@ async fn thread_loaded_list_paginates() -> Result<()> {
     .await??;
     let ThreadLoadedListResponse {
         data: second_page,
+        summaries: second_summaries,
         next_cursor,
     } = to_response::<ThreadLoadedListResponse>(resp)?;
     assert_eq!(second_page, vec![expected[1].clone()]);
+    assert_eq!(second_summaries, Vec::new());
     assert_eq!(next_cursor, None);
 
     Ok(())

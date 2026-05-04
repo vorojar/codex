@@ -10,4 +10,8 @@ cursor?: string | null,
 /**
  * Optional page size; defaults to no limit.
  */
-limit?: number | null, };
+limit?: number | null,
+/**
+ * When true, include lightweight metadata for each loaded thread in the page.
+ */
+includeSummaries?: boolean, };

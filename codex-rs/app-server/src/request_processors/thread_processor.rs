@@ -1896,7 +1896,11 @@ impl ThreadRequestProcessor {
         &self,
         params: ThreadLoadedListParams,
     ) -> Result<ThreadLoadedListResponse, JSONRPCErrorError> {
-        let ThreadLoadedListParams { cursor, limit } = params;
+        let ThreadLoadedListParams {
+            cursor,
+            limit,
+            include_summaries,
+        } = params;
         let mut data: Vec<String> = self
             .thread_manager
             .list_thread_ids()
@@ -1904,15 +1908,16 @@ impl ThreadRequestProcessor {
             .into_iter()
             .map(|thread_id| thread_id.to_string())
             .collect();
+        data.sort();
 
         if data.is_empty() {
             return Ok(ThreadLoadedListResponse {
                 data,
+                summaries: Vec::new(),
                 next_cursor: None,
             });
         }
 
-        data.sort();
         let total = data.len();
         let start = match cursor {
             Some(cursor) => {
@@ -1931,10 +1936,52 @@ impl ThreadRequestProcessor {
         let effective_limit = limit.unwrap_or(total as u32).max(1) as usize;
         let end = start.saturating_add(effective_limit).min(total);
         let page = data[start..end].to_vec();
+        let summaries = if include_summaries {
+            let mut summaries = Vec::with_capacity(page.len());
+            for thread_id in &page {
+                let Ok(thread_id) = ThreadId::from_string(thread_id) else {
+                    tracing::warn!("ignoring loaded thread with invalid id during summary build");
+                    continue;
+                };
+
+                let thread = match self.thread_manager.get_thread(thread_id).await {
+                    Ok(thread) => thread,
+                    Err(err) => {
+                        tracing::warn!(
+                            thread_id = %thread_id,
+                            %err,
+                            "failed to load thread summary"
+                        );
+                        continue;
+                    }
+                };
+                let config_snapshot = thread.config_snapshot().await;
+                let parent_thread_id = match &config_snapshot.session_source {
+                    codex_protocol::protocol::SessionSource::SubAgent(
+                        codex_protocol::protocol::SubAgentSource::ThreadSpawn {
+                            parent_thread_id,
+                            ..
+                        },
+                    ) => Some(parent_thread_id.to_string()),
+                    _ => None,
+                };
+
+                summaries.push(ThreadLoadedSummary {
+                    id: thread_id.to_string(),
+                    parent_thread_id,
+                    agent_nickname: config_snapshot.session_source.get_nickname(),
+                    agent_role: config_snapshot.session_source.get_agent_role(),
+                });
+            }
+            summaries
+        } else {
+            Vec::new()
+        };
         let next_cursor = page.last().filter(|_| end < total).cloned();
 
         Ok(ThreadLoadedListResponse {
             data: page,
+            summaries,
             next_cursor,
         })
     }

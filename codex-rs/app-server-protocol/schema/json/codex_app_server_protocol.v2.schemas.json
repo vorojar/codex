@@ -14104,6 +14104,10 @@
             "integer",
             "null"
           ]
+        },
+        "includeSummaries": {
+          "description": "When true, include lightweight metadata for each loaded thread in the page.",
+          "type": "boolean"
         }
       },
       "title": "ThreadLoadedListParams",
@@ -14119,6 +14123,13 @@
           },
           "type": "array"
         },
+        "summaries": {
+          "description": "Loaded-thread summaries for the returned page when `includeSummaries` is true. Empty when summaries were not requested.",
+          "items": {
+            "$ref": "#/definitions/ThreadLoadedSummary"
+          },
+          "type": "array"
+        },
         "nextCursor": {
           "description": "Opaque cursor to pass to the next call to continue after the last item. if None, there are no more items to return.",
           "type": [
@@ -14131,6 +14142,39 @@
         "data"
       ],
       "title": "ThreadLoadedListResponse",
+      "type": "object"
+    },
+    "ThreadLoadedSummary": {
+      "properties": {
+        "agentNickname": {
+          "description": "Optional random unique nickname assigned to an AgentControl-spawned sub-agent.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "agentRole": {
+          "description": "Optional role (agent_role) assigned to an AgentControl-spawned sub-agent.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "id": {
+          "description": "Thread id for a currently loaded session.",
+          "type": "string"
+        },
+        "parentThreadId": {
+          "description": "Parent thread id when this loaded thread is an AgentControl-spawned subagent.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "id"
+      ],
       "type": "object"
     },
     "ThreadMemoryMode": {

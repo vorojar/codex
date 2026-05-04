@@ -1,20 +1,20 @@
-//! Discovers subagent threads that belong to a primary thread by walking spawn-tree edges.
+//! Discovers subagent threads that belong to a primary thread by walking loaded-thread summaries.
 //!
 //! When the TUI resumes or switches to an existing thread, it needs to populate
 //! `AgentNavigationState` and `ChatWidget` metadata for every subagent that was spawned during
-//! that thread's lifetime. The app server exposes a flat list of currently loaded threads via
-//! `thread/loaded/list`, but the TUI must figure out which of those are descendants of the
+//! that thread's lifetime. The app server exposes a flat summary list of currently loaded threads
+//! via `thread/loaded/list`, but the TUI must figure out which of those are descendants of the
 //! primary thread.
 //!
 //! This module provides the pure, synchronous tree-walk that turns that flat list into the filtered
 //! set of descendants. It intentionally has no async, no I/O, and no side effects so it can be
 //! unit-tested in isolation.
 //!
-//! The walk starts from `primary_thread_id` and repeatedly follows
-//! `SessionSource::SubAgent(ThreadSpawn { parent_thread_id, .. })` edges until no new children are
-//! found. The primary thread itself is never included in the output.
+//! The walk starts from `primary_thread_id` and repeatedly follows loaded summary
+//! `parent_thread_id` edges until no new children are found. The primary thread itself is never
+//! included in the output.
 
-use codex_app_server_protocol::Thread;
+use codex_app_server_protocol::ThreadLoadedSummary;
 use codex_protocol::ThreadId;
 use std::collections::HashMap;
 use std::collections::HashSet;
@@ -30,9 +30,9 @@ pub(crate) struct LoadedSubagentThread {
 
 /// Walks the spawn tree rooted at `primary_thread_id` and returns every descendant subagent.
 ///
-/// The walk is breadth-first over `SessionSource::SubAgent(ThreadSpawn { parent_thread_id })` edges.
-/// Threads whose `source` is not a `ThreadSpawn`, or whose `parent_thread_id` does not chain back
-/// to `primary_thread_id`, are excluded. The primary thread itself is never included.
+/// The walk is breadth-first over loaded summary `parent_thread_id` edges. Threads whose
+/// `parent_thread_id` does not chain back to `primary_thread_id` are excluded. The primary thread
+/// itself is never included.
 ///
 /// Results are sorted by stringified thread id for deterministic output in tests and in the
 /// navigation cache. Callers should not rely on this ordering for anything semantic; it exists
@@ -42,26 +42,29 @@ pub(crate) struct LoadedSubagentThread {
 /// possible because `ThreadId`s are server-assigned UUIDs and the server enforces acyclicity, but
 /// the `included` set guards against re-visiting regardless.
 pub(crate) fn find_loaded_subagent_threads_for_primary(
-    threads: Vec<Thread>,
+    summaries: Vec<ThreadLoadedSummary>,
     primary_thread_id: ThreadId,
 ) -> Vec<LoadedSubagentThread> {
-    let mut threads_by_id = HashMap::new();
-    for thread in threads {
-        let Ok(thread_id) = ThreadId::from_string(&thread.id) else {
+    let mut summaries_by_id = HashMap::new();
+    for summary in summaries {
+        let Ok(thread_id) = ThreadId::from_string(&summary.id) else {
             continue;
         };
-        threads_by_id.insert(thread_id, thread);
+        summaries_by_id.insert(thread_id, summary);
     }
 
     let mut included = HashSet::new();
     let mut pending = vec![primary_thread_id];
     while let Some(parent_thread_id) = pending.pop() {
-        for (thread_id, thread) in &threads_by_id {
+        for (thread_id, summary) in &summaries_by_id {
             if included.contains(thread_id) {
                 continue;
             }
 
-            let Some(source_parent_thread_id) = thread_spawn_parent_thread_id(&thread.source)
+            let Some(source_parent_thread_id) = summary
+                .parent_thread_id
+                .as_deref()
+                .and_then(|id| ThreadId::from_string(id).ok())
             else {
                 continue;
             };
@@ -78,12 +81,12 @@ pub(crate) fn find_loaded_subagent_threads_for_primary(
     let mut loaded_threads: Vec<LoadedSubagentThread> = included
         .into_iter()
         .filter_map(|thread_id| {
-            threads_by_id
+            summaries_by_id
                 .remove(&thread_id)
-                .map(|thread| LoadedSubagentThread {
+                .map(|summary| LoadedSubagentThread {
                     thread_id,
-                    agent_nickname: thread.agent_nickname,
-                    agent_role: thread.agent_role,
+                    agent_nickname: summary.agent_nickname,
+                    agent_role: summary.agent_role,
                 })
         })
         .collect();
@@ -91,69 +94,26 @@ pub(crate) fn find_loaded_subagent_threads_for_primary(
     loaded_threads
 }
 
-fn thread_spawn_parent_thread_id(
-    source: &codex_app_server_protocol::SessionSource,
-) -> Option<ThreadId> {
-    let value = serde_json::to_value(source).ok()?;
-    let parent_thread_id = value
-        .get("subAgent")?
-        .get("thread_spawn")?
-        .get("parent_thread_id")?
-        .as_str()?;
-    ThreadId::from_string(parent_thread_id).ok()
-}
-
 #[cfg(test)]
 mod tests {
     use super::LoadedSubagentThread;
     use super::find_loaded_subagent_threads_for_primary;
-    use codex_app_server_protocol::SessionSource;
-    use codex_app_server_protocol::Thread;
-    use codex_app_server_protocol::ThreadStatus;
+    use codex_app_server_protocol::ThreadLoadedSummary;
     use codex_protocol::ThreadId;
-    use codex_utils_absolute_path::test_support::PathBufExt;
-    use codex_utils_absolute_path::test_support::test_path_buf;
     use pretty_assertions::assert_eq;
 
-    fn test_thread(thread_id: ThreadId, source: SessionSource) -> Thread {
-        Thread {
+    fn summary(
+        thread_id: ThreadId,
+        parent_thread_id: Option<ThreadId>,
+        agent_nickname: Option<&str>,
+        agent_role: Option<&str>,
+    ) -> ThreadLoadedSummary {
+        ThreadLoadedSummary {
             id: thread_id.to_string(),
-            forked_from_id: None,
-            preview: String::new(),
-            ephemeral: false,
-            model_provider: "openai".to_string(),
-            created_at: 0,
-            updated_at: 0,
-            status: ThreadStatus::Idle,
-            path: None,
-            cwd: test_path_buf("/tmp").abs(),
-            cli_version: "0.0.0".to_string(),
-            source,
-            agent_nickname: None,
-            agent_role: None,
-            git_info: None,
-            name: None,
-            turns: Vec::new(),
+            parent_thread_id: parent_thread_id.map(|id| id.to_string()),
+            agent_nickname: agent_nickname.map(str::to_string),
+            agent_role: agent_role.map(str::to_string),
         }
-    }
-
-    fn thread_spawn_source(
-        parent_thread_id: ThreadId,
-        depth: i32,
-        agent_nickname: &str,
-        agent_role: &str,
-    ) -> SessionSource {
-        serde_json::from_value(serde_json::json!({
-            "subAgent": {
-                "thread_spawn": {
-                    "parent_thread_id": parent_thread_id.to_string(),
-                    "depth": depth,
-                    "agent_nickname": agent_nickname,
-                    "agent_role": agent_role,
-                }
-            }
-        }))
-        .expect("valid subagent source")
     }
 
     #[test]
@@ -169,31 +129,32 @@ mod tests {
         let unrelated_child_id =
             ThreadId::from_string("00000000-0000-0000-0000-000000000005").expect("valid thread");
 
-        let mut child = test_thread(
-            child_thread_id,
-            thread_spawn_source(primary_thread_id, /*depth*/ 1, "Scout", "explorer"),
-        );
-        child.agent_nickname = Some("Scout".to_string());
-        child.agent_role = Some("explorer".to_string());
-
-        let mut grandchild = test_thread(
-            grandchild_thread_id,
-            thread_spawn_source(child_thread_id, /*depth*/ 2, "Atlas", "worker"),
-        );
-        grandchild.agent_nickname = Some("Atlas".to_string());
-        grandchild.agent_role = Some("worker".to_string());
-
-        let unrelated_child = test_thread(
-            unrelated_child_id,
-            thread_spawn_source(unrelated_parent_id, /*depth*/ 1, "Other", "researcher"),
-        );
-
         let loaded = find_loaded_subagent_threads_for_primary(
             vec![
-                test_thread(primary_thread_id, SessionSource::Cli),
-                child,
-                grandchild,
-                unrelated_child,
+                summary(
+                    primary_thread_id,
+                    /*parent_thread_id*/ None,
+                    /*agent_nickname*/ None,
+                    /*agent_role*/ None,
+                ),
+                summary(
+                    child_thread_id,
+                    Some(primary_thread_id),
+                    Some("Scout"),
+                    Some("explorer"),
+                ),
+                summary(
+                    grandchild_thread_id,
+                    Some(child_thread_id),
+                    Some("Atlas"),
+                    Some("worker"),
+                ),
+                summary(
+                    unrelated_child_id,
+                    Some(unrelated_parent_id),
+                    Some("Other"),
+                    Some("researcher"),
+                ),
             ],
             primary_thread_id,
         );

@@ -3691,6 +3691,10 @@
             "integer",
             "null"
           ]
+        },
+        "includeSummaries": {
+          "description": "When true, include lightweight metadata for each loaded thread in the page.",
+          "type": "boolean"
         }
       },
       "type": "object"

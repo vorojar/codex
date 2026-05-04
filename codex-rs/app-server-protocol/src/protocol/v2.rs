@@ -4393,6 +4393,9 @@ pub struct ThreadLoadedListParams {
     /// Optional page size; defaults to no limit.
     #[ts(optional = nullable)]
     pub limit: Option<u32>,
+    /// When true, include lightweight metadata for each loaded thread in the page.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub include_summaries: bool,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, JsonSchema, TS)]
@@ -4401,9 +4404,27 @@ pub struct ThreadLoadedListParams {
 pub struct ThreadLoadedListResponse {
     /// Thread ids for sessions currently loaded in memory.
     pub data: Vec<String>,
+    /// Loaded-thread summaries for the returned page when `includeSummaries` is true.
+    /// Empty when summaries were not requested.
+    #[serde(default)]
+    pub summaries: Vec<ThreadLoadedSummary>,
     /// Opaque cursor to pass to the next call to continue after the last item.
     /// if None, there are no more items to return.
     pub next_cursor: Option<String>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "v2/")]
+pub struct ThreadLoadedSummary {
+    /// Thread id for a currently loaded session.
+    pub id: String,
+    /// Parent thread id when this loaded thread is an AgentControl-spawned subagent.
+    pub parent_thread_id: Option<String>,
+    /// Optional random unique nickname assigned to an AgentControl-spawned sub-agent.
+    pub agent_nickname: Option<String>,
+    /// Optional role (agent_role) assigned to an AgentControl-spawned sub-agent.
+    pub agent_role: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, JsonSchema, TS)]

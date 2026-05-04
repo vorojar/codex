@@ -147,7 +147,7 @@ Example with notification opt-out:
 - `thread/fork` — fork an existing thread into a new thread id by copying the stored history; if the source thread is currently mid-turn, the fork records the same interruption marker as `turn/interrupt` instead of inheriting an unmarked partial turn suffix. The returned `thread.forkedFromId` points at the source thread when known. Accepts `ephemeral: true` for an in-memory temporary fork, emits `thread/started` (including the current `thread.status`), and auto-subscribes you to turn/item events for the new thread. Experimental clients can pass `excludeTurns: true` when they plan to page fork history via `thread/turns/list` instead of receiving the full turn array immediately. Accepts the same permission override rules as `thread/start`.
 - `thread/start`, `thread/resume`, and `thread/fork` responses include the legacy `sandbox` compatibility projection. Experimental clients can read response `permissionProfile` for the exact active runtime permissions and `activePermissionProfile` for the named or implicit built-in profile identity/provenance when known.
 - `thread/list` — page through stored rollouts; supports cursor-based pagination and optional `modelProviders`, `sourceKinds`, `archived`, `cwd`, and `searchTerm` filters. Each returned `thread` includes `status` (`ThreadStatus`), defaulting to `notLoaded` when the thread is not currently loaded.
-- `thread/loaded/list` — list the thread ids currently loaded in memory.
+- `thread/loaded/list` — list the thread ids currently loaded in memory. Pass `includeSummaries: true` to include lightweight live metadata for each returned thread.
 - `thread/read` — read a stored thread by id without resuming it; optionally include turns via `includeTurns`. The returned `thread` includes `status` (`ThreadStatus`), defaulting to `notLoaded` when the thread is not currently loaded.
 - `thread/turns/list` — experimental; page through a stored thread’s turn history without resuming it; supports cursor-based pagination with `sortDirection`, `nextCursor`, and `backwardsCursor`.
 - `thread/metadata/update` — patch stored thread metadata in sqlite; currently supports updating persisted `gitInfo` fields and returns the refreshed `thread`.
@@ -347,12 +347,16 @@ When `nextCursor` is `null`, you’ve reached the final page.
 
 ### Example: List loaded threads
 
-`thread/loaded/list` returns thread ids currently loaded in memory. This is useful when you want to check which sessions are active without scanning rollouts on disk.
+`thread/loaded/list` returns thread ids currently loaded in memory. This is useful when you want to check which sessions are active without scanning rollouts on disk. Pass `includeSummaries: true` when the caller also needs lightweight live metadata, such as subagent parentage.
 
 ```json
-{ "method": "thread/loaded/list", "id": 21 }
+{ "method": "thread/loaded/list", "id": 21, "params": { "includeSummaries": true } }
 { "id": 21, "result": {
-    "data": ["thr_123", "thr_456"]
+    "data": ["thr_123", "thr_456"],
+    "summaries": [
+        { "id": "thr_123", "parentThreadId": null, "agentNickname": null, "agentRole": null },
+        { "id": "thr_456", "parentThreadId": "thr_123", "agentNickname": "Scout", "agentRole": "explorer" }
+    ]
 } }
 ```
 
