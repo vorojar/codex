@@ -170,45 +170,73 @@ fn codex_apps_mcp_url_for_base_url_keeps_existing_paths() {
         codex_apps_mcp_url_for_base_url(
             "https://chatgpt.com/backend-api",
             /*apps_mcp_path_override*/ None,
-        ),
-        "https://chatgpt.com/backend-api/wham/apps"
+        )
+        .expect("trusted ChatGPT URL should build"),
+        TrustedCodexAppsMcpUrl("https://chatgpt.com/backend-api/wham/apps".to_string())
     );
     assert_eq!(
         codex_apps_mcp_url_for_base_url(
             "https://chat.openai.com",
             /*apps_mcp_path_override*/ None,
-        ),
-        "https://chat.openai.com/backend-api/wham/apps"
+        )
+        .expect("trusted legacy ChatGPT URL should build"),
+        TrustedCodexAppsMcpUrl("https://chat.openai.com/backend-api/wham/apps".to_string())
     );
     assert_eq!(
         codex_apps_mcp_url_for_base_url(
             "http://localhost:8080/api/codex",
             /*apps_mcp_path_override*/ None,
-        ),
-        "http://localhost:8080/api/codex/apps"
+        )
+        .expect("local debug URL should build"),
+        TrustedCodexAppsMcpUrl("http://localhost:8080/api/codex/apps".to_string())
     );
     assert_eq!(
         codex_apps_mcp_url_for_base_url(
             "http://localhost:8080",
             /*apps_mcp_path_override*/ None,
-        ),
-        "http://localhost:8080/api/codex/apps"
+        )
+        .expect("local debug URL should build"),
+        TrustedCodexAppsMcpUrl("http://localhost:8080/api/codex/apps".to_string())
     );
 }
 
 #[test]
+fn codex_apps_mcp_url_for_base_url_rejects_untrusted_urls() {
+    for base_url in [
+        "http://chatgpt.com/backend-api",
+        "https://example.com/backend-api",
+        "https://chatgpt.com.evil.example/backend-api",
+        "https://evilchatgpt.com/backend-api",
+        "https://foo.chat.openai.com/backend-api",
+        "https://chatgpt.com:4443/backend-api",
+        "https://user:pass@chatgpt.com/backend-api",
+        "https://chatgpt.com/backend-api?token=secret",
+    ] {
+        let err = codex_apps_mcp_url_for_base_url(base_url, /*apps_mcp_path_override*/ None)
+            .expect_err("untrusted URL should be rejected");
+
+        assert!(
+            err.starts_with("invalid Codex Apps MCP base URL"),
+            "unexpected error: {err}"
+        );
+    }
+}
+
+#[test]
 fn codex_apps_mcp_url_uses_legacy_codex_apps_path() {
-    let config = test_mcp_config(PathBuf::from("/tmp"));
+    let codex_home = tempfile::tempdir().expect("tempdir");
+    let config = test_mcp_config(codex_home.path().to_path_buf());
 
     assert_eq!(
-        codex_apps_mcp_url(&config),
+        codex_apps_mcp_url(&config).expect("trusted ChatGPT URL should build"),
         "https://chatgpt.com/backend-api/wham/apps"
     );
 }
 
 #[test]
 fn codex_apps_server_config_uses_legacy_codex_apps_path() {
-    let mut config = test_mcp_config(PathBuf::from("/tmp"));
+    let codex_home = tempfile::tempdir().expect("tempdir");
+    let mut config = test_mcp_config(codex_home.path().to_path_buf());
     let auth = CodexAuth::create_dummy_chatgpt_auth_for_testing();
 
     let mut servers = with_codex_apps_mcp(HashMap::new(), /*auth*/ None, &config);
@@ -230,17 +258,35 @@ fn codex_apps_server_config_uses_legacy_codex_apps_path() {
 
 #[test]
 fn codex_apps_server_config_is_marked_host_owned() {
-    let config = test_mcp_config(PathBuf::from("/tmp"));
+    let codex_home = tempfile::tempdir().expect("tempdir");
+    let config = test_mcp_config(codex_home.path().to_path_buf());
 
     assert_eq!(
-        codex_apps_mcp_server_config(&config).provenance,
+        codex_apps_mcp_server_config(&config)
+            .expect("trusted ChatGPT URL should build")
+            .provenance,
         McpServerProvenance::HostOwnedCodexApps
     );
 }
 
 #[test]
+fn host_owned_codex_apps_endpoint_pairs_trusted_url_with_provenance() {
+    let codex_home = tempfile::tempdir().expect("tempdir");
+    let config = test_mcp_config(codex_home.path().to_path_buf());
+
+    assert_eq!(
+        host_owned_codex_apps_mcp_endpoint(&config).expect("trusted ChatGPT URL should build"),
+        HostOwnedCodexAppsMcpEndpoint {
+            url: TrustedCodexAppsMcpUrl("https://chatgpt.com/backend-api/wham/apps".to_string(),),
+            provenance: McpServerProvenance::HostOwnedCodexApps,
+        }
+    );
+}
+
+#[test]
 fn codex_apps_server_config_uses_configured_apps_mcp_path_override() {
-    let mut config = test_mcp_config(PathBuf::from("/tmp"));
+    let codex_home = tempfile::tempdir().expect("tempdir");
+    let mut config = test_mcp_config(codex_home.path().to_path_buf());
     config.apps_mcp_path_override = Some("/custom/mcp".to_string());
     config.apps_enabled = true;
     let auth = CodexAuth::create_dummy_chatgpt_auth_for_testing();
@@ -255,6 +301,19 @@ fn codex_apps_server_config_uses_configured_apps_mcp_path_override() {
     };
 
     assert_eq!(url, "https://chatgpt.com/backend-api/custom/mcp");
+}
+
+#[test]
+fn with_codex_apps_mcp_does_not_trust_untrusted_base_url() {
+    let codex_home = tempfile::tempdir().expect("tempdir");
+    let mut config = test_mcp_config(codex_home.path().to_path_buf());
+    config.apps_enabled = true;
+    config.chatgpt_base_url = "https://chatgpt.com.evil.example/backend-api".to_string();
+    let auth = CodexAuth::create_dummy_chatgpt_auth_for_testing();
+
+    let servers = with_codex_apps_mcp(HashMap::new(), Some(&auth), &config);
+
+    assert!(!servers.contains_key(CODEX_APPS_MCP_SERVER_NAME));
 }
 
 #[tokio::test]

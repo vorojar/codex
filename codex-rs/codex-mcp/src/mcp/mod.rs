@@ -36,6 +36,8 @@ use codex_protocol::protocol::McpListToolsResponseEvent;
 use rmcp::model::ReadResourceRequestParams;
 use rmcp::model::ReadResourceResult;
 use serde_json::Value;
+use url::Host;
+use url::Url;
 
 use crate::codex_apps::codex_apps_tools_cache_key;
 use crate::connection_manager::McpConnectionManager;
@@ -205,10 +207,15 @@ pub fn with_codex_apps_mcp(
     config: &McpConfig,
 ) -> HashMap<String, McpServerConfig> {
     if config.apps_enabled && auth.is_some_and(CodexAuth::uses_codex_backend) {
-        servers.insert(
-            CODEX_APPS_MCP_SERVER_NAME.to_string(),
-            codex_apps_mcp_server_config(config),
-        );
+        match codex_apps_mcp_server_config(config) {
+            Ok(server_config) => {
+                servers.insert(CODEX_APPS_MCP_SERVER_NAME.to_string(), server_config);
+            }
+            Err(err) => {
+                tracing::warn!("Skipping host-owned Codex Apps MCP server: {err}");
+                servers.remove(CODEX_APPS_MCP_SERVER_NAME);
+            }
+        }
     } else {
         servers.remove(CODEX_APPS_MCP_SERVER_NAME);
     }
@@ -353,11 +360,9 @@ pub async fn collect_mcp_snapshot_from_manager(
     .await
 }
 
-pub(crate) fn codex_apps_mcp_url(config: &McpConfig) -> String {
-    codex_apps_mcp_url_for_base_url(
-        &config.chatgpt_base_url,
-        config.apps_mcp_path_override.as_deref(),
-    )
+#[cfg(test)]
+pub(crate) fn codex_apps_mcp_url(config: &McpConfig) -> Result<String, String> {
+    host_owned_codex_apps_mcp_endpoint(config).map(|endpoint| endpoint.url.0)
 }
 
 /// The Responses API requires tool names to match `^[a-zA-Z0-9_-]+$`.
@@ -389,19 +394,47 @@ fn codex_apps_mcp_bearer_token_env_var() -> Option<String> {
     }
 }
 
-fn normalize_codex_apps_base_url(base_url: &str) -> String {
-    let mut base_url = base_url.trim_end_matches('/').to_string();
-    if (base_url.starts_with("https://chatgpt.com")
-        || base_url.starts_with("https://chat.openai.com"))
-        && !base_url.contains("/backend-api")
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct HostOwnedCodexAppsMcpEndpoint {
+    url: TrustedCodexAppsMcpUrl,
+    provenance: McpServerProvenance,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct TrustedCodexAppsMcpUrl(String);
+
+fn host_owned_codex_apps_mcp_endpoint(
+    config: &McpConfig,
+) -> Result<HostOwnedCodexAppsMcpEndpoint, String> {
+    // HostOwnedCodexApps gates first-party connector behavior, including
+    // privileged file upload handling. Keep the trusted URL check and the
+    // provenance grant together so a config-derived URL cannot receive the
+    // host-owned marker without passing this audit point.
+    let url = codex_apps_mcp_url_for_base_url(
+        &config.chatgpt_base_url,
+        config.apps_mcp_path_override.as_deref(),
+    )?;
+    Ok(HostOwnedCodexAppsMcpEndpoint {
+        url,
+        provenance: McpServerProvenance::HostOwnedCodexApps,
+    })
+}
+
+fn codex_apps_mcp_url_for_base_url(
+    base_url: &str,
+    apps_mcp_path_override: Option<&str>,
+) -> Result<TrustedCodexAppsMcpUrl, String> {
+    let base_url = base_url.trim_end_matches('/');
+    let parsed_base_url = Url::parse(base_url)
+        .map_err(|err| format!("invalid Codex Apps MCP base URL `{base_url}`: {err}"))?;
+    validate_codex_apps_mcp_base_url(&parsed_base_url, base_url)?;
+
+    let mut base_url = base_url.to_string();
+    if is_allowed_codex_apps_chatgpt_host(&parsed_base_url.host())
+        && !parsed_base_url.path().contains("/backend-api")
     {
         base_url = format!("{base_url}/backend-api");
     }
-    base_url
-}
-
-fn codex_apps_mcp_url_for_base_url(base_url: &str, apps_mcp_path_override: Option<&str>) -> String {
-    let base_url = normalize_codex_apps_base_url(base_url);
     let (base_url, default_path) = if base_url.contains("/backend-api") {
         (base_url, "wham/apps")
     } else if base_url.contains("/api/codex") {
@@ -412,13 +445,63 @@ fn codex_apps_mcp_url_for_base_url(base_url: &str, apps_mcp_path_override: Optio
     let path = apps_mcp_path_override
         .unwrap_or(default_path)
         .trim_start_matches('/');
-    format!("{base_url}/{path}")
+    Ok(TrustedCodexAppsMcpUrl(format!("{base_url}/{path}")))
 }
 
-fn codex_apps_mcp_server_config(config: &McpConfig) -> McpServerConfig {
-    let url = codex_apps_mcp_url(config);
+fn validate_codex_apps_mcp_base_url(url: &Url, original_base_url: &str) -> Result<(), String> {
+    if !url.username().is_empty()
+        || url.password().is_some()
+        || url.query().is_some()
+        || url.fragment().is_some()
+    {
+        return Err(format!(
+            "invalid Codex Apps MCP base URL `{original_base_url}`; expected a URL without credentials, query, or fragment"
+        ));
+    }
 
-    McpServerConfig {
+    let scheme = url.scheme();
+    let host = url.host();
+    let valid_first_party_url =
+        scheme == "https" && url.port().is_none() && is_allowed_codex_apps_chatgpt_host(&host);
+    let valid_local_url = cfg!(debug_assertions)
+        && matches!(scheme, "http" | "https")
+        && is_localhost_for_codex_apps(&host);
+    if valid_first_party_url || valid_local_url {
+        Ok(())
+    } else {
+        Err(format!(
+            "invalid Codex Apps MCP base URL `{original_base_url}`; expected an HTTPS URL for chatgpt.com, chat.openai.com, or chatgpt-staging.com"
+        ))
+    }
+}
+
+fn is_allowed_codex_apps_chatgpt_host(host: &Option<Host<&str>>) -> bool {
+    let Some(Host::Domain(host)) = host else {
+        return false;
+    };
+    let host = *host;
+
+    host == "chatgpt.com"
+        || host == "chat.openai.com"
+        || host == "chatgpt-staging.com"
+        || host.ends_with(".chatgpt.com")
+        || host.ends_with(".chatgpt-staging.com")
+}
+
+fn is_localhost_for_codex_apps(host: &Option<Host<&str>>) -> bool {
+    match host {
+        Some(Host::Domain(host)) => *host == "localhost",
+        Some(Host::Ipv4(ip)) => ip.is_loopback(),
+        Some(Host::Ipv6(ip)) => ip.is_loopback(),
+        _ => false,
+    }
+}
+
+fn codex_apps_mcp_server_config(config: &McpConfig) -> Result<McpServerConfig, String> {
+    let endpoint = host_owned_codex_apps_mcp_endpoint(config)?;
+    let TrustedCodexAppsMcpUrl(url) = endpoint.url;
+
+    Ok(McpServerConfig {
         transport: McpServerTransportConfig::StreamableHttp {
             url,
             bearer_token_env_var: codex_apps_mcp_bearer_token_env_var(),
@@ -430,7 +513,7 @@ fn codex_apps_mcp_server_config(config: &McpConfig) -> McpServerConfig {
         required: false,
         supports_parallel_tool_calls: false,
         disabled_reason: None,
-        provenance: McpServerProvenance::HostOwnedCodexApps,
+        provenance: endpoint.provenance,
         startup_timeout_sec: Some(Duration::from_secs(30)),
         tool_timeout_sec: None,
         default_tools_approval_mode: None,
@@ -439,7 +522,7 @@ fn codex_apps_mcp_server_config(config: &McpConfig) -> McpServerConfig {
         scopes: None,
         oauth_resource: None,
         tools: HashMap::new(),
-    }
+    })
 }
 
 fn protocol_tool_from_rmcp_tool(name: &str, tool: &rmcp::model::Tool) -> Option<Tool> {
