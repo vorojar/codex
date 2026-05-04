@@ -127,6 +127,7 @@ use codex_chatgpt::connectors;
 use codex_config::ConfigLayerStackOrdering;
 use codex_config::types::ApprovalsReviewer;
 use codex_config::types::Notifications;
+use codex_config::types::TuiPetAnchor;
 use codex_config::types::WindowsSandboxModeToml;
 use codex_core_skills::model::SkillMetadata;
 use codex_features::FEATURES;
@@ -865,6 +866,8 @@ pub(crate) struct ChatWidget {
     active_hook_cell: Option<HookCell>,
     // Ambient companion rendered over the transcript area, never inside the footer rows.
     ambient_pet: Option<crate::pets::AmbientPet>,
+    #[cfg(test)]
+    pet_image_support_override: Option<crate::pets::PetImageSupport>,
     // Semantic status used for terminal-title status rendering.
     terminal_title_status_kind: TerminalTitleStatusKind,
     // Previous status header to restore after a transient stream retry.
@@ -4962,6 +4965,8 @@ impl ChatWidget {
             recent_auto_review_denials: RecentAutoReviewDenials::default(),
             active_hook_cell: None,
             ambient_pet,
+            #[cfg(test)]
+            pet_image_support_override: None,
             terminal_title_status_kind: TerminalTitleStatusKind::Working,
             retry_status_header: None,
             pending_status_indicator_restore: false,
@@ -6704,11 +6709,19 @@ impl ChatWidget {
             .is_some_and(crate::pets::AmbientPet::image_enabled)
     }
 
-    pub(crate) fn ambient_pet_draw(&self, area: Rect) -> Option<crate::pets::AmbientPetDraw> {
+    pub(crate) fn ambient_pet_draw(
+        &self,
+        area: Rect,
+        composer_bottom_y: u16,
+    ) -> Option<crate::pets::AmbientPetDraw> {
         self.bottom_pane.no_modal_or_popup_active().then(|| {
+            let anchor_bottom_y = match self.config.tui_pet_anchor {
+                TuiPetAnchor::Composer => composer_bottom_y,
+                TuiPetAnchor::ScreenBottom => area.bottom(),
+            };
             self.ambient_pet
                 .as_ref()?
-                .draw_request(area, self.footer_height(area.width))
+                .draw_request(area, anchor_bottom_y)
         })?
     }
 
@@ -7034,13 +7047,28 @@ impl ChatWidget {
     }
 
     fn warn_if_pets_unsupported(&mut self) -> bool {
-        let support = crate::pets::detect_pet_image_support();
+        let support = self.pet_image_support();
         let Some(message) = support.unsupported_message() else {
             return false;
         };
 
         self.add_warning_message(message.to_string());
         true
+    }
+
+    fn pet_image_support(&self) -> crate::pets::PetImageSupport {
+        #[cfg(test)]
+        if let Some(support) = self.pet_image_support_override {
+            return support;
+        }
+
+        #[cfg(test)]
+        return crate::pets::PetImageSupport::Unsupported(
+            crate::pets::PetImageUnsupportedReason::Terminal,
+        );
+
+        #[cfg(not(test))]
+        crate::pets::detect_pet_image_support()
     }
 
     fn status_line_context_window_size(&self) -> Option<i64> {
@@ -9388,7 +9416,24 @@ impl ChatWidget {
     pub(crate) fn set_tui_pet(&mut self, pet: Option<String>) {
         self.config.tui_pet = pet;
         self.ambient_pet = load_ambient_pet(&self.config, self.frame_requester.clone());
+        #[cfg(test)]
+        if let Some(support) = self.pet_image_support_override
+            && let Some(pet) = self.ambient_pet.as_mut()
+        {
+            pet.set_image_support_for_tests(support);
+        }
         self.request_redraw();
+    }
+
+    #[cfg(test)]
+    pub(crate) fn set_pet_image_support_for_tests(
+        &mut self,
+        support: crate::pets::PetImageSupport,
+    ) {
+        self.pet_image_support_override = Some(support);
+        if let Some(pet) = self.ambient_pet.as_mut() {
+            pet.set_image_support_for_tests(support);
+        }
     }
 
     /// Set the model in the widget's config copy and stored collaboration mode.
@@ -10994,7 +11039,7 @@ impl Renderable for ChatWidget {
         if self.bottom_pane.no_modal_or_popup_active()
             && let Some(pet) = self.ambient_pet.as_ref()
         {
-            pet.render_overlay(area, self.footer_height(area.width), buf);
+            pet.render_overlay(area, area.bottom(), buf);
         }
         self.last_rendered_width.set(Some(area.width as usize));
     }
@@ -11009,12 +11054,6 @@ impl Renderable for ChatWidget {
 
     fn cursor_style(&self, area: Rect) -> crossterm::cursor::SetCursorStyle {
         self.as_renderable().cursor_style(area)
-    }
-}
-
-impl ChatWidget {
-    fn footer_height(&self, width: u16) -> u16 {
-        self.bottom_pane.desired_height(width).saturating_add(1)
     }
 }
 

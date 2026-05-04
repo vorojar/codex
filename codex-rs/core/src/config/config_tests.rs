@@ -50,6 +50,7 @@ use codex_config::types::ToolSuggestDiscoverableType;
 use codex_config::types::Tui;
 use codex_config::types::TuiKeymap;
 use codex_config::types::TuiNotificationSettings;
+use codex_config::types::TuiPetAnchor;
 use codex_config::types::WindowsSandboxModeToml;
 use codex_config::types::WindowsToml;
 use codex_core_plugins::PluginsManager;
@@ -556,6 +557,7 @@ fn config_toml_deserializes_model_availability_nux() {
             terminal_title: None,
             theme: None,
             pet: None,
+            pet_anchor: TuiPetAnchor::Composer,
             keymap: TuiKeymap::default(),
             model_availability_nux: ModelAvailabilityNuxConfig {
                 shown_count: HashMap::from([
@@ -2132,6 +2134,47 @@ fn tui_pet_defaults_to_none() {
 }
 
 #[test]
+fn tui_pet_anchor_deserializes_from_toml() {
+    let cfg = r#"
+[tui]
+pet_anchor = "screen-bottom"
+"#;
+    let parsed = toml::from_str::<ConfigToml>(cfg).expect("TOML deserialization should succeed");
+    assert_eq!(
+        parsed.tui.as_ref().map(|t| t.pet_anchor),
+        Some(TuiPetAnchor::ScreenBottom),
+    );
+}
+
+#[test]
+fn tui_pet_anchor_defaults_to_composer() {
+    let cfg = r#"
+[tui]
+"#;
+    let parsed = toml::from_str::<ConfigToml>(cfg).expect("TOML deserialization should succeed");
+    assert_eq!(
+        parsed.tui.as_ref().map(|t| t.pet_anchor),
+        Some(TuiPetAnchor::Composer),
+    );
+}
+
+#[test]
+fn tui_pet_anchor_rejects_unknown_value() {
+    let cfg = r#"
+[tui]
+pet_anchor = "bottom"
+"#;
+    let err = toml::from_str::<ConfigToml>(cfg).expect_err("reject unknown pet anchor");
+    let err = err.to_string();
+    assert!(
+        err.contains("unknown variant `bottom`")
+            && err.contains("composer")
+            && err.contains("screen-bottom"),
+        "unexpected error: {err}"
+    );
+}
+
+#[test]
 fn tui_config_missing_notifications_field_defaults_to_enabled() {
     let cfg = r#"
 [tui]
@@ -2154,6 +2197,7 @@ fn tui_config_missing_notifications_field_defaults_to_enabled() {
             terminal_title: None,
             theme: None,
             pet: None,
+            pet_anchor: TuiPetAnchor::Composer,
             keymap: TuiKeymap::default(),
             model_availability_nux: ModelAvailabilityNuxConfig::default(),
             terminal_resize_reflow_max_rows: None,
@@ -6486,6 +6530,7 @@ async fn test_precedence_fixture_with_o3_profile() -> std::io::Result<()> {
             tui_terminal_title: None,
             tui_theme: None,
             tui_pet: None,
+            tui_pet_anchor: TuiPetAnchor::Composer,
             otel: OtelConfig::default(),
         },
         o3_profile_config
@@ -6689,6 +6734,7 @@ async fn test_precedence_fixture_with_gpt3_profile() -> std::io::Result<()> {
         tui_terminal_title: None,
         tui_theme: None,
         tui_pet: None,
+        tui_pet_anchor: TuiPetAnchor::Composer,
         otel: OtelConfig::default(),
     };
 
@@ -6846,6 +6892,7 @@ async fn test_precedence_fixture_with_zdr_profile() -> std::io::Result<()> {
         tui_terminal_title: None,
         tui_theme: None,
         tui_pet: None,
+        tui_pet_anchor: TuiPetAnchor::Composer,
         otel: OtelConfig::default(),
     };
 
@@ -6988,6 +7035,7 @@ async fn test_precedence_fixture_with_gpt5_profile() -> std::io::Result<()> {
         tui_terminal_title: None,
         tui_theme: None,
         tui_pet: None,
+        tui_pet_anchor: TuiPetAnchor::Composer,
         otel: OtelConfig::default(),
     };
 
