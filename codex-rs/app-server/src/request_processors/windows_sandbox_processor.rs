@@ -146,8 +146,10 @@ mod tests {
 
     #[test]
     fn determine_windows_sandbox_readiness_reports_not_configured_when_disabled() {
-        let response =
-            determine_windows_sandbox_readiness_from_state(WindowsSandboxLevel::Disabled, false);
+        let response = determine_windows_sandbox_readiness_from_state(
+            WindowsSandboxLevel::Disabled,
+            /*sandbox_setup_is_complete*/ false,
+        );
 
         assert_eq!(response.status, WindowsSandboxReadiness::NotConfigured);
     }
@@ -156,7 +158,7 @@ mod tests {
     fn determine_windows_sandbox_readiness_reports_ready_for_unelevated_mode() {
         let response = determine_windows_sandbox_readiness_from_state(
             WindowsSandboxLevel::RestrictedToken,
-            false,
+            /*sandbox_setup_is_complete*/ false,
         );
 
         assert_eq!(response.status, WindowsSandboxReadiness::Ready);
@@ -164,16 +166,20 @@ mod tests {
 
     #[test]
     fn determine_windows_sandbox_readiness_reports_ready_for_complete_elevated_mode() {
-        let response =
-            determine_windows_sandbox_readiness_from_state(WindowsSandboxLevel::Elevated, true);
+        let response = determine_windows_sandbox_readiness_from_state(
+            WindowsSandboxLevel::Elevated,
+            /*sandbox_setup_is_complete*/ true,
+        );
 
         assert_eq!(response.status, WindowsSandboxReadiness::Ready);
     }
 
     #[test]
     fn determine_windows_sandbox_readiness_reports_update_required_when_elevated_setup_is_stale() {
-        let response =
-            determine_windows_sandbox_readiness_from_state(WindowsSandboxLevel::Elevated, false);
+        let response = determine_windows_sandbox_readiness_from_state(
+            WindowsSandboxLevel::Elevated,
+            /*sandbox_setup_is_complete*/ false,
+        );
 
         assert_eq!(response.status, WindowsSandboxReadiness::UpdateRequired);
     }
