@@ -42,10 +42,11 @@ use tempfile::TempDir;
 async fn unified_exec_test(server: &wiremock::MockServer) -> Result<TestCodex> {
     let mut builder = test_codex().with_config(|config| {
         config.use_experimental_unified_exec_tool = true;
-        config
-            .features
-            .enable(Feature::UnifiedExec)
-            .expect("unified exec should enable for test");
+        let result = config.features.enable(Feature::UnifiedExec);
+        assert!(
+            result.is_ok(),
+            "unified exec should enable for test: {result:?}",
+        );
     });
     builder.build_remote_aware(server).await
 }
