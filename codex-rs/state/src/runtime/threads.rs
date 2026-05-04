@@ -573,6 +573,24 @@ ON CONFLICT(id) DO NOTHING
         Ok(result.rows_affected() > 0)
     }
 
+    pub async fn update_thread_first_user_message(
+        &self,
+        thread_id: ThreadId,
+        first_user_message: &str,
+    ) -> anyhow::Result<bool> {
+        let updated_at = self.allocate_thread_updated_at(Utc::now())?;
+        let result = sqlx::query(
+            "UPDATE threads SET updated_at = ?, updated_at_ms = ?, first_user_message = ? WHERE id = ?",
+        )
+        .bind(datetime_to_epoch_seconds(updated_at))
+        .bind(datetime_to_epoch_millis(updated_at))
+        .bind(first_user_message)
+        .bind(thread_id.to_string())
+        .execute(self.pool.as_ref())
+        .await?;
+        Ok(result.rows_affected() > 0)
+    }
+
     pub async fn touch_thread_updated_at(
         &self,
         thread_id: ThreadId,
@@ -719,7 +737,10 @@ ON CONFLICT(id) DO UPDATE SET
     sandbox_policy = excluded.sandbox_policy,
     approval_mode = excluded.approval_mode,
     tokens_used = excluded.tokens_used,
-    first_user_message = excluded.first_user_message,
+    first_user_message = CASE
+        WHEN excluded.first_user_message <> '' THEN excluded.first_user_message
+        ELSE threads.first_user_message
+    END,
     archived = excluded.archived,
     archived_at = excluded.archived_at,
     git_sha = excluded.git_sha,
@@ -1554,6 +1575,59 @@ mod tests {
         assert_eq!(
             datetime_to_epoch_millis(persisted.updated_at),
             datetime_to_epoch_millis(existing.updated_at)
+        );
+    }
+
+    #[tokio::test]
+    async fn upsert_thread_preserves_existing_first_user_message_when_rollout_has_none() {
+        let codex_home = unique_temp_dir();
+        let runtime = StateRuntime::init(codex_home.clone(), "test-provider".to_string())
+            .await
+            .expect("state db should initialize");
+        let thread_id =
+            ThreadId::from_string("00000000-0000-0000-0000-000000000792").expect("valid thread id");
+
+        let mut existing = test_thread_metadata(&codex_home, thread_id, codex_home.clone());
+        existing.first_user_message = Some("/goal improve benchmark coverage".to_string());
+        runtime
+            .upsert_thread(&existing)
+            .await
+            .expect("initial upsert should succeed");
+
+        let mut empty_rollout_metadata =
+            test_thread_metadata(&codex_home, thread_id, codex_home.clone());
+        empty_rollout_metadata.first_user_message = None;
+        runtime
+            .upsert_thread(&empty_rollout_metadata)
+            .await
+            .expect("empty rollout upsert should succeed");
+
+        let persisted = runtime
+            .get_thread(thread_id)
+            .await
+            .expect("thread should load")
+            .expect("thread should exist");
+        assert_eq!(
+            persisted.first_user_message.as_deref(),
+            Some("/goal improve benchmark coverage")
+        );
+
+        let mut real_user_metadata =
+            test_thread_metadata(&codex_home, thread_id, codex_home.clone());
+        real_user_metadata.first_user_message = Some("actual user prompt".to_string());
+        runtime
+            .upsert_thread(&real_user_metadata)
+            .await
+            .expect("real user message upsert should succeed");
+
+        let persisted = runtime
+            .get_thread(thread_id)
+            .await
+            .expect("thread should load")
+            .expect("thread should exist");
+        assert_eq!(
+            persisted.first_user_message.as_deref(),
+            Some("actual user prompt")
         );
     }
 

@@ -529,7 +529,9 @@ impl RolloutRecorder {
                 for item in &db_page.items {
                     // Rows that also appeared in the filesystem page were just validated from the
                     // rollout head. Rows only found by SQLite may be stale filter matches, so fully
-                    // reconcile those before returning the filesystem-backed page.
+                    // reconcile those before trusting the DB-backed page. This also keeps
+                    // state-managed previews, such as goal-started threads, visible even when the
+                    // rollout has session metadata but no user turn.
                     if fs_page_thread_ids.contains(&item.id) {
                         continue;
                     }
@@ -543,6 +545,23 @@ impl RolloutRecorder {
                         /*new_thread_memory_mode*/ None,
                     )
                     .await;
+                }
+                if let Some(repaired_db_page) = state_db::list_threads_db(
+                    state_db_ctx.as_deref(),
+                    codex_home,
+                    page_size,
+                    cursor,
+                    sort_key,
+                    sort_direction,
+                    allowed_sources,
+                    model_providers,
+                    cwd_filters,
+                    archived,
+                    search_term,
+                )
+                .await
+                {
+                    return Ok(repaired_db_page.into());
                 }
                 let page = page_from_filesystem_scan(fs_page, sort_direction, page_size, sort_key);
                 return Ok(fill_missing_thread_item_metadata_from_state_db(

@@ -17,8 +17,11 @@ use codex_app_server_protocol::RequestId;
 use codex_app_server_protocol::SessionSource;
 use codex_app_server_protocol::SortDirection;
 use codex_app_server_protocol::ThreadGoalSetResponse;
+use codex_app_server_protocol::ThreadItem;
 use codex_app_server_protocol::ThreadListCwdFilter;
 use codex_app_server_protocol::ThreadListResponse;
+use codex_app_server_protocol::ThreadReadParams;
+use codex_app_server_protocol::ThreadReadResponse;
 use codex_app_server_protocol::ThreadSortKey;
 use codex_app_server_protocol::ThreadSourceKind;
 use codex_app_server_protocol::ThreadStartParams;
@@ -252,6 +255,12 @@ async fn thread_list_includes_thread_started_with_goal() -> Result<()> {
     .await??;
     let _: ThreadGoalSetResponse = to_response(goal_resp)?;
 
+    timeout(
+        DEFAULT_READ_TIMEOUT,
+        mcp.read_stream_until_notification_message("thread/goal/updated"),
+    )
+    .await??;
+
     let ThreadListResponse { data, .. } = list_threads(
         &mut mcp,
         /*cursor*/ None,
@@ -271,6 +280,64 @@ async fn thread_list_includes_thread_started_with_goal() -> Result<()> {
         listed.path.as_ref().expect("listed thread path").exists(),
         "setting the first goal should materialize the rollout"
     );
+
+    let read_id = mcp
+        .send_thread_read_request(ThreadReadParams {
+            thread_id: thread.id.clone(),
+            include_turns: true,
+        })
+        .await?;
+    let read_resp: JSONRPCResponse = timeout(
+        DEFAULT_READ_TIMEOUT,
+        mcp.read_stream_until_response_message(RequestId::Integer(read_id)),
+    )
+    .await??;
+    let ThreadReadResponse { thread: read, .. } = to_response::<ThreadReadResponse>(read_resp)?;
+    assert!(
+        read.turns
+            .iter()
+            .flat_map(|turn| turn.items.iter())
+            .all(|item| !matches!(item, ThreadItem::UserMessage { .. })),
+        "goal-started preview should not create a synthetic user item"
+    );
+
+    let updated_objective = "tighten benchmark tracking";
+    let updated_goal_id = mcp
+        .send_raw_request(
+            "thread/goal/set",
+            Some(json!({
+                "threadId": thread.id.clone(),
+                "objective": updated_objective,
+                "status": "active",
+            })),
+        )
+        .await?;
+    let updated_goal_resp: JSONRPCResponse = timeout(
+        DEFAULT_READ_TIMEOUT,
+        mcp.read_stream_until_response_message(RequestId::Integer(updated_goal_id)),
+    )
+    .await??;
+    let _: ThreadGoalSetResponse = to_response(updated_goal_resp)?;
+    timeout(
+        DEFAULT_READ_TIMEOUT,
+        mcp.read_stream_until_notification_message("thread/goal/updated"),
+    )
+    .await??;
+
+    let ThreadListResponse { data, .. } = list_threads(
+        &mut mcp,
+        /*cursor*/ None,
+        Some(10),
+        Some(vec!["mock_provider".to_string()]),
+        /*source_kinds*/ None,
+        /*archived*/ None,
+    )
+    .await?;
+    let listed = data
+        .iter()
+        .find(|candidate| candidate.id == thread.id)
+        .expect("goal-started thread should remain listed for resume");
+    assert_eq!(listed.preview, format!("/goal {updated_objective}"));
 
     Ok(())
 }

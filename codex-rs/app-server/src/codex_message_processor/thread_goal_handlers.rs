@@ -57,9 +57,7 @@ impl CodexMessageProcessor {
             thread.prepare_external_goal_mutation().await;
         }
 
-        if let Some(objective) = objective
-            && running_thread.is_some()
-        {
+        let goal_preview_thread = if objective.is_some() && running_thread.is_some() {
             // `/goal` can be the first interaction on a lazily-created thread. Materialize the
             // rollout now so thread list/resume can discover it on disk.
             self.thread_store
@@ -70,48 +68,48 @@ impl CodexMessageProcessor {
                         "failed to materialize thread before setting goal: {err}"
                     ))
                 })?;
-
-            let first_user_message = state_db
-                .get_thread(thread_id)
+            self.thread_store
+                .flush_thread(thread_id)
                 .await
                 .map_err(|err| {
                     internal_error(format!(
-                        "failed to read thread metadata before setting goal: {err}"
+                        "failed to flush materialized thread before setting goal: {err}"
                     ))
-                })?
-                .and_then(|metadata| metadata.first_user_message);
-            if first_user_message
-                .as_deref()
-                .is_none_or(|message| message.trim().is_empty())
-            {
-                // Thread previews come from the first user message. If the first interaction was a
-                // goal command, seed that command into the rollout so the resume picker has a
-                // stable preview without changing threads that already have user history.
-                let item = RolloutItem::EventMsg(EventMsg::UserMessage(UserMessageEvent {
-                    message: format!("/goal {objective}"),
-                    images: None,
-                    local_images: Vec::new(),
-                    text_elements: Vec::new(),
-                }));
-                self.thread_store
-                    .append_items(StoreAppendThreadItemsParams {
-                        thread_id,
-                        items: vec![item],
-                    })
-                    .await
-                    .map_err(|err| {
-                        internal_error(format!("failed to seed goal-started thread preview: {err}"))
-                    })?;
-                self.thread_store
-                    .flush_thread(thread_id)
-                    .await
-                    .map_err(|err| {
-                        internal_error(format!(
-                            "failed to flush goal-started thread preview: {err}"
-                        ))
-                    })?;
-            }
-        }
+                })?;
+            reconcile_rollout(
+                Some(&state_db),
+                rollout_path.as_path(),
+                self.config.model_provider_id.as_str(),
+                /*builder*/ None,
+                &[],
+                /*archived_only*/ None,
+                /*new_thread_memory_mode*/ None,
+            )
+            .await;
+
+            let stored_thread = self
+                .thread_store
+                .read_thread(StoreReadThreadParams {
+                    thread_id,
+                    include_archived: true,
+                    include_history: true,
+                })
+                .await
+                .map_err(|err| {
+                    internal_error(format!(
+                        "failed to read materialized thread before setting goal: {err}"
+                    ))
+                })?;
+            let has_user_prompt = stored_thread.history.as_ref().is_some_and(|history| {
+                build_turns_from_rollout_items(&history.items)
+                    .iter()
+                    .flat_map(|turn| turn.items.iter())
+                    .any(|item| matches!(item, ThreadItem::UserMessage { .. }))
+            });
+            (!has_user_prompt).then_some(stored_thread)
+        } else {
+            None
+        };
 
         let goal = (if let Some(objective) = objective {
             let existing_goal = state_db
@@ -167,6 +165,34 @@ impl CodexMessageProcessor {
                 })
         })
         .map_err(|err| invalid_request(err.to_string()))?;
+
+        if let Some(objective) = objective
+            && let Some(stored_thread) = goal_preview_thread
+        {
+            let first_user_message = format!("/goal {objective}");
+            match state_db
+                .update_thread_first_user_message(thread_id, &first_user_message)
+                .await
+            {
+                Ok(true) => {}
+                Ok(false) => {
+                    if let Err(err) = upsert_goal_preview_thread_metadata(
+                        state_db.as_ref(),
+                        &stored_thread,
+                        &first_user_message,
+                        self.config.model_provider_id.as_str(),
+                    )
+                    .await
+                    {
+                        warn!("failed to seed goal-started thread metadata: {err}");
+                    }
+                }
+                Err(err) => {
+                    warn!("failed to seed goal-started thread preview: {err}");
+                }
+            }
+        }
+
         let goal_status = goal.status;
         let goal = api_thread_goal_from_state(goal);
         self.outgoing
@@ -372,6 +398,47 @@ impl CodexMessageProcessor {
             ))
             .await;
     }
+}
+
+async fn upsert_goal_preview_thread_metadata(
+    state_db: &StateRuntime,
+    stored_thread: &StoredThread,
+    first_user_message: &str,
+    default_provider: &str,
+) -> anyhow::Result<()> {
+    let rollout_path = stored_thread.rollout_path.clone().ok_or_else(|| {
+        anyhow::anyhow!(
+            "cannot seed preview for thread {} without rollout path",
+            stored_thread.thread_id
+        )
+    })?;
+    let mut builder = ThreadMetadataBuilder::new(
+        stored_thread.thread_id,
+        rollout_path,
+        stored_thread.created_at,
+        stored_thread.source.clone(),
+    );
+    builder.updated_at = Some(Utc::now());
+    builder.agent_nickname = stored_thread.agent_nickname.clone();
+    builder.agent_role = stored_thread.agent_role.clone();
+    builder.agent_path = stored_thread.agent_path.clone();
+    builder.model_provider = Some(stored_thread.model_provider.clone());
+    builder.cwd = stored_thread.cwd.clone();
+    builder.cli_version = Some(stored_thread.cli_version.clone());
+    builder.sandbox_policy = stored_thread.sandbox_policy.clone();
+    builder.approval_mode = stored_thread.approval_mode;
+    builder.archived_at = stored_thread.archived_at;
+    if let Some(git_info) = stored_thread.git_info.as_ref() {
+        builder.git_sha = git_info.commit_hash.as_ref().map(|sha| sha.0.clone());
+        builder.git_branch = git_info.branch.clone();
+        builder.git_origin_url = git_info.repository_url.clone();
+    }
+
+    let mut metadata = builder.build(default_provider);
+    metadata.model = stored_thread.model.clone();
+    metadata.reasoning_effort = stored_thread.reasoning_effort;
+    metadata.first_user_message = Some(first_user_message.to_string());
+    state_db.upsert_thread(&metadata).await
 }
 
 fn validate_goal_budget(value: Option<i64>) -> Result<(), String> {
