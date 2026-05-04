@@ -663,6 +663,20 @@ fn windows_restricted_token_supports_full_read_split_write_read_carveouts() {
             read_roots_include_platform_defaults: false,
             write_roots_override: None,
             additional_deny_write_paths: expected_deny_write_paths,
+            protected_metadata_targets: vec![
+                WindowsProtectedMetadataTarget {
+                    path: cwd.join(".agents"),
+                    mode: WindowsProtectedMetadataMode::MissingCreationMonitor,
+                },
+                WindowsProtectedMetadataTarget {
+                    path: cwd.join(".codex"),
+                    mode: WindowsProtectedMetadataMode::MissingCreationMonitor,
+                },
+                WindowsProtectedMetadataTarget {
+                    path: cwd.join(".git"),
+                    mode: WindowsProtectedMetadataMode::MissingCreationMonitor,
+                },
+            ],
         }))
     );
 }
@@ -700,6 +714,7 @@ fn windows_elevated_supports_split_restricted_read_roots() {
             read_roots_include_platform_defaults: false,
             write_roots_override: None,
             additional_deny_write_paths: vec![],
+            protected_metadata_targets: vec![],
         }))
     );
 }
@@ -707,6 +722,9 @@ fn windows_elevated_supports_split_restricted_read_roots() {
 #[test]
 fn windows_elevated_supports_split_write_read_carveouts() {
     let temp_dir = tempfile::TempDir::new().expect("tempdir");
+    let expected_root = dunce::canonicalize(temp_dir.path())
+        .expect("canonical temp dir")
+        .abs();
     let docs = temp_dir.path().join("docs");
     std::fs::create_dir_all(&docs).expect("create docs");
     let expected_docs = dunce::canonicalize(&docs).expect("canonical docs");
@@ -756,6 +774,146 @@ fn windows_elevated_supports_split_write_read_carveouts() {
             additional_deny_write_paths: vec![
                 codex_utils_absolute_path::AbsolutePathBuf::from_absolute_path(expected_docs)
                     .expect("absolute docs"),
+            ],
+            protected_metadata_targets: vec![
+                WindowsProtectedMetadataTarget {
+                    path: expected_root.join(".agents"),
+                    mode: WindowsProtectedMetadataMode::MissingCreationMonitor,
+                },
+                WindowsProtectedMetadataTarget {
+                    path: expected_root.join(".codex"),
+                    mode: WindowsProtectedMetadataMode::MissingCreationMonitor,
+                },
+                WindowsProtectedMetadataTarget {
+                    path: expected_root.join(".git"),
+                    mode: WindowsProtectedMetadataMode::MissingCreationMonitor,
+                },
+            ],
+        }))
+    );
+}
+
+#[test]
+fn windows_metadata_plan_marks_existing_metadata_for_deny() {
+    let temp_dir = tempfile::TempDir::new().expect("tempdir");
+    let cwd = dunce::canonicalize(temp_dir.path())
+        .expect("canonical temp dir")
+        .abs();
+    std::fs::create_dir_all(cwd.join(".git").as_path()).expect("create .git");
+    let policy = SandboxPolicy::WorkspaceWrite {
+        writable_roots: vec![],
+        network_access: false,
+        exclude_tmpdir_env_var: true,
+        exclude_slash_tmp: true,
+    };
+    let file_system_policy = FileSystemSandboxPolicy::restricted(vec![
+        codex_protocol::permissions::FileSystemSandboxEntry {
+            path: codex_protocol::permissions::FileSystemPath::Special {
+                value: codex_protocol::permissions::FileSystemSpecialPath::Root,
+            },
+            access: codex_protocol::permissions::FileSystemAccessMode::Read,
+        },
+        codex_protocol::permissions::FileSystemSandboxEntry {
+            path: codex_protocol::permissions::FileSystemPath::Special {
+                value: codex_protocol::permissions::FileSystemSpecialPath::project_roots(
+                    /*subpath*/ None,
+                ),
+            },
+            access: codex_protocol::permissions::FileSystemAccessMode::Write,
+        },
+    ]);
+
+    assert_eq!(
+        resolve_windows_elevated_filesystem_overrides(
+            SandboxType::WindowsRestrictedToken,
+            &policy,
+            &file_system_policy,
+            NetworkSandboxPolicy::Restricted,
+            &cwd,
+            /*use_windows_elevated_backend*/ true,
+        ),
+        Ok(Some(WindowsSandboxFilesystemOverrides {
+            read_roots_override: None,
+            read_roots_include_platform_defaults: false,
+            write_roots_override: None,
+            additional_deny_write_paths: vec![],
+            protected_metadata_targets: vec![
+                WindowsProtectedMetadataTarget {
+                    path: cwd.join(".agents"),
+                    mode: WindowsProtectedMetadataMode::MissingCreationMonitor,
+                },
+                WindowsProtectedMetadataTarget {
+                    path: cwd.join(".codex"),
+                    mode: WindowsProtectedMetadataMode::MissingCreationMonitor,
+                },
+                WindowsProtectedMetadataTarget {
+                    path: cwd.join(".git"),
+                    mode: WindowsProtectedMetadataMode::ExistingDeny,
+                },
+            ],
+        }))
+    );
+}
+
+#[test]
+fn windows_metadata_plan_does_not_materialize_nested_missing_git() {
+    let temp_dir = tempfile::TempDir::new().expect("tempdir");
+    let repo = dunce::canonicalize(temp_dir.path())
+        .expect("canonical temp dir")
+        .abs();
+    std::fs::create_dir_all(repo.join(".git").as_path()).expect("create parent .git");
+    let cwd = repo.join("child");
+    std::fs::create_dir_all(cwd.as_path()).expect("create child workspace");
+    let policy = SandboxPolicy::WorkspaceWrite {
+        writable_roots: vec![],
+        network_access: false,
+        exclude_tmpdir_env_var: true,
+        exclude_slash_tmp: true,
+    };
+    let file_system_policy = FileSystemSandboxPolicy::restricted(vec![
+        codex_protocol::permissions::FileSystemSandboxEntry {
+            path: codex_protocol::permissions::FileSystemPath::Special {
+                value: codex_protocol::permissions::FileSystemSpecialPath::Root,
+            },
+            access: codex_protocol::permissions::FileSystemAccessMode::Read,
+        },
+        codex_protocol::permissions::FileSystemSandboxEntry {
+            path: codex_protocol::permissions::FileSystemPath::Special {
+                value: codex_protocol::permissions::FileSystemSpecialPath::project_roots(
+                    /*subpath*/ None,
+                ),
+            },
+            access: codex_protocol::permissions::FileSystemAccessMode::Write,
+        },
+    ]);
+
+    assert_eq!(
+        resolve_windows_elevated_filesystem_overrides(
+            SandboxType::WindowsRestrictedToken,
+            &policy,
+            &file_system_policy,
+            NetworkSandboxPolicy::Restricted,
+            &cwd,
+            /*use_windows_elevated_backend*/ true,
+        ),
+        Ok(Some(WindowsSandboxFilesystemOverrides {
+            read_roots_override: None,
+            read_roots_include_platform_defaults: false,
+            write_roots_override: None,
+            additional_deny_write_paths: vec![],
+            protected_metadata_targets: vec![
+                WindowsProtectedMetadataTarget {
+                    path: cwd.join(".agents"),
+                    mode: WindowsProtectedMetadataMode::MissingCreationMonitor,
+                },
+                WindowsProtectedMetadataTarget {
+                    path: cwd.join(".codex"),
+                    mode: WindowsProtectedMetadataMode::MissingCreationMonitor,
+                },
+                WindowsProtectedMetadataTarget {
+                    path: cwd.join(".git"),
+                    mode: WindowsProtectedMetadataMode::MissingCreationMonitor,
+                },
             ],
         }))
     );
