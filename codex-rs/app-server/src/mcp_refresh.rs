@@ -179,7 +179,8 @@ mod tests {
             SessionSource::Exec,
             Arc::new(EnvironmentManager::default_for_tests()),
             /*analytics_events_client*/ None,
-            thread_store_from_config(&good_config),
+            thread_store_from_config(&good_config, /*state_db*/ None),
+            /*state_db*/ None,
         ));
         thread_manager.start_thread(good_config).await?;
         thread_manager.start_thread(bad_config).await?;
