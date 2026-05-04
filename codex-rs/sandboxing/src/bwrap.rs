@@ -93,7 +93,7 @@ fn system_bwrap_has_user_namespace_access(system_bwrap_path: &Path, timeout: Dur
     loop {
         match child.try_wait() {
             Ok(Some(status)) => {
-                let stderr = child.stderr.take().map_or_else(Vec::new, |mut stderr| {
+                let stderr = child.stderr.take().map_or_else(Vec::new, |stderr| {
                     let fd = stderr.as_raw_fd();
                     let flags = unsafe { libc::fcntl(fd, libc::F_GETFL) };
                     if flags < 0
