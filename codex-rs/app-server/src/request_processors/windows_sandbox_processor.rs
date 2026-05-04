@@ -109,6 +109,12 @@ impl WindowsSandboxRequestProcessor {
 }
 
 fn determine_windows_sandbox_readiness(config: &Config) -> WindowsSandboxReadinessResponse {
+    if !cfg!(windows) {
+        return WindowsSandboxReadinessResponse {
+            status: WindowsSandboxReadiness::NotConfigured,
+        };
+    }
+
     determine_windows_sandbox_readiness_from_state(
         WindowsSandboxLevel::from_config(config),
         sandbox_setup_is_complete(config.codex_home.as_path()),
