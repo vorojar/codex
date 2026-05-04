@@ -207,7 +207,7 @@ impl LazyRemoteExecServerClient {
         self.client
             .get_or_try_init(|| {
                 let transport = self.transport.clone();
-                async move { transport.connect_for_environment().await }
+                async move { ExecServerClient::connect_for_environment(transport).await }
             })
             .await
             .cloned()

@@ -21,7 +21,6 @@ use tracing::warn;
 
 use crate::ExecServerClient;
 use crate::ExecServerError;
-use crate::client_api::ExecServerTransport;
 use crate::client_api::RemoteExecServerConnectArgs;
 use crate::client_api::StdioExecServerConnectArgs;
 use crate::connection::JsonRpcConnection;
@@ -32,11 +31,13 @@ const ENVIRONMENT_INITIALIZE_TIMEOUT: Duration = Duration::from_secs(5);
 #[cfg(unix)]
 const STDIO_CHILD_TERM_GRACE_PERIOD: Duration = Duration::from_millis(500);
 
-impl ExecServerTransport {
-    pub(crate) async fn connect_for_environment(self) -> Result<ExecServerClient, ExecServerError> {
-        match self {
-            ExecServerTransport::WebSocketUrl(websocket_url) => {
-                ExecServerClient::connect_websocket(RemoteExecServerConnectArgs {
+impl ExecServerClient {
+    pub(crate) async fn connect_for_environment(
+        transport: crate::client_api::ExecServerTransport,
+    ) -> Result<Self, ExecServerError> {
+        match transport {
+            crate::client_api::ExecServerTransport::WebSocketUrl(websocket_url) => {
+                Self::connect_websocket(RemoteExecServerConnectArgs {
                     websocket_url,
                     client_name: ENVIRONMENT_CLIENT_NAME.to_string(),
                     connect_timeout: ENVIRONMENT_CONNECT_TIMEOUT,
@@ -45,8 +46,8 @@ impl ExecServerTransport {
                 })
                 .await
             }
-            ExecServerTransport::StdioShellCommand(shell_command) => {
-                ExecServerClient::connect_stdio_command(StdioExecServerConnectArgs {
+            crate::client_api::ExecServerTransport::StdioShellCommand(shell_command) => {
+                Self::connect_stdio_command(StdioExecServerConnectArgs {
                     shell_command,
                     client_name: ENVIRONMENT_CLIENT_NAME.to_string(),
                     initialize_timeout: ENVIRONMENT_INITIALIZE_TIMEOUT,
@@ -56,9 +57,7 @@ impl ExecServerTransport {
             }
         }
     }
-}
 
-impl ExecServerClient {
     pub async fn connect_websocket(
         args: RemoteExecServerConnectArgs,
     ) -> Result<Self, ExecServerError> {

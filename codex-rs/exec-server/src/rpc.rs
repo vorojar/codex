@@ -243,8 +243,12 @@ struct TransportLifetime {
 
 impl RpcClient {
     pub(crate) fn new(connection: JsonRpcConnection) -> (Self, mpsc::Receiver<RpcClientEvent>) {
-        let (write_tx, mut incoming_rx, disconnected_rx, transport_tasks, transport_lifetime) =
-            connection.into_parts();
+        let connection_parts = connection.into_parts();
+        let write_tx = connection_parts.outgoing_tx;
+        let mut incoming_rx = connection_parts.incoming_rx;
+        let disconnected_rx = connection_parts.disconnected_rx;
+        let transport_tasks = connection_parts.task_handles;
+        let transport_lifetime = connection_parts.transport_lifetime;
         let pending = Arc::new(Mutex::new(HashMap::<RequestId, PendingRequest>::new()));
         let (event_tx, event_rx) = mpsc::channel(128);
 
