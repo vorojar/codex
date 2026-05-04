@@ -26,6 +26,7 @@ windows_modules!(
     path_normalization,
     policy,
     process,
+    protected_metadata,
     token,
     wfp,
     wfp_setup,
