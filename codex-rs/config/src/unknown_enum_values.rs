@@ -21,8 +21,17 @@ use codex_protocol::config_types::WebSearchContextSize;
 use codex_protocol::config_types::WebSearchMode;
 use codex_protocol::openai_models::ReasoningEffort;
 use codex_protocol::protocol::AskForApproval;
+use serde::Deserialize;
 use serde::de::DeserializeOwned;
 use toml::Value as TomlValue;
+
+#[derive(Debug, Deserialize)]
+#[serde(untagged)]
+enum LenientEnum<T> {
+    Known(T),
+    Unknown(String),
+    Other(TomlValue),
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum PathSegment {
@@ -117,17 +126,16 @@ where
 {
     let paths = matching_paths(root, path);
     for value_path in paths {
-        let Some(raw_value) = value_at_path(root, &value_path)
-            .and_then(TomlValue::as_str)
-            .map(str::to_string)
-        else {
+        let Some(value) = value_at_path(root, &value_path).cloned() else {
             continue;
         };
-        if TomlValue::String(raw_value.clone()).try_into::<T>().is_ok() {
-            continue;
-        }
-
-        warn_and_remove(root, &value_path, &value_path, &raw_value, warnings);
+        match value.try_into::<LenientEnum<T>>() {
+            Ok(LenientEnum::Known(_)) => {}
+            Ok(LenientEnum::Unknown(raw_value)) => {
+                warn_and_remove(root, &value_path, &value_path, &raw_value, warnings);
+            }
+            Ok(LenientEnum::Other(_)) | Err(_) => {}
+        };
     }
 }
 
@@ -143,21 +151,23 @@ fn sanitize_tagged_enum<T>(
     for parent_path in parent_paths {
         let mut tag_path = parent_path.clone();
         tag_path.push(tag_key.to_string());
-        let Some(raw_value) = value_at_path(root, &tag_path)
-            .and_then(TomlValue::as_str)
-            .map(str::to_string)
-        else {
+        let Some(value) = value_at_path(root, &parent_path).cloned() else {
             continue;
         };
-        if value_at_path(root, &parent_path)
-            .cloned()
-            .and_then(|value| value.try_into::<T>().ok())
-            .is_some()
-        {
-            continue;
-        }
-
-        warn_and_remove(root, &tag_path, &parent_path, &raw_value, warnings);
+        match value.try_into::<LenientEnum<T>>() {
+            Ok(LenientEnum::Known(_)) => {}
+            Ok(LenientEnum::Other(table_value)) => {
+                let Some(raw_value) = table_value
+                    .get(tag_key)
+                    .and_then(TomlValue::as_str)
+                    .map(str::to_string)
+                else {
+                    continue;
+                };
+                warn_and_remove(root, &tag_path, &parent_path, &raw_value, warnings);
+            }
+            Ok(LenientEnum::Unknown(_)) | Err(_) => {}
+        };
     }
 }
 
