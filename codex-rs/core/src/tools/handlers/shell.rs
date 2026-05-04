@@ -465,7 +465,7 @@ impl ShellHandler {
         let requested_additional_permissions = additional_permissions.clone();
         let effective_additional_permissions = apply_granted_turn_permissions(
             session.as_ref(),
-            turn.cwd.as_path(),
+            exec_params.cwd.as_path(),
             exec_params.sandbox_permissions,
             additional_permissions,
         )
@@ -551,7 +551,7 @@ impl ShellHandler {
                 approval_policy: turn.approval_policy.value(),
                 permission_profile: turn.permission_profile(),
                 file_system_sandbox_policy: &file_system_sandbox_policy,
-                sandbox_cwd: turn.cwd.as_path(),
+                sandbox_cwd: exec_params.cwd.as_path(),
                 sandbox_permissions: if effective_additional_permissions.permissions_preapproved {
                     codex_protocol::models::SandboxPermissions::UseDefault
                 } else {
