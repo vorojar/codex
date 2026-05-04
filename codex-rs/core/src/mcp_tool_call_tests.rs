@@ -1,5 +1,4 @@
 use super::*;
-use crate::ClientCompatibilityFlags;
 use crate::McpElicitationCompatibility;
 use crate::config::ConfigBuilder;
 use crate::session::tests::make_session_and_context;
@@ -2287,10 +2286,9 @@ async fn prompt_mode_waits_for_approval_when_annotations_do_not_require_approval
             .features
             .enable(Feature::ToolCallMcpElicitation)
             .expect("test setup should allow enabling tool call MCP elicitation");
+        config.client_compatibility_flags.mcp_elicitation =
+            McpElicitationCompatibility::CodexAppsOnly;
         turn_context.config = Arc::new(config);
-        turn_context.client_compatibility_flags = ClientCompatibilityFlags {
-            mcp_elicitation: McpElicitationCompatibility::CodexAppsOnly,
-        };
     }
     {
         let mut active_turn = session.active_turn.lock().await;

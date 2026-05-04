@@ -26,7 +26,6 @@ use futures::FutureExt;
 use pretty_assertions::assert_eq;
 use rmcp::model::CreateElicitationRequestParams;
 use rmcp::model::ElicitationAction;
-use rmcp::model::ElicitationCapability;
 use rmcp::model::JsonObject;
 use rmcp::model::Meta;
 use rmcp::model::NumberOrString;
@@ -292,10 +291,7 @@ async fn codex_apps_only_custom_server_elicitation_is_declined_without_event() {
 
     assert_eq!(response.action, ElicitationAction::Decline);
     assert_eq!(response.content, None);
-    assert!(matches!(
-        rx_event.try_recv(),
-        Err(async_channel::TryRecvError::Empty)
-    ));
+    assert!(rx_event.try_recv().is_err());
 }
 
 #[test]
@@ -847,12 +843,11 @@ fn elicitation_capability_uses_2025_06_18_shape_for_all_servers() {
 fn codex_apps_only_elicitation_capability_suppresses_custom_servers() {
     let compatibility = McpElicitationCompatibility::CodexAppsOnly;
     assert_eq!(
-        elicitation_capability_for_server(CODEX_APPS_MCP_SERVER_NAME, compatibility),
-        Some(ElicitationCapability::default())
-    );
-    assert_eq!(
-        elicitation_capability_for_server("custom_mcp", compatibility),
-        None
+        (
+            elicitation_capability_for_server(CODEX_APPS_MCP_SERVER_NAME, compatibility).is_some(),
+            elicitation_capability_for_server("custom_mcp", compatibility).is_some(),
+        ),
+        (true, false)
     );
 }
 

@@ -219,14 +219,15 @@ impl CodexThread {
         &self,
         app_server_client_name: Option<String>,
         app_server_client_version: Option<String>,
-    ) -> ConstraintResult<()> {
+        client_compatibility_flags: ClientCompatibilityFlags,
+    ) {
         self.codex
-            .set_app_server_client_info(app_server_client_name, app_server_client_version)
+            .set_app_server_client_info(
+                app_server_client_name,
+                app_server_client_version,
+                client_compatibility_flags,
+            )
             .await
-    }
-
-    pub async fn client_compatibility_flags(&self) -> ClientCompatibilityFlags {
-        self.codex.session.client_compatibility_flags().await
     }
 
     /// Validate persistent turn context overrides without committing them.

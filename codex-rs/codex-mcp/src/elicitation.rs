@@ -37,7 +37,7 @@ pub(crate) struct ElicitationRequestManager {
     requests: Arc<Mutex<ResponderMap>>,
     pub(crate) approval_policy: Arc<StdMutex<AskForApproval>>,
     pub(crate) permission_profile: Arc<StdMutex<PermissionProfile>>,
-    compatibility: McpElicitationCompatibility,
+    pub(crate) compatibility: McpElicitationCompatibility,
 }
 
 impl ElicitationRequestManager {
@@ -191,10 +191,6 @@ impl ElicitationRequestManager {
             .boxed()
         })
     }
-
-    pub(crate) fn compatibility(&self) -> McpElicitationCompatibility {
-        self.compatibility
-    }
 }
 
 /// Compatibility policy for the MCP elicitation capability surface.
@@ -209,10 +205,7 @@ pub enum McpElicitationCompatibility {
 
 impl McpElicitationCompatibility {
     pub fn allows_server_elicitation(self, server_name: &str) -> bool {
-        match self {
-            Self::Default => true,
-            Self::CodexAppsOnly => server_name == CODEX_APPS_MCP_SERVER_NAME,
-        }
+        self == Self::Default || server_name == CODEX_APPS_MCP_SERVER_NAME
     }
 }
 

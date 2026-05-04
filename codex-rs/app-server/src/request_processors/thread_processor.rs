@@ -597,21 +597,6 @@ impl ThreadRequestProcessor {
             })
     }
 
-    async fn set_app_server_client_info(
-        thread: &CodexThread,
-        app_server_client_name: Option<String>,
-        app_server_client_version: Option<String>,
-    ) -> Result<(), JSONRPCErrorError> {
-        thread
-            .set_app_server_client_info(app_server_client_name, app_server_client_version)
-            .await
-            .map_err(|err| JSONRPCErrorError {
-                code: INTERNAL_ERROR_CODE,
-                message: format!("failed to set app server client info: {err}"),
-                data: None,
-            })
-    }
-
     async fn finalize_thread_teardown(&self, thread_id: ThreadId) {
         self.pending_thread_unloads.lock().await.remove(&thread_id);
         self.outgoing
@@ -1003,12 +988,13 @@ impl ThreadRequestProcessor {
                 err => internal_error(format!("error creating thread: {err}")),
             })?;
 
-        Self::set_app_server_client_info(
-            thread.as_ref(),
-            app_server_client_name,
-            app_server_client_version,
-        )
-        .await?;
+        thread
+            .set_app_server_client_info(
+                app_server_client_name,
+                app_server_client_version,
+                client_compatibility_flags,
+            )
+            .await;
 
         let config_snapshot = thread
             .config_snapshot()

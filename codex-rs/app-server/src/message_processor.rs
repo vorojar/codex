@@ -195,15 +195,12 @@ fn client_compatibility_flags_for_app_server_client(
     client_name: &str,
     client_version: &str,
 ) -> ClientCompatibilityFlags {
-    // Xcode 26.4 shipped against CLI behavior from before PR #17043, when
-    // Codex only advertised MCP elicitation support to the built-in
-    // `codex_apps` server. If Codex advertises custom-server elicitation
-    // support to that client family, those requests become new app-server
-    // events/messages that the client cannot handle. Preserve the old
-    // capability surface for that client only.
-    //
-    // TODO: Remove this Xcode 26.4 compatibility path once that client version
-    // has aged out of support.
+    // Compatibility hack for Xcode 26.4: that client shipped against the
+    // pre-PR #17043 MCP surface, where only `codex_apps` advertised elicitation
+    // support. Advertising custom-server elicitations creates app-server
+    // events/messages that Xcode 26.4 cannot handle, so keep that client on the
+    // old capability surface.
+    // TODO: Remove once Xcode 26.4 ages out of support.
     let mcp_elicitation =
         if client_name.eq_ignore_ascii_case("xcode") && client_version.starts_with("26.4") {
             McpElicitationCompatibility::CodexAppsOnly
@@ -1141,6 +1138,7 @@ impl MessageProcessor {
                         params,
                         app_server_client_name.clone(),
                         client_version.clone(),
+                        client_compatibility_flags,
                     )
                     .await
             }
@@ -1307,24 +1305,22 @@ mod client_compatibility_tests {
 
     #[test]
     fn xcode_26_4_uses_legacy_mcp_elicitation_compatibility() {
-        fn mcp_elicitation(name: &str, version: &str) -> McpElicitationCompatibility {
-            client_compatibility_flags_for_app_server_client(name, version).mcp_elicitation
+        use McpElicitationCompatibility::CodexAppsOnly;
+        use McpElicitationCompatibility::Default as DefaultCompatibility;
+
+        let cases = [
+            ("Xcode", "26.4", CodexAppsOnly),
+            ("xcode", "26.4.1", CodexAppsOnly),
+            ("Xcode", "26.4-beta", CodexAppsOnly),
+            ("Xcode", "26.3", DefaultCompatibility),
+            ("Xcode", "26.5", DefaultCompatibility),
+            ("codex-vscode", "26.4", DefaultCompatibility),
+        ];
+        for (name, version, expected) in cases {
+            assert_eq!(
+                client_compatibility_flags_for_app_server_client(name, version).mcp_elicitation,
+                expected
+            );
         }
-        assert_eq!(
-            mcp_elicitation("xcode", "26.4.1"),
-            McpElicitationCompatibility::CodexAppsOnly
-        );
-        assert_eq!(
-            mcp_elicitation("Xcode", "26.4-beta"),
-            McpElicitationCompatibility::CodexAppsOnly
-        );
-        assert_eq!(
-            mcp_elicitation("Xcode", "26.5"),
-            McpElicitationCompatibility::Default
-        );
-        assert_eq!(
-            mcp_elicitation("codex-vscode", "26.4"),
-            McpElicitationCompatibility::Default
-        );
     }
 }

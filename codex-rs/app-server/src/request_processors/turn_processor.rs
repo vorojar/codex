@@ -51,12 +51,14 @@ impl TurnRequestProcessor {
         params: TurnStartParams,
         app_server_client_name: Option<String>,
         app_server_client_version: Option<String>,
+        client_compatibility_flags: ClientCompatibilityFlags,
     ) -> Result<Option<ClientResponsePayload>, JSONRPCErrorError> {
         self.turn_start_inner(
             request_id,
             params,
             app_server_client_name,
             app_server_client_version,
+            client_compatibility_flags,
         )
         .await
         .map(|response| Some(response.into()))
@@ -332,6 +334,7 @@ impl TurnRequestProcessor {
         params: TurnStartParams,
         app_server_client_name: Option<String>,
         app_server_client_version: Option<String>,
+        client_compatibility_flags: ClientCompatibilityFlags,
     ) -> Result<TurnStartResponse, JSONRPCErrorError> {
         if let Err(error) = Self::validate_v2_input_limit(&params.input) {
             self.track_error_response(
@@ -347,15 +350,13 @@ impl TurnRequestProcessor {
                 .inspect_err(|error| {
                     self.track_error_response(&request_id, error, /*error_type*/ None);
                 })?;
-        Self::set_app_server_client_info(
-            thread.as_ref(),
-            app_server_client_name,
-            app_server_client_version,
-        )
-        .await
-        .inspect_err(|error| {
-            self.track_error_response(&request_id, error, /*error_type*/ None);
-        })?;
+        thread
+            .set_app_server_client_info(
+                app_server_client_name,
+                app_server_client_version,
+                client_compatibility_flags,
+            )
+            .await;
 
         let collaboration_mode = params
             .collaboration_mode
@@ -554,21 +555,6 @@ impl TurnRequestProcessor {
                 err => internal_error(format!("failed to inject response items: {err}")),
             })?;
         Ok(ThreadInjectItemsResponse {})
-    }
-
-    async fn set_app_server_client_info(
-        thread: &CodexThread,
-        app_server_client_name: Option<String>,
-        app_server_client_version: Option<String>,
-    ) -> Result<(), JSONRPCErrorError> {
-        thread
-            .set_app_server_client_info(app_server_client_name, app_server_client_version)
-            .await
-            .map_err(|err| JSONRPCErrorError {
-                code: INTERNAL_ERROR_CODE,
-                message: format!("failed to set app server client info: {err}"),
-                data: None,
-            })
     }
 
     async fn turn_steer_inner(
@@ -904,7 +890,7 @@ impl TurnRequestProcessor {
         };
 
         let mut config = self.config.as_ref().clone();
-        config.client_compatibility_flags = parent_thread.client_compatibility_flags().await;
+        config.client_compatibility_flags = parent_thread.config().await.client_compatibility_flags;
         if let Some(review_model) = &config.review_model {
             config.model = Some(review_model.clone());
         }

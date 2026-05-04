@@ -750,14 +750,14 @@ impl Codex {
         &self,
         app_server_client_name: Option<String>,
         app_server_client_version: Option<String>,
-    ) -> ConstraintResult<()> {
-        self.session
-            .update_settings(SessionSettingsUpdate {
-                app_server_client_name,
-                app_server_client_version,
-                ..Default::default()
-            })
-            .await
+        client_compatibility_flags: ClientCompatibilityFlags,
+    ) {
+        let mut state = self.session.state.lock().await;
+        state.session_configuration.app_server_client_name = app_server_client_name;
+        state.session_configuration.app_server_client_version = app_server_client_version;
+        let mut config = (*state.session_configuration.original_config_do_not_use).clone();
+        config.client_compatibility_flags = client_compatibility_flags;
+        state.session_configuration.original_config_do_not_use = Arc::new(config);
     }
 
     pub(crate) async fn agent_status(&self) -> AgentStatus {
@@ -835,15 +835,6 @@ async fn thread_title_from_state_db(
 }
 
 impl Session {
-    pub(crate) async fn client_compatibility_flags(&self) -> ClientCompatibilityFlags {
-        self.state
-            .lock()
-            .await
-            .session_configuration
-            .original_config_do_not_use
-            .client_compatibility_flags
-    }
-
     pub(crate) async fn app_server_client_metadata(&self) -> AppServerClientMetadata {
         let state = self.state.lock().await;
         AppServerClientMetadata {

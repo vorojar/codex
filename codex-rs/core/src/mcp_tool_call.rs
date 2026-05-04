@@ -1101,6 +1101,7 @@ async fn maybe_request_mcp_tool_approval(
         .features
         .enabled(Feature::ToolCallMcpElicitation)
         && turn_context
+            .config
             .client_compatibility_flags
             .mcp_elicitation
             .allows_server_elicitation(&invocation.server);

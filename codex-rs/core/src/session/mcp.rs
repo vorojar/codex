@@ -252,7 +252,10 @@ impl Session {
             codex_apps_tools_cache_key(auth.as_ref()),
             tool_plugin_provenance,
             auth.as_ref(),
-            turn_context.client_compatibility_flags.mcp_elicitation,
+            turn_context
+                .config
+                .client_compatibility_flags
+                .mcp_elicitation,
         )
         .await;
         {
