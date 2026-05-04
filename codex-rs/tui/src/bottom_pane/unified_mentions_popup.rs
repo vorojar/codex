@@ -7,6 +7,7 @@ use crate::bottom_pane::popup_consts::MAX_POPUP_ROWS;
 use crate::bottom_pane::scroll_state::ScrollState;
 use crate::key_hint::KeyBinding;
 
+use super::unified_mentions_render::PopupFooterState;
 use super::unified_mentions_render::render_popup;
 use super::unified_mentions_search::Candidate;
 use super::unified_mentions_search::SearchMode;
@@ -131,9 +132,11 @@ impl WidgetRef for UnifiedMentionsPopup {
             &self.rows(),
             &self.state,
             self.file_search.empty_message(),
-            self.search_mode,
-            self.remembered_search_mode,
-            self.toggle_remember_search_mode_key,
+            PopupFooterState {
+                search_mode: self.search_mode,
+                remembered_search_mode: self.remembered_search_mode,
+                toggle_remember_search_mode_key: self.toggle_remember_search_mode_key,
+            },
         );
     }
 }

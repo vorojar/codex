@@ -36,15 +36,20 @@ const FOOTER_NEXT_MODE_KEY: KeyCode = KeyCode::Right;
 const FILESYSTEM_ACCENT_COLOR: Color = Color::Cyan;
 const PLUGIN_ACCENT_COLOR: Color = Color::Magenta;
 
+#[derive(Clone, Copy)]
+pub(super) struct PopupFooterState {
+    pub(super) search_mode: SearchMode,
+    pub(super) remembered_search_mode: Option<SearchMode>,
+    pub(super) toggle_remember_search_mode_key: Option<KeyBinding>,
+}
+
 pub(super) fn render_popup(
     area: Rect,
     buf: &mut Buffer,
     rows: &[SearchResult],
     state: &ScrollState,
     empty_message: &str,
-    search_mode: SearchMode,
-    remembered_search_mode: Option<SearchMode>,
-    toggle_remember_search_mode_key: Option<KeyBinding>,
+    footer: PopupFooterState,
 ) {
     let (list_area, hint_area) = if area.height > 2 {
         let hint_area = Rect {
@@ -84,13 +89,7 @@ pub(super) fn render_popup(
             width: hint_area.width.saturating_sub(POPUP_HORIZONTAL_INSET),
             height: hint_area.height,
         };
-        render_footer(
-            hint_area,
-            buf,
-            search_mode,
-            remembered_search_mode,
-            toggle_remember_search_mode_key,
-        );
+        render_footer(hint_area, buf, footer);
     }
 }
 
@@ -320,19 +319,13 @@ fn styled_text_spans(
     spans
 }
 
-fn render_footer(
-    area: Rect,
-    buf: &mut Buffer,
-    search_mode: SearchMode,
-    remembered_search_mode: Option<SearchMode>,
-    toggle_remember_search_mode_key: Option<KeyBinding>,
-) {
-    let right_line = search_mode_indicator_line(search_mode, remembered_search_mode);
+fn render_footer(area: Rect, buf: &mut Buffer, footer: PopupFooterState) {
+    let right_line = search_mode_indicator_line(footer.search_mode, footer.remembered_search_mode);
     let right_width = right_line.width() as u16;
     let gap = u16::from(right_width > 0);
     let left_width = area.width.saturating_sub(right_width).saturating_sub(gap);
     let left_line = truncate_line_with_ellipsis_if_overflow(
-        footer_hint_line(toggle_remember_search_mode_key),
+        footer_hint_line(footer.toggle_remember_search_mode_key),
         left_width as usize,
     );
     left_line.render(
@@ -459,9 +452,11 @@ mod tests {
             rows,
             &state,
             "no matches",
-            search_mode,
-            remembered_search_mode,
-            Some(key_hint::alt(KeyCode::Char('r'))),
+            PopupFooterState {
+                search_mode,
+                remembered_search_mode,
+                toggle_remember_search_mode_key: Some(key_hint::alt(KeyCode::Char('r'))),
+            },
         );
 
         let popup = (0..area.height)
