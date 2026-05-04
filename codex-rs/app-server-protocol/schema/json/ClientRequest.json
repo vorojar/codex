@@ -3637,7 +3637,7 @@
               "type": "null"
             }
           ],
-          "description": "Optional search matching mode. Defaults to substring matching."
+          "description": "Optional search matching mode. Defaults to substring title matching."
         },
         "searchTerm": {
           "description": "Optional substring filter for the extracted thread title.",
@@ -3688,7 +3688,7 @@
     "ThreadListSearchMode": {
       "enum": [
         "contains",
-        "exact"
+        "exactName"
       ],
       "type": "string"
     },

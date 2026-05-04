@@ -559,7 +559,7 @@ async fn lookup_session_target_by_name_with_app_server(
             cwd: None,
             use_state_db_only: false,
             search_term: Some(name.to_string()),
-            search_mode: Some(ThreadListSearchMode::Exact),
+            search_mode: Some(ThreadListSearchMode::ExactName),
         })
         .await?;
     Ok(response

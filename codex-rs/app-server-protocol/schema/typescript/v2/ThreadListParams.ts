@@ -54,6 +54,6 @@ useStateDbOnly?: boolean,
  */
 searchTerm?: string | null,
 /**
- * Optional search matching mode. Defaults to substring matching.
+ * Optional search matching mode. Defaults to substring title matching.
  */
 searchMode?: ThreadListSearchMode | null, };

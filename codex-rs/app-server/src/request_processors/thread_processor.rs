@@ -3292,7 +3292,7 @@ impl ThreadRequestProcessor {
                         })
                     })
                     && match (search_mode, search_term.as_deref()) {
-                        (Some(ThreadListSearchMode::Exact), Some(search_term)) => {
+                        (Some(ThreadListSearchMode::ExactName), Some(search_term)) => {
                             it.name.as_deref() == Some(search_term)
                         }
                         _ => true,

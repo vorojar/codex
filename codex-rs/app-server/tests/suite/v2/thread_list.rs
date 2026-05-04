@@ -693,7 +693,7 @@ sqlite = true
             cwd: None,
             use_state_db_only: false,
             search_term: Some("needle exact".to_string()),
-            search_mode: Some(ThreadListSearchMode::Exact),
+            search_mode: Some(ThreadListSearchMode::ExactName),
         })
         .await?;
     let exact_resp: JSONRPCResponse = timeout(
