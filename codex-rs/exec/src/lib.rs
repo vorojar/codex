@@ -35,6 +35,7 @@ use codex_app_server_protocol::ServerNotification;
 use codex_app_server_protocol::ServerRequest;
 use codex_app_server_protocol::Thread as AppServerThread;
 use codex_app_server_protocol::ThreadItem as AppServerThreadItem;
+use codex_app_server_protocol::ThreadListCwdFilter;
 use codex_app_server_protocol::ThreadListParams;
 use codex_app_server_protocol::ThreadListResponse;
 use codex_app_server_protocol::ThreadReadParams;
@@ -85,8 +86,6 @@ use codex_protocol::models::PermissionProfile;
 use codex_protocol::protocol::AskForApproval;
 use codex_protocol::protocol::ReviewRequest;
 use codex_protocol::protocol::ReviewTarget;
-use codex_protocol::protocol::RolloutItem;
-use codex_protocol::protocol::RolloutLine;
 use codex_protocol::protocol::SessionConfiguredEvent;
 use codex_protocol::protocol::SessionSource;
 use codex_protocol::user_input::UserInput;
@@ -1293,34 +1292,15 @@ fn all_thread_source_kinds() -> Vec<ThreadSourceKind> {
     ]
 }
 
-async fn latest_thread_cwd(thread: &AppServerThread) -> PathBuf {
-    if let Some(path) = thread.path.as_deref()
-        && let Some(cwd) = parse_latest_turn_context_cwd(path).await
-    {
-        return cwd;
-    }
-    thread.cwd.to_path_buf()
-}
-
-async fn parse_latest_turn_context_cwd(path: &Path) -> Option<PathBuf> {
-    let text = tokio::fs::read_to_string(path).await.ok()?;
-    for line in text.lines().rev() {
-        let trimmed = line.trim();
-        if trimmed.is_empty() {
-            continue;
-        }
-        let Ok(rollout_line) = serde_json::from_str::<RolloutLine>(trimmed) else {
-            continue;
-        };
-        if let RolloutItem::TurnContext(item) = rollout_line.item {
-            return Some(item.cwd);
-        }
-    }
-    None
-}
-
 fn cwds_match(current_cwd: &Path, session_cwd: &Path) -> bool {
     path_utils::paths_match_after_normalization(current_cwd, session_cwd)
+}
+
+fn resume_thread_list_cwd_filter(
+    config: &Config,
+    args: &crate::cli::ResumeArgs,
+) -> Option<ThreadListCwdFilter> {
+    (!args.all).then(|| ThreadListCwdFilter::One(config.cwd.to_string_lossy().into_owned()))
 }
 
 async fn resolve_resume_thread_id(
@@ -1330,6 +1310,7 @@ async fn resolve_resume_thread_id(
     args: &crate::cli::ResumeArgs,
 ) -> anyhow::Result<Option<String>> {
     let model_providers = resume_lookup_model_providers(config, args);
+    let cwd_filter = resume_thread_list_cwd_filter(config, args);
 
     if args.last {
         let mut cursor = None;
@@ -1346,7 +1327,7 @@ async fn resolve_resume_thread_id(
                         model_providers: model_providers.clone(),
                         source_kinds: Some(all_thread_source_kinds()),
                         archived: Some(false),
-                        cwd: None,
+                        cwd: cwd_filter.clone(),
                         use_state_db_only: false,
                         search_term: None,
                     },
@@ -1355,11 +1336,8 @@ async fn resolve_resume_thread_id(
             )
             .await
             .map_err(anyhow::Error::msg)?;
-            for thread in response.data {
-                let latest_cwd = latest_thread_cwd(&thread).await;
-                if args.all || cwds_match(config.cwd.as_path(), latest_cwd.as_path()) {
-                    return Ok(Some(thread.id));
-                }
+            if let Some(thread) = response.data.into_iter().next() {
+                return Ok(Some(thread.id));
             }
             let Some(next_cursor) = response.next_cursor else {
                 return Ok(None);
@@ -1411,7 +1389,7 @@ async fn resolve_resume_thread_id(
                     model_providers: model_providers.clone(),
                     source_kinds: Some(all_thread_source_kinds()),
                     archived: Some(false),
-                    cwd: None,
+                    cwd: cwd_filter.clone(),
                     use_state_db_only: false,
                     search_term: Some(session_id.to_string()),
                 },
@@ -1424,10 +1402,7 @@ async fn resolve_resume_thread_id(
             if thread.name.as_deref() != Some(session_id) {
                 continue;
             }
-            let latest_cwd = latest_thread_cwd(&thread).await;
-            if args.all || cwds_match(config.cwd.as_path(), latest_cwd.as_path()) {
-                return Ok(Some(thread.id));
-            }
+            return Ok(Some(thread.id));
         }
         let Some(next_cursor) = response.next_cursor else {
             return Ok(None);
