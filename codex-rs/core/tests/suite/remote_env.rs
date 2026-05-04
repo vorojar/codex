@@ -265,11 +265,15 @@ async fn exec_command_routes_across_empty_single_and_multiple_turn_environments(
         environment_id: LOCAL_ENVIRONMENT_ID.to_string(),
         cwd: local_cwd.path().abs(),
     };
-    let remote_cwd = multi_env_test.config.cwd.clone();
+    let remote_cwd = PathBuf::from("/tmp").abs();
+    let remote_marker_name = format!(
+        "codex-remote-routing-{}.txt",
+        SystemTime::now().duration_since(UNIX_EPOCH)?.as_millis()
+    );
     multi_env_test
         .fs()
         .write_file(
-            &remote_cwd.join("marker.txt"),
+            &remote_cwd.join(&remote_marker_name),
             b"remote-routing".to_vec(),
             /*sandbox*/ None,
         )
@@ -284,7 +288,7 @@ async fn exec_command_routes_across_empty_single_and_multiple_turn_environments(
         "call-multi-env",
         json!({
             "shell": "/bin/sh",
-            "cmd": "cat marker.txt",
+            "cmd": format!("cat {remote_marker_name}"),
             "login": false,
             "yield_time_ms": 1_000,
             "environment_id": REMOTE_ENVIRONMENT_ID,
