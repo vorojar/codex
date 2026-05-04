@@ -59,6 +59,8 @@ use codex_app_server_protocol::ServerRequestPayload;
 use codex_app_server_protocol::experimental_required_message;
 use codex_arg0::Arg0DispatchPaths;
 use codex_chatgpt::workspace_settings;
+use codex_core::ClientCompatibilityFlags;
+use codex_core::McpElicitationCompatibility;
 use codex_core::ThreadManager;
 use codex_core::config::Config;
 use codex_core::thread_store_from_config;
@@ -187,6 +189,57 @@ pub(crate) struct InitializedConnectionSessionState {
     pub(crate) opted_out_notification_methods: HashSet<String>,
     pub(crate) app_server_client_name: String,
     pub(crate) client_version: String,
+    pub(crate) client_compatibility_flags: ClientCompatibilityFlags,
+}
+
+struct InitializedClientRequestContext {
+    app_server_client_name: Option<String>,
+    client_version: Option<String>,
+    client_compatibility_flags: ClientCompatibilityFlags,
+    device_key_requests_allowed: bool,
+}
+
+impl InitializedConnectionSessionState {
+    pub(crate) fn new(
+        experimental_api_enabled: bool,
+        opted_out_notification_methods: HashSet<String>,
+        app_server_client_name: String,
+        client_version: String,
+    ) -> Self {
+        let client_compatibility_flags = client_compatibility_flags_for_app_server_client(
+            app_server_client_name.as_str(),
+            client_version.as_str(),
+        );
+        Self {
+            experimental_api_enabled,
+            opted_out_notification_methods,
+            app_server_client_name,
+            client_version,
+            client_compatibility_flags,
+        }
+    }
+}
+
+fn client_compatibility_flags_for_app_server_client(
+    client_name: &str,
+    client_version: &str,
+) -> ClientCompatibilityFlags {
+    let mut flags = ClientCompatibilityFlags::default();
+
+    // Xcode 26.4 shipped against CLI behavior from before PR #17043, when
+    // Codex only advertised MCP elicitation support to the built-in
+    // `codex_apps` server. If Codex advertises custom-server elicitation
+    // support to that client family, those requests become new app-server
+    // events/messages that the client cannot handle. Preserve the old
+    // capability surface for that client only.
+    //
+    // TODO: Remove this Xcode 26.4 compatibility path once that client version
+    // has aged out of support.
+    if client_name == "Xcode" && client_version.starts_with("26.4") {
+        flags.mcp_elicitation = McpElicitationCompatibility::CodexAppsOnly;
+    }
+
+    flags
 }
 
 impl Default for ConnectionSessionState {
@@ -235,6 +288,13 @@ impl ConnectionSessionState {
         self.initialized
             .get()
             .map(|session| session.client_version.as_str())
+    }
+
+    pub(crate) fn client_compatibility_flags(&self) -> ClientCompatibilityFlags {
+        self.initialized
+            .get()
+            .map(|session| session.client_compatibility_flags)
+            .unwrap_or_default()
     }
 
     pub(crate) fn initialize(&self, session: InitializedConnectionSessionState) -> Result<(), ()> {
@@ -373,7 +433,6 @@ impl MessageProcessor {
             thread_state_manager.clone(),
         );
         let thread_processor = ThreadRequestProcessor::new(
-            auth_manager.clone(),
             Arc::clone(&thread_manager),
             outgoing.clone(),
             analytics_events_client.clone(),
@@ -756,9 +815,12 @@ impl MessageProcessor {
         );
 
         let serialization_scope = codex_request.serialization_scope();
-        let app_server_client_name = session.app_server_client_name().map(str::to_string);
-        let client_version = session.client_version().map(str::to_string);
-        let device_key_requests_allowed = session.allows_device_key_requests();
+        let initialized_client_context = InitializedClientRequestContext {
+            app_server_client_name: session.app_server_client_name().map(str::to_string),
+            client_version: session.client_version().map(str::to_string),
+            client_compatibility_flags: session.client_compatibility_flags(),
+            device_key_requests_allowed: session.allows_device_key_requests(),
+        };
         let error_request_id = connection_request_id.clone();
         let rpc_gate = Arc::clone(&session.rpc_gate);
         let processor = Arc::clone(self);
@@ -772,9 +834,7 @@ impl MessageProcessor {
                         connection_request_id,
                         codex_request,
                         request_context,
-                        app_server_client_name,
-                        client_version,
-                        device_key_requests_allowed,
+                        initialized_client_context,
                     )
                     .await;
                 if let Err(error) = result {
@@ -802,9 +862,7 @@ impl MessageProcessor {
         connection_request_id: ConnectionRequestId,
         codex_request: ClientRequest,
         request_context: RequestContext,
-        app_server_client_name: Option<String>,
-        client_version: Option<String>,
-        device_key_requests_allowed: bool,
+        initialized_client_context: InitializedClientRequestContext,
     ) -> Result<(), JSONRPCErrorError> {
         let connection_id = connection_request_id.connection_id;
         let request_id = ConnectionRequestId {
@@ -851,7 +909,7 @@ impl MessageProcessor {
                 self.device_key_processor.create(
                     request_id.clone(),
                     params,
-                    device_key_requests_allowed,
+                    initialized_client_context.device_key_requests_allowed,
                 );
                 Ok(None)
             }
@@ -859,7 +917,7 @@ impl MessageProcessor {
                 self.device_key_processor.public(
                     request_id.clone(),
                     params,
-                    device_key_requests_allowed,
+                    initialized_client_context.device_key_requests_allowed,
                 );
                 Ok(None)
             }
@@ -867,7 +925,7 @@ impl MessageProcessor {
                 self.device_key_processor.sign(
                     request_id.clone(),
                     params,
-                    device_key_requests_allowed,
+                    initialized_client_context.device_key_requests_allowed,
                 );
                 Ok(None)
             }
@@ -926,8 +984,9 @@ impl MessageProcessor {
                     .thread_start(
                         request_id.clone(),
                         params,
-                        app_server_client_name.clone(),
-                        client_version.clone(),
+                        initialized_client_context.app_server_client_name.clone(),
+                        initialized_client_context.client_version.clone(),
+                        initialized_client_context.client_compatibility_flags,
                         request_context,
                     )
                     .await
@@ -939,12 +998,20 @@ impl MessageProcessor {
             }
             ClientRequest::ThreadResume { params, .. } => {
                 self.thread_processor
-                    .thread_resume(request_id.clone(), params)
+                    .thread_resume(
+                        request_id.clone(),
+                        params,
+                        initialized_client_context.client_compatibility_flags,
+                    )
                     .await
             }
             ClientRequest::ThreadFork { params, .. } => {
                 self.thread_processor
-                    .thread_fork(request_id.clone(), params)
+                    .thread_fork(
+                        request_id.clone(),
+                        params,
+                        initialized_client_context.client_compatibility_flags,
+                    )
                     .await
             }
             ClientRequest::ThreadArchive { params, .. } => {
@@ -1098,8 +1165,8 @@ impl MessageProcessor {
                     .turn_start(
                         request_id.clone(),
                         params,
-                        app_server_client_name.clone(),
-                        client_version.clone(),
+                        initialized_client_context.app_server_client_name.clone(),
+                        initialized_client_context.client_version.clone(),
                     )
                     .await
             }
@@ -1259,3 +1326,32 @@ impl MessageProcessor {
 #[cfg(test)]
 #[path = "message_processor_tracing_tests.rs"]
 mod message_processor_tracing_tests;
+
+#[cfg(test)]
+mod client_compatibility_tests {
+    use super::*;
+
+    #[test]
+    fn xcode_26_4_uses_legacy_mcp_elicitation_compatibility() {
+        for version in ["26.4", "26.4.1", "26.4-beta"] {
+            assert_eq!(
+                client_compatibility_flags_for_app_server_client("Xcode", version),
+                ClientCompatibilityFlags {
+                    mcp_elicitation: McpElicitationCompatibility::CodexAppsOnly,
+                }
+            );
+        }
+
+        for (name, version) in [
+            ("Xcode", "26.3"),
+            ("Xcode", "26.5"),
+            ("Xcode", "27.0"),
+            ("codex-vscode", "26.4"),
+        ] {
+            assert_eq!(
+                client_compatibility_flags_for_app_server_client(name, version),
+                ClientCompatibilityFlags::default()
+            );
+        }
+    }
+}

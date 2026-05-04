@@ -915,12 +915,13 @@ impl TurnRequestProcessor {
             ..
         } = self
             .thread_manager
-            .fork_thread(
+            .fork_thread_with_client_compatibility_flags(
                 ForkSnapshot::Interrupted,
                 config.clone(),
                 rollout_path,
                 /*persist_extended_history*/ false,
                 self.request_trace_context(request_id).await,
+                parent_thread.client_compatibility_flags().await,
             )
             .await
             .map_err(|err| {

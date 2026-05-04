@@ -8,6 +8,7 @@ use std::sync::atomic::AtomicU64;
 use std::time::SystemTime;
 use std::time::UNIX_EPOCH;
 
+use crate::ClientCompatibilityFlags;
 use crate::agent::AgentControl;
 use crate::agent::AgentStatus;
 use crate::agent::Mailbox;
@@ -400,6 +401,7 @@ pub(crate) struct CodexSpawnArgs {
     pub(crate) dynamic_tools: Vec<DynamicToolSpec>,
     pub(crate) persist_extended_history: bool,
     pub(crate) metrics_service_name: Option<String>,
+    pub(crate) client_compatibility_flags: ClientCompatibilityFlags,
     pub(crate) inherited_shell_snapshot: Option<Arc<ShellSnapshot>>,
     pub(crate) inherited_exec_policy: Option<Arc<ExecPolicyManager>>,
     /// Parent rollout trace used only to derive fresh spawned child traces.
@@ -461,6 +463,7 @@ impl Codex {
             dynamic_tools,
             persist_extended_history,
             metrics_service_name,
+            client_compatibility_flags,
             inherited_shell_snapshot,
             user_shell_override,
             inherited_exec_policy,
@@ -612,6 +615,7 @@ impl Codex {
             environments: environment_selections.to_selections(),
             original_config_do_not_use: Arc::clone(&config),
             metrics_service_name,
+            client_compatibility_flags,
             app_server_client_name: None,
             app_server_client_version: None,
             session_source,
@@ -834,6 +838,14 @@ async fn thread_title_from_state_db(
 }
 
 impl Session {
+    pub(crate) async fn client_compatibility_flags(&self) -> ClientCompatibilityFlags {
+        self.state
+            .lock()
+            .await
+            .session_configuration
+            .client_compatibility_flags
+    }
+
     pub(crate) async fn app_server_client_metadata(&self) -> AppServerClientMetadata {
         let state = self.state.lock().await;
         AppServerClientMetadata {

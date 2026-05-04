@@ -9,6 +9,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::Mutex as StdMutex;
 
+use crate::mcp::CODEX_APPS_MCP_SERVER_NAME;
 use crate::mcp::McpPermissionPromptAutoApproveContext;
 use crate::mcp::mcp_permission_prompt_is_auto_approved;
 use anyhow::Context;
@@ -36,6 +37,7 @@ pub(crate) struct ElicitationRequestManager {
     requests: Arc<Mutex<ResponderMap>>,
     pub(crate) approval_policy: Arc<StdMutex<AskForApproval>>,
     pub(crate) permission_profile: Arc<StdMutex<PermissionProfile>>,
+    compatibility: McpElicitationCompatibility,
 }
 
 impl ElicitationRequestManager {
@@ -43,10 +45,23 @@ impl ElicitationRequestManager {
         approval_policy: AskForApproval,
         permission_profile: PermissionProfile,
     ) -> Self {
+        Self::new_with_compatibility(
+            approval_policy,
+            permission_profile,
+            McpElicitationCompatibility::Default,
+        )
+    }
+
+    pub(crate) fn new_with_compatibility(
+        approval_policy: AskForApproval,
+        permission_profile: PermissionProfile,
+        compatibility: McpElicitationCompatibility,
+    ) -> Self {
         Self {
             requests: Arc::new(Mutex::new(HashMap::new())),
             approval_policy: Arc::new(StdMutex::new(approval_policy)),
             permission_profile: Arc::new(StdMutex::new(permission_profile)),
+            compatibility,
         }
     }
 
@@ -73,6 +88,7 @@ impl ElicitationRequestManager {
         let elicitation_requests = self.requests.clone();
         let approval_policy = self.approval_policy.clone();
         let permission_profile = self.permission_profile.clone();
+        let compatibility = self.compatibility;
         Box::new(move |id, elicitation| {
             let elicitation_requests = elicitation_requests.clone();
             let tx_event = tx_event.clone();
@@ -80,6 +96,14 @@ impl ElicitationRequestManager {
             let approval_policy = approval_policy.clone();
             let permission_profile = permission_profile.clone();
             async move {
+                if !compatibility.allows_server_elicitation(&server_name) {
+                    return Ok(ElicitationResponse {
+                        action: ElicitationAction::Decline,
+                        content: None,
+                        meta: None,
+                    });
+                }
+
                 let approval_policy = approval_policy
                     .lock()
                     .map(|policy| *policy)
@@ -166,6 +190,28 @@ impl ElicitationRequestManager {
             }
             .boxed()
         })
+    }
+}
+
+/// Compatibility policy for the MCP elicitation capability surface.
+///
+/// The default behavior advertises MCP elicitation support to every server.
+/// `CodexAppsOnly` preserves the pre-PR #17043 capability surface by keeping
+/// support for the built-in `codex_apps` server while suppressing support for
+/// custom MCP servers.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum McpElicitationCompatibility {
+    #[default]
+    Default,
+    CodexAppsOnly,
+}
+
+impl McpElicitationCompatibility {
+    pub(crate) fn allows_server_elicitation(self, server_name: &str) -> bool {
+        match self {
+            Self::Default => true,
+            Self::CodexAppsOnly => server_name == CODEX_APPS_MCP_SERVER_NAME,
+        }
     }
 }
 

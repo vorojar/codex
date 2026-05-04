@@ -1,3 +1,4 @@
+use crate::ClientCompatibilityFlags;
 use crate::agent::AgentStatus;
 use crate::config::ConstraintResult;
 use crate::file_watcher::WatchRegistration;
@@ -222,6 +223,10 @@ impl CodexThread {
         self.codex
             .set_app_server_client_info(app_server_client_name, app_server_client_version)
             .await
+    }
+
+    pub async fn client_compatibility_flags(&self) -> ClientCompatibilityFlags {
+        self.codex.session.client_compatibility_flags().await
     }
 
     /// Validate persistent turn context overrides without committing them.

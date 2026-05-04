@@ -26,6 +26,7 @@ use crate::codex_apps::normalize_codex_apps_callable_namespace;
 use crate::codex_apps::normalize_codex_apps_tool_title;
 use crate::codex_apps::write_cached_codex_apps_tools_if_needed;
 use crate::elicitation::ElicitationRequestManager;
+use crate::elicitation::McpElicitationCompatibility;
 use crate::mcp::CODEX_APPS_MCP_SERVER_NAME;
 use crate::mcp::ToolPluginProvenance;
 use crate::runtime::McpRuntimeEnvironment;
@@ -138,6 +139,7 @@ impl AsyncManagedClient {
         cancel_token: CancellationToken,
         tx_event: Sender<Event>,
         elicitation_requests: ElicitationRequestManager,
+        elicitation_compatibility: McpElicitationCompatibility,
         codex_apps_tools_cache_context: Option<CodexAppsToolsCacheContext>,
         tool_plugin_provenance: Arc<ToolPluginProvenance>,
         runtime_environment: McpRuntimeEnvironment,
@@ -180,6 +182,7 @@ impl AsyncManagedClient {
                         tool_filter: startup_tool_filter,
                         tx_event,
                         elicitation_requests,
+                        elicitation_compatibility,
                         codex_apps_tools_cache_context,
                     },
                 )
@@ -318,8 +321,16 @@ impl From<anyhow::Error> for StartupOutcomeError {
 }
 
 pub(crate) fn elicitation_capability_for_server(
-    _server_name: &str,
+    server_name: &str,
+    compatibility: McpElicitationCompatibility,
 ) -> Option<ElicitationCapability> {
+    // Keep capability advertising aligned with the client compatibility flags.
+    // The sender has a matching defensive decline path for servers that send
+    // elicitations despite this advertised capability.
+    if !compatibility.allows_server_elicitation(server_name) {
+        return None;
+    }
+
     // https://modelcontextprotocol.io/specification/2025-06-18/client/elicitation#capabilities
     // indicates this should be an empty object.
     Some(ElicitationCapability::default())
@@ -455,9 +466,10 @@ async fn start_server_task(
         tool_filter,
         tx_event,
         elicitation_requests,
+        elicitation_compatibility,
         codex_apps_tools_cache_context,
     } = params;
-    let elicitation = elicitation_capability_for_server(&server_name);
+    let elicitation = elicitation_capability_for_server(&server_name, elicitation_compatibility);
     let params = InitializeRequestParams {
         meta: None,
         capabilities: ClientCapabilities {
@@ -540,6 +552,7 @@ struct StartServerTaskParams {
     tool_filter: ToolFilter,
     tx_event: Sender<Event>,
     elicitation_requests: ElicitationRequestManager,
+    elicitation_compatibility: McpElicitationCompatibility,
     codex_apps_tools_cache_context: Option<CodexAppsToolsCacheContext>,
 }
 

@@ -1,5 +1,6 @@
 use super::turn_context::TurnEnvironment;
 use super::*;
+use crate::ClientCompatibilityFlags;
 use crate::config::ConfigBuilder;
 use crate::config::test_config;
 use crate::context::ContextualUserFragment;
@@ -2372,6 +2373,7 @@ async fn set_rate_limits_retains_previous_credits() {
         metrics_service_name: None,
         app_server_client_name: None,
         app_server_client_version: None,
+        client_compatibility_flags: ClientCompatibilityFlags::default(),
         session_source: SessionSource::Exec,
         dynamic_tools: Vec::new(),
         persist_extended_history: false,
@@ -2475,6 +2477,7 @@ async fn set_rate_limits_updates_plan_type_when_present() {
         metrics_service_name: None,
         app_server_client_name: None,
         app_server_client_version: None,
+        client_compatibility_flags: ClientCompatibilityFlags::default(),
         session_source: SessionSource::Exec,
         dynamic_tools: Vec::new(),
         persist_extended_history: false,
@@ -2933,6 +2936,7 @@ pub(crate) async fn make_session_configuration_for_tests() -> SessionConfigurati
         metrics_service_name: None,
         app_server_client_name: None,
         app_server_client_version: None,
+        client_compatibility_flags: ClientCompatibilityFlags::default(),
         session_source: SessionSource::Exec,
         dynamic_tools: Vec::new(),
         persist_extended_history: false,
@@ -3458,6 +3462,7 @@ async fn session_new_fails_when_zsh_fork_enabled_without_zsh_path() {
         metrics_service_name: None,
         app_server_client_name: None,
         app_server_client_version: None,
+        client_compatibility_flags: ClientCompatibilityFlags::default(),
         session_source: SessionSource::Exec,
         dynamic_tools: Vec::new(),
         persist_extended_history: false,
@@ -3563,6 +3568,7 @@ pub(crate) async fn make_session_and_context() -> (Session, TurnContext) {
         metrics_service_name: None,
         app_server_client_name: None,
         app_server_client_version: None,
+        client_compatibility_flags: ClientCompatibilityFlags::default(),
         session_source: SessionSource::Exec,
         dynamic_tools: Vec::new(),
         persist_extended_history: false,
@@ -3775,6 +3781,7 @@ async fn make_session_with_config_and_rx(
         metrics_service_name: None,
         app_server_client_name: None,
         app_server_client_version: None,
+        client_compatibility_flags: ClientCompatibilityFlags::default(),
         session_source: SessionSource::Exec,
         dynamic_tools: Vec::new(),
         persist_extended_history: false,
@@ -5055,6 +5062,7 @@ where
         metrics_service_name: None,
         app_server_client_name: None,
         app_server_client_version: None,
+        client_compatibility_flags: ClientCompatibilityFlags::default(),
         session_source: SessionSource::Exec,
         dynamic_tools,
         persist_extended_history: false,

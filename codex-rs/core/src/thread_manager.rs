@@ -1,3 +1,4 @@
+use crate::ClientCompatibilityFlags;
 use crate::SkillsManager;
 use crate::agent::AgentControl;
 use crate::codex_thread::CodexThread;
@@ -219,6 +220,7 @@ pub struct StartThreadOptions {
     pub dynamic_tools: Vec<codex_protocol::dynamic_tools::DynamicToolSpec>,
     pub persist_extended_history: bool,
     pub metrics_service_name: Option<String>,
+    pub client_compatibility_flags: ClientCompatibilityFlags,
     pub parent_trace: Option<W3cTraceContext>,
     pub environments: Vec<TurnEnvironmentSelection>,
 }
@@ -559,6 +561,7 @@ impl ThreadManager {
             dynamic_tools,
             persist_extended_history,
             metrics_service_name: None,
+            client_compatibility_flags: ClientCompatibilityFlags::default(),
             parent_trace: None,
             environments,
         }))
@@ -581,6 +584,7 @@ impl ThreadManager {
             options.dynamic_tools,
             options.persist_extended_history,
             options.metrics_service_name,
+            options.client_compatibility_flags,
             /*inherited_shell_snapshot*/ None,
             /*inherited_exec_policy*/ None,
             options.parent_trace,
@@ -771,6 +775,31 @@ impl ThreadManager {
         .await
     }
 
+    pub async fn fork_thread_with_client_compatibility_flags<S>(
+        &self,
+        snapshot: S,
+        config: Config,
+        path: PathBuf,
+        persist_extended_history: bool,
+        parent_trace: Option<W3cTraceContext>,
+        client_compatibility_flags: ClientCompatibilityFlags,
+    ) -> CodexResult<NewThread>
+    where
+        S: Into<ForkSnapshot>,
+    {
+        let snapshot = snapshot.into();
+        let history = RolloutRecorder::get_rollout_history(&path).await?;
+        self.fork_thread_from_history_with_client_compatibility_flags(
+            snapshot,
+            config,
+            history,
+            persist_extended_history,
+            parent_trace,
+            client_compatibility_flags,
+        )
+        .await
+    }
+
     /// Fork an existing thread from already-loaded store history.
     pub async fn fork_thread_from_history<S>(
         &self,
@@ -783,12 +812,36 @@ impl ThreadManager {
     where
         S: Into<ForkSnapshot>,
     {
+        self.fork_thread_from_history_with_client_compatibility_flags(
+            snapshot,
+            config,
+            history,
+            persist_extended_history,
+            parent_trace,
+            ClientCompatibilityFlags::default(),
+        )
+        .await
+    }
+
+    pub async fn fork_thread_from_history_with_client_compatibility_flags<S>(
+        &self,
+        snapshot: S,
+        config: Config,
+        history: InitialHistory,
+        persist_extended_history: bool,
+        parent_trace: Option<W3cTraceContext>,
+        client_compatibility_flags: ClientCompatibilityFlags,
+    ) -> CodexResult<NewThread>
+    where
+        S: Into<ForkSnapshot>,
+    {
         self.fork_thread_with_initial_history(
             snapshot.into(),
             config,
             history,
             persist_extended_history,
             parent_trace,
+            client_compatibility_flags,
         )
         .await
     }
@@ -800,6 +853,7 @@ impl ThreadManager {
         history: InitialHistory,
         persist_extended_history: bool,
         parent_trace: Option<W3cTraceContext>,
+        client_compatibility_flags: ClientCompatibilityFlags,
     ) -> CodexResult<NewThread> {
         let interrupted_marker = InterruptedTurnHistoryMarker::from_config(&config);
         let history = fork_history_from_snapshot(snapshot, history, interrupted_marker);
@@ -807,14 +861,18 @@ impl ThreadManager {
             self.state.environment_manager.as_ref(),
             &config.cwd,
         );
-        Box::pin(self.state.spawn_thread(
+        Box::pin(self.state.spawn_thread_with_source(
             config,
             history,
             Arc::clone(&self.state.auth_manager),
             self.agent_control(),
+            self.state.session_source.clone(),
             Vec::new(),
             persist_extended_history,
             /*metrics_service_name*/ None,
+            client_compatibility_flags,
+            /*inherited_shell_snapshot*/ None,
+            /*inherited_exec_policy*/ None,
             parent_trace,
             environments,
             /*user_shell_override*/ None,
@@ -854,6 +912,44 @@ impl ThreadManagerState {
         match threads.get(&thread_id) {
             Some(thread) if !thread.session_source.is_internal() => Ok(thread.clone()),
             Some(_) | None => Err(CodexErr::ThreadNotFound(thread_id)),
+        }
+    }
+
+    async fn client_compatibility_flags_for_source(
+        &self,
+        session_source: &SessionSource,
+        explicit_flags: ClientCompatibilityFlags,
+    ) -> ClientCompatibilityFlags {
+        // Root app-server threads receive explicit flags at startup. Thread-spawn
+        // subagents inherit those flags from their parent so the same client
+        // compatibility behavior applies throughout the visible thread tree.
+        if explicit_flags != ClientCompatibilityFlags::default() {
+            return explicit_flags;
+        }
+
+        let SessionSource::SubAgent(SubAgentSource::ThreadSpawn {
+            parent_thread_id, ..
+        }) = session_source
+        else {
+            return explicit_flags;
+        };
+
+        match self.get_thread(*parent_thread_id).await {
+            Ok(parent_thread) => {
+                parent_thread
+                    .codex
+                    .session
+                    .client_compatibility_flags()
+                    .await
+            }
+            Err(error) => {
+                warn!(
+                    error = %error,
+                    parent_thread_id = %parent_thread_id,
+                    "using default client compatibility flags: failed to load parent thread"
+                );
+                explicit_flags
+            }
         }
     }
 
@@ -952,6 +1048,7 @@ impl ThreadManagerState {
             Vec::new(),
             persist_extended_history,
             metrics_service_name,
+            ClientCompatibilityFlags::default(),
             inherited_shell_snapshot,
             inherited_exec_policy,
             /*parent_trace*/ None,
@@ -984,6 +1081,7 @@ impl ThreadManagerState {
             Vec::new(),
             /*persist_extended_history*/ false,
             /*metrics_service_name*/ None,
+            ClientCompatibilityFlags::default(),
             inherited_shell_snapshot,
             inherited_exec_policy,
             /*parent_trace*/ None,
@@ -1017,6 +1115,7 @@ impl ThreadManagerState {
             Vec::new(),
             persist_extended_history,
             /*metrics_service_name*/ None,
+            ClientCompatibilityFlags::default(),
             inherited_shell_snapshot,
             inherited_exec_policy,
             /*parent_trace*/ None,
@@ -1050,6 +1149,7 @@ impl ThreadManagerState {
             dynamic_tools,
             persist_extended_history,
             metrics_service_name,
+            ClientCompatibilityFlags::default(),
             /*inherited_shell_snapshot*/ None,
             /*inherited_exec_policy*/ None,
             parent_trace,
@@ -1070,6 +1170,7 @@ impl ThreadManagerState {
         dynamic_tools: Vec<codex_protocol::dynamic_tools::DynamicToolSpec>,
         persist_extended_history: bool,
         metrics_service_name: Option<String>,
+        client_compatibility_flags: ClientCompatibilityFlags,
         inherited_shell_snapshot: Option<Arc<ShellSnapshot>>,
         inherited_exec_policy: Option<Arc<crate::exec_policy::ExecPolicyManager>>,
         parent_trace: Option<W3cTraceContext>,
@@ -1116,6 +1217,9 @@ impl ThreadManagerState {
         let parent_rollout_thread_trace = self
             .parent_rollout_thread_trace_for_source(&session_source, &initial_history)
             .await;
+        let client_compatibility_flags = self
+            .client_compatibility_flags_for_source(&session_source, client_compatibility_flags)
+            .await;
         let tracked_session_source = session_source.clone();
         let CodexSpawnOk {
             codex, thread_id, ..
@@ -1134,6 +1238,7 @@ impl ThreadManagerState {
             dynamic_tools,
             persist_extended_history,
             metrics_service_name,
+            client_compatibility_flags,
             inherited_shell_snapshot,
             inherited_exec_policy,
             parent_rollout_thread_trace,

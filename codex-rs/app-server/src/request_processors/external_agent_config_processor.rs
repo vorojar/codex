@@ -310,6 +310,7 @@ impl ExternalAgentConfigRequestProcessor {
                 dynamic_tools: Vec::new(),
                 persist_extended_history: false,
                 metrics_service_name: None,
+                client_compatibility_flags: codex_core::ClientCompatibilityFlags::default(),
                 parent_trace: None,
                 environments,
             })

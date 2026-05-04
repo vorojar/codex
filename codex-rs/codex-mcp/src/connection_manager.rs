@@ -17,6 +17,7 @@ use crate::codex_apps::CodexAppsToolsCacheContext;
 use crate::codex_apps::CodexAppsToolsCacheKey;
 use crate::codex_apps::write_cached_codex_apps_tools_if_needed;
 use crate::elicitation::ElicitationRequestManager;
+use crate::elicitation::McpElicitationCompatibility;
 use crate::mcp::CODEX_APPS_MCP_SERVER_NAME;
 use crate::mcp::ToolPluginProvenance;
 use crate::rmcp_client::AsyncManagedClient;
@@ -142,13 +143,17 @@ impl McpConnectionManager {
         codex_apps_tools_cache_key: CodexAppsToolsCacheKey,
         tool_plugin_provenance: ToolPluginProvenance,
         auth: Option<&CodexAuth>,
+        elicitation_compatibility: McpElicitationCompatibility,
     ) -> (Self, CancellationToken) {
         let cancel_token = CancellationToken::new();
         let mut clients = HashMap::new();
         let mut server_origins = HashMap::new();
         let mut join_set = JoinSet::new();
-        let elicitation_requests =
-            ElicitationRequestManager::new(approval_policy.value(), initial_permission_profile);
+        let elicitation_requests = ElicitationRequestManager::new_with_compatibility(
+            approval_policy.value(),
+            initial_permission_profile,
+            elicitation_compatibility,
+        );
         let tool_plugin_provenance = Arc::new(tool_plugin_provenance);
         let startup_submit_id = submit_id.clone();
         let codex_apps_auth_provider = auth
@@ -197,6 +202,7 @@ impl McpConnectionManager {
                 cancel_token.clone(),
                 tx_event.clone(),
                 elicitation_requests.clone(),
+                elicitation_compatibility,
                 codex_apps_tools_cache_context,
                 Arc::clone(&tool_plugin_provenance),
                 runtime_environment.clone(),

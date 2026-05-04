@@ -6,6 +6,7 @@ use crate::codex_apps::read_cached_codex_apps_tools;
 use crate::codex_apps::write_cached_codex_apps_tools;
 use crate::declared_openai_file_input_param_names;
 use crate::elicitation::ElicitationRequestManager;
+use crate::elicitation::McpElicitationCompatibility;
 use crate::elicitation::elicitation_is_rejected_by_policy;
 use crate::rmcp_client::AsyncManagedClient;
 use crate::rmcp_client::ManagedClient;
@@ -264,6 +265,47 @@ async fn disabled_permissions_do_not_auto_accept_elicitation_with_requested_fiel
             meta: None,
         }
     );
+}
+
+#[tokio::test]
+async fn codex_apps_only_custom_server_elicitation_is_declined_without_event() {
+    let manager = ElicitationRequestManager::new_with_compatibility(
+        AskForApproval::OnRequest,
+        PermissionProfile::default(),
+        McpElicitationCompatibility::CodexAppsOnly,
+    );
+    let (tx_event, rx_event) = async_channel::bounded(1);
+    let sender = manager.make_sender("custom_mcp".to_string(), tx_event);
+
+    let response = sender(
+        NumberOrString::Number(1),
+        CreateElicitationRequestParams::FormElicitationParams {
+            meta: None,
+            message: "What should I say?".to_string(),
+            requested_schema: rmcp::model::ElicitationSchema::builder()
+                .required_property(
+                    "message",
+                    rmcp::model::PrimitiveSchema::String(rmcp::model::StringSchema::new()),
+                )
+                .build()
+                .expect("schema should build"),
+        },
+    )
+    .await
+    .expect("elicitation should auto decline");
+
+    assert_eq!(
+        response,
+        ElicitationResponse {
+            action: ElicitationAction::Decline,
+            content: None,
+            meta: None,
+        }
+    );
+    assert!(matches!(
+        rx_event.try_recv(),
+        Err(async_channel::TryRecvError::Empty)
+    ));
 }
 
 #[test]
@@ -802,13 +844,29 @@ async fn list_all_tools_uses_startup_snapshot_when_client_startup_fails() {
 #[test]
 fn elicitation_capability_uses_2025_06_18_shape_for_all_servers() {
     for server_name in [CODEX_APPS_MCP_SERVER_NAME, "custom_mcp"] {
-        let capability = elicitation_capability_for_server(server_name);
+        let capability =
+            elicitation_capability_for_server(server_name, McpElicitationCompatibility::Default);
         assert_eq!(capability, Some(ElicitationCapability::default()));
         assert_eq!(
             serde_json::to_value(capability).expect("serialize elicitation capability"),
             serde_json::json!({})
         );
     }
+}
+
+#[test]
+fn codex_apps_only_elicitation_capability_keeps_codex_apps_enabled() {
+    assert_eq!(
+        elicitation_capability_for_server(
+            CODEX_APPS_MCP_SERVER_NAME,
+            McpElicitationCompatibility::CodexAppsOnly,
+        ),
+        Some(ElicitationCapability::default())
+    );
+    assert_eq!(
+        elicitation_capability_for_server("custom_mcp", McpElicitationCompatibility::CodexAppsOnly,),
+        None
+    );
 }
 
 #[test]

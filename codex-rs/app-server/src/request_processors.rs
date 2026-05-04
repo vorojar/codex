@@ -244,6 +244,7 @@ use codex_config::CloudRequirementsLoadErrorCode;
 use codex_config::ConfigLayerStack;
 use codex_config::loader::project_trust_key;
 use codex_config::types::McpServerTransportConfig;
+use codex_core::ClientCompatibilityFlags;
 use codex_core::CodexThread;
 use codex_core::CodexThreadTurnContextOverrides;
 use codex_core::ForkSnapshot;

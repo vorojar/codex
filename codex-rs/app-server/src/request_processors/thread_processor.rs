@@ -246,7 +246,6 @@ fn validate_dynamic_tools(tools: &[ApiDynamicToolSpec]) -> Result<(), String> {
 
 #[derive(Clone)]
 pub(crate) struct ThreadRequestProcessor {
-    pub(super) auth_manager: Arc<AuthManager>,
     pub(super) thread_manager: Arc<ThreadManager>,
     pub(super) outgoing: Arc<OutgoingMessageSender>,
     pub(super) analytics_events_client: AnalyticsEventsClient,
@@ -265,7 +264,6 @@ pub(crate) struct ThreadRequestProcessor {
 impl ThreadRequestProcessor {
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn new(
-        auth_manager: Arc<AuthManager>,
         thread_manager: Arc<ThreadManager>,
         outgoing: Arc<OutgoingMessageSender>,
         analytics_events_client: AnalyticsEventsClient,
@@ -280,7 +278,6 @@ impl ThreadRequestProcessor {
         thread_goal_processor: ThreadGoalRequestProcessor,
     ) -> Self {
         Self {
-            auth_manager,
             thread_manager,
             outgoing,
             analytics_events_client,
@@ -303,6 +300,7 @@ impl ThreadRequestProcessor {
         params: ThreadStartParams,
         app_server_client_name: Option<String>,
         app_server_client_version: Option<String>,
+        client_compatibility_flags: ClientCompatibilityFlags,
         request_context: RequestContext,
     ) -> Result<Option<ClientResponsePayload>, JSONRPCErrorError> {
         self.thread_start_inner(
@@ -310,6 +308,7 @@ impl ThreadRequestProcessor {
             params,
             app_server_client_name,
             app_server_client_version,
+            client_compatibility_flags,
             request_context,
         )
         .await
@@ -330,8 +329,9 @@ impl ThreadRequestProcessor {
         &self,
         request_id: ConnectionRequestId,
         params: ThreadResumeParams,
+        client_compatibility_flags: ClientCompatibilityFlags,
     ) -> Result<Option<ClientResponsePayload>, JSONRPCErrorError> {
-        self.thread_resume_inner(request_id, params)
+        self.thread_resume_inner(request_id, params, client_compatibility_flags)
             .await
             .map(|()| None)
     }
@@ -340,8 +340,9 @@ impl ThreadRequestProcessor {
         &self,
         request_id: ConnectionRequestId,
         params: ThreadForkParams,
+        client_compatibility_flags: ClientCompatibilityFlags,
     ) -> Result<Option<ClientResponsePayload>, JSONRPCErrorError> {
-        self.thread_fork_inner(request_id, params)
+        self.thread_fork_inner(request_id, params, client_compatibility_flags)
             .await
             .map(|()| None)
     }
@@ -718,6 +719,7 @@ impl ThreadRequestProcessor {
         params: ThreadStartParams,
         app_server_client_name: Option<String>,
         app_server_client_version: Option<String>,
+        client_compatibility_flags: ClientCompatibilityFlags,
         request_context: RequestContext,
     ) -> Result<(), JSONRPCErrorError> {
         let ThreadStartParams {
@@ -784,6 +786,7 @@ impl ThreadRequestProcessor {
                 request_id,
                 app_server_client_name,
                 app_server_client_version,
+                client_compatibility_flags,
                 config,
                 typesafe_overrides,
                 dynamic_tools,
@@ -856,6 +859,7 @@ impl ThreadRequestProcessor {
         request_id: ConnectionRequestId,
         app_server_client_name: Option<String>,
         app_server_client_version: Option<String>,
+        client_compatibility_flags: ClientCompatibilityFlags,
         config_overrides: Option<HashMap<String, serde_json::Value>>,
         typesafe_overrides: ConfigOverrides,
         dynamic_tools: Option<Vec<ApiDynamicToolSpec>>,
@@ -980,6 +984,7 @@ impl ThreadRequestProcessor {
                 dynamic_tools: core_dynamic_tools,
                 persist_extended_history,
                 metrics_service_name: service_name,
+                client_compatibility_flags,
                 parent_trace: request_trace,
                 environments,
             })
@@ -2296,6 +2301,7 @@ impl ThreadRequestProcessor {
         &self,
         request_id: ConnectionRequestId,
         params: ThreadResumeParams,
+        client_compatibility_flags: ClientCompatibilityFlags,
     ) -> Result<(), JSONRPCErrorError> {
         if let Ok(thread_id) = ThreadId::from_string(&params.thread_id)
             && self
@@ -2418,13 +2424,19 @@ impl ThreadRequestProcessor {
 
         match self
             .thread_manager
-            .resume_thread_with_history(
-                config.clone(),
-                thread_history,
-                self.auth_manager.clone(),
+            .start_thread_with_options(StartThreadOptions {
+                config: config.clone(),
+                initial_history: thread_history,
+                session_source: None,
+                dynamic_tools: Vec::new(),
                 persist_extended_history,
-                self.request_trace_context(&request_id).await,
-            )
+                metrics_service_name: None,
+                client_compatibility_flags,
+                parent_trace: self.request_trace_context(&request_id).await,
+                environments: self
+                    .thread_manager
+                    .default_environment_selections(&config.cwd),
+            })
             .await
         {
             Ok(NewThread {
@@ -2931,6 +2943,7 @@ impl ThreadRequestProcessor {
         &self,
         request_id: ConnectionRequestId,
         params: ThreadForkParams,
+        client_compatibility_flags: ClientCompatibilityFlags,
     ) -> Result<(), JSONRPCErrorError> {
         let ThreadForkParams {
             thread_id,
@@ -3025,7 +3038,7 @@ impl ThreadRequestProcessor {
             ..
         } = self
             .thread_manager
-            .fork_thread_from_history(
+            .fork_thread_from_history_with_client_compatibility_flags(
                 ForkSnapshot::Interrupted,
                 config,
                 InitialHistory::Resumed(ResumedHistory {
@@ -3035,6 +3048,7 @@ impl ThreadRequestProcessor {
                 }),
                 persist_extended_history,
                 self.request_trace_context(&request_id).await,
+                client_compatibility_flags,
             )
             .await
             .map_err(|err| match err {

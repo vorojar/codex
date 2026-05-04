@@ -90,12 +90,12 @@ impl InitializeRequestProcessor {
         let user_agent_suffix = format!("{name}; {version}");
         let codex_home = self.config.codex_home.clone();
         if session
-            .initialize(InitializedConnectionSessionState {
+            .initialize(InitializedConnectionSessionState::new(
                 experimental_api_enabled,
-                opted_out_notification_methods: opt_out_notification_methods.into_iter().collect(),
-                app_server_client_name: name.clone(),
-                client_version: version,
-            })
+                opt_out_notification_methods.into_iter().collect(),
+                name.clone(),
+                version,
+            ))
             .is_err()
         {
             return Err(invalid_request("Already initialized"));

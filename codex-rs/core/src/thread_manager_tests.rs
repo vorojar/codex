@@ -1,4 +1,6 @@
 use super::*;
+use crate::ClientCompatibilityFlags;
+use crate::McpElicitationCompatibility;
 use crate::config::test_config;
 use crate::rollout::RolloutRecorder;
 use crate::session::session::SessionSettingsUpdate;
@@ -319,6 +321,7 @@ async fn start_thread_accepts_explicit_environment_when_default_environment_is_d
             dynamic_tools: Vec::new(),
             persist_extended_history: false,
             metrics_service_name: None,
+            client_compatibility_flags: ClientCompatibilityFlags::default(),
             parent_trace: None,
             environments: vec![TurnEnvironmentSelection {
                 environment_id: "local".to_string(),
@@ -329,6 +332,51 @@ async fn start_thread_accepts_explicit_environment_when_default_environment_is_d
         .expect("explicit sticky environment should resolve by id");
 
     assert_eq!(manager.list_thread_ids().await, vec![thread.thread_id]);
+}
+
+#[tokio::test]
+async fn start_thread_options_set_client_compatibility_flags_before_initial_session() {
+    let temp_dir = tempdir().expect("tempdir");
+    let mut config = test_config().await;
+    config.codex_home = temp_dir.path().join("codex-home").abs();
+    config.cwd = config.codex_home.abs();
+    std::fs::create_dir_all(&config.codex_home).expect("create codex home");
+
+    let manager = ThreadManager::with_models_provider_and_home_for_tests(
+        CodexAuth::from_api_key("dummy"),
+        config.model_provider.clone(),
+        config.codex_home.to_path_buf(),
+        Arc::new(codex_exec_server::EnvironmentManager::default_for_tests()),
+    );
+
+    let thread = manager
+        .start_thread_with_options(StartThreadOptions {
+            config,
+            initial_history: InitialHistory::New,
+            session_source: None,
+            dynamic_tools: Vec::new(),
+            persist_extended_history: false,
+            metrics_service_name: None,
+            client_compatibility_flags: ClientCompatibilityFlags {
+                mcp_elicitation: McpElicitationCompatibility::CodexAppsOnly,
+            },
+            parent_trace: None,
+            environments: Vec::new(),
+        })
+        .await
+        .expect("thread should start with client compatibility flags");
+
+    assert_eq!(
+        thread
+            .thread
+            .codex
+            .session
+            .client_compatibility_flags()
+            .await,
+        ClientCompatibilityFlags {
+            mcp_elicitation: McpElicitationCompatibility::CodexAppsOnly,
+        }
+    );
 }
 
 #[tokio::test]
@@ -355,6 +403,7 @@ async fn start_thread_keeps_internal_threads_hidden_from_normal_lookups() {
             dynamic_tools: Vec::new(),
             persist_extended_history: false,
             metrics_service_name: None,
+            client_compatibility_flags: ClientCompatibilityFlags::default(),
             parent_trace: None,
             environments: Vec::new(),
         })
@@ -406,6 +455,7 @@ async fn resume_and_fork_do_not_restore_thread_environments_from_rollout() {
             dynamic_tools: Vec::new(),
             persist_extended_history: false,
             metrics_service_name: None,
+            client_compatibility_flags: ClientCompatibilityFlags::default(),
             parent_trace: None,
             environments: environments.clone(),
         })

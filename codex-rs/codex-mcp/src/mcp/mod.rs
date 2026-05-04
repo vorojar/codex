@@ -255,6 +255,7 @@ pub async fn read_mcp_resource(
         codex_apps_tools_cache_key(auth),
         tool_plugin_provenance(config),
         auth,
+        crate::McpElicitationCompatibility::default(),
     )
     .await;
 
@@ -320,6 +321,7 @@ pub async fn collect_mcp_server_status_snapshot_with_detail(
         codex_apps_tools_cache_key(auth),
         tool_plugin_provenance,
         auth,
+        crate::McpElicitationCompatibility::default(),
     )
     .await;
 

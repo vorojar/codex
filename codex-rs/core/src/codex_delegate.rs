@@ -73,6 +73,7 @@ pub(crate) async fn run_codex_thread_interactive(
 ) -> Result<Codex, CodexErr> {
     let (tx_sub, rx_sub) = async_channel::bounded(SUBMISSION_CHANNEL_CAPACITY);
     let (tx_ops, rx_ops) = async_channel::bounded(SUBMISSION_CHANNEL_CAPACITY);
+    let client_compatibility_flags = parent_session.client_compatibility_flags().await;
     let CodexSpawnOk { codex, .. } = Box::pin(Codex::spawn(CodexSpawnArgs {
         config,
         auth_manager,
@@ -88,6 +89,7 @@ pub(crate) async fn run_codex_thread_interactive(
         dynamic_tools: Vec::new(),
         persist_extended_history: false,
         metrics_service_name: None,
+        client_compatibility_flags,
         inherited_shell_snapshot: None,
         user_shell_override: None,
         inherited_exec_policy: Some(Arc::clone(&parent_session.services.exec_policy)),
@@ -100,10 +102,10 @@ pub(crate) async fn run_codex_thread_interactive(
     .or_cancel(&cancel_token)
     .await??;
     let thread_config = codex.thread_config_snapshot().await;
-    let client_metadata = parent_session.app_server_client_metadata().await;
+    let app_server_client_metadata = parent_session.app_server_client_metadata().await;
     emit_subagent_session_started(
         &parent_session.services.analytics_events_client,
-        client_metadata,
+        app_server_client_metadata,
         codex.session.conversation_id,
         Some(parent_session.conversation_id),
         thread_config,
