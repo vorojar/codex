@@ -212,6 +212,17 @@ pub(crate) enum AppEvent {
         matches: Vec<FileMatch>,
     },
 
+    /// Upload a local client file into Codex-managed app-server storage.
+    UploadLocalFile {
+        path: PathBuf,
+    },
+
+    /// Result of uploading a local client file into Codex-managed app-server storage.
+    LocalFileUploaded {
+        local_path: PathBuf,
+        result: Result<PathBuf, String>,
+    },
+
     /// Refresh account rate limits in the background.
     RefreshRateLimits {
         origin: RateLimitRefreshOrigin,

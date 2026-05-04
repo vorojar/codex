@@ -10379,6 +10379,13 @@ impl ChatWidget {
         self.bottom_pane.insert_str(text);
     }
 
+    pub(crate) fn insert_uploaded_file_path(&mut self, path: &Path) {
+        if !self.bottom_pane.composer_text().is_empty() {
+            self.bottom_pane.insert_str(" ");
+        }
+        self.bottom_pane.insert_str(&path.to_string_lossy());
+    }
+
     /// Replace the composer content with the provided text and reset cursor.
     pub(crate) fn set_composer_text(
         &mut self,

@@ -5,6 +5,9 @@
 //! the main event loop remains single-threaded.
 
 use super::*;
+use base64::Engine;
+use codex_app_server_protocol::FsUploadFileParams;
+use codex_app_server_protocol::FsUploadFileResponse;
 use codex_app_server_protocol::MarketplaceAddParams;
 use codex_app_server_protocol::MarketplaceAddResponse;
 use codex_app_server_protocol::MarketplaceRemoveParams;
@@ -96,6 +99,17 @@ impl App {
                 .await
                 .map_err(|err| err.to_string());
             app_event_tx.send(AppEvent::PluginsLoaded { cwd, result });
+        });
+    }
+
+    pub(super) fn upload_local_file(&mut self, app_server: &AppServerSession, local_path: PathBuf) {
+        let request_handle = app_server.request_handle();
+        let app_event_tx = self.app_event_tx.clone();
+        tokio::spawn(async move {
+            let result = upload_local_file_request(request_handle, &local_path)
+                .await
+                .map_err(|err| err.to_string());
+            app_event_tx.send(AppEvent::LocalFileUploaded { local_path, result });
         });
     }
 
@@ -543,6 +557,30 @@ pub(super) async fn fetch_all_mcp_server_statuses(
     }
 
     Ok(statuses)
+}
+
+pub(super) async fn upload_local_file_request(
+    request_handle: AppServerRequestHandle,
+    local_path: &Path,
+) -> Result<PathBuf> {
+    let file_name = local_path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .ok_or_else(|| color_eyre::eyre::eyre!("Upload path must name a file."))?
+        .to_string();
+    let bytes = tokio::fs::read(local_path).await?;
+    let request_id = RequestId::String(format!("upload-local-file-{}", Uuid::new_v4()));
+    let response: FsUploadFileResponse = request_handle
+        .request_typed(ClientRequest::FsUploadFile {
+            request_id,
+            params: FsUploadFileParams {
+                file_name,
+                data_base64: base64::engine::general_purpose::STANDARD.encode(bytes),
+            },
+        })
+        .await
+        .wrap_err("fs/uploadFile failed in TUI")?;
+    Ok(response.path.into())
 }
 
 pub(super) async fn fetch_account_rate_limits(

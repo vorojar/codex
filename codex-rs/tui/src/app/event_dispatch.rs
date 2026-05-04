@@ -648,6 +648,20 @@ impl App {
             AppEvent::FileSearchResult { query, matches } => {
                 self.chat_widget.apply_file_search_result(query, matches);
             }
+            AppEvent::UploadLocalFile { path } => {
+                self.upload_local_file(app_server, path);
+            }
+            AppEvent::LocalFileUploaded { local_path, result } => match result {
+                Ok(remote_path) => {
+                    self.chat_widget.insert_uploaded_file_path(&remote_path);
+                }
+                Err(err) => {
+                    self.chat_widget.add_error_message(format!(
+                        "Failed to upload '{}': {err}",
+                        local_path.display()
+                    ));
+                }
+            },
             AppEvent::RefreshRateLimits { origin } => {
                 self.refresh_rate_limits(app_server, origin);
             }
