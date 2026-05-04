@@ -475,6 +475,11 @@ impl ModelClient {
         if let Ok(header_value) = HeaderValue::from_str(&self.state.installation_id) {
             extra_headers.insert(X_CODEX_INSTALLATION_ID_HEADER, header_value);
         }
+        extra_headers.extend(build_responses_headers(
+            self.state.beta_features_header.as_deref(),
+            /*turn_state*/ None,
+            /*turn_metadata_header*/ None,
+        ));
         extra_headers.extend(self.build_responses_identity_headers());
         extra_headers.extend(build_session_headers(
             Some(self.state.session_id.to_string()),
