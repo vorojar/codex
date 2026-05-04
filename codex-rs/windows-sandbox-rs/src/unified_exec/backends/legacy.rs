@@ -9,7 +9,7 @@ use crate::process::StderrMode;
 use crate::process::StdinMode;
 use crate::process::read_handle_loop;
 use crate::process::spawn_process_with_pipes;
-use crate::protected_metadata::ProtectedMetadataGuard;
+use crate::protected_metadata::ProtectedMetadataRuntime;
 use crate::protected_metadata::prepare_protected_metadata_targets;
 use crate::setup::ProtectedMetadataTarget;
 use crate::spawn_prep::LocalSid;
@@ -205,7 +205,7 @@ fn finalize_exit(
     output_join: std::thread::JoinHandle<()>,
     guards: Vec<PathBuf>,
     cap_sid: Option<String>,
-    protected_metadata_guard: ProtectedMetadataGuard,
+    protected_metadata_runtime: ProtectedMetadataRuntime,
     logs_base_dir: Option<&Path>,
     command: Vec<String>,
 ) {
@@ -223,21 +223,20 @@ fn finalize_exit(
     };
 
     let _ = output_join.join();
-    let protected_metadata_failure =
-        match protected_metadata_guard.cleanup_created_monitored_paths() {
-            Ok(paths) => {
-                if !paths.is_empty() && exit_code == 0 {
-                    exit_code = 1;
-                }
-                None
+    let protected_metadata_failure = match protected_metadata_runtime.finish() {
+        Ok(paths) => {
+            if !paths.is_empty() && exit_code == 0 {
+                exit_code = 1;
             }
-            Err(err) => {
-                if exit_code == 0 {
-                    exit_code = 1;
-                }
-                Some(format!("protected metadata cleanup failed: {err:#}"))
+            None
+        }
+        Err(err) => {
+            if exit_code == 0 {
+                exit_code = 1;
             }
-        };
+            Some(format!("protected metadata cleanup failed: {err:#}"))
+        }
+    };
     let _ = exit_tx.send(exit_code);
 
     unsafe {
@@ -340,6 +339,7 @@ pub(crate) async fn spawn_windows_sandbox_session_legacy(
         persist_aces,
         &additional_deny_write_paths,
     );
+    let protected_metadata_runtime = protected_metadata_guard.into_runtime()?;
 
     let (writer_tx, writer_rx) = mpsc::channel::<Vec<u8>>(128);
     let (stdout_tx, stdout_rx) = broadcast::channel::<Vec<u8>>(256);
@@ -431,7 +431,7 @@ pub(crate) async fn spawn_windows_sandbox_session_legacy(
             output_join,
             guards_for_wait,
             cap_sid_for_wait,
-            protected_metadata_guard,
+            protected_metadata_runtime,
             common.logs_base_dir.as_deref(),
             command_for_wait,
         );

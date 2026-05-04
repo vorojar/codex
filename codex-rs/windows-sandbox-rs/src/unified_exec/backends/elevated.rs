@@ -45,6 +45,7 @@ pub(crate) async fn spawn_windows_sandbox_session_elevated(
     )?;
 
     let protected_metadata_guard = prepare_protected_metadata_targets(protected_metadata_targets);
+    let protected_metadata_runtime = protected_metadata_guard.into_runtime()?;
     let spawn_request = SpawnRequest {
         command: command.clone(),
         cwd: cwd.to_path_buf(),
@@ -104,7 +105,7 @@ pub(crate) async fn spawn_windows_sandbox_session_elevated(
         stdout_tx,
         stderr_rx.as_ref().map(|(tx, _rx)| tx.clone()),
         exit_tx,
-        Some(protected_metadata_guard),
+        Some(protected_metadata_runtime),
     );
 
     Ok(finish_driver_spawn(

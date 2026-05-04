@@ -520,6 +520,7 @@ mod windows_impl {
                 allow_named_pipe_device(psid);
             }
         }
+        let protected_metadata_runtime = protected_metadata_guard.into_runtime()?;
         let (stdin_pair, stdout_pair, stderr_pair) = unsafe { setup_stdio_pipes()? };
         let ((in_r, in_w), (out_r, out_w), (err_r, err_w)) = (stdin_pair, stdout_pair, stderr_pair);
         let spawn_res = unsafe {
@@ -636,8 +637,7 @@ mod windows_impl {
         } else {
             exit_code_u32 as i32
         };
-        let protected_metadata_violations =
-            protected_metadata_guard.cleanup_created_monitored_paths()?;
+        let protected_metadata_violations = protected_metadata_runtime.finish()?;
         if !protected_metadata_violations.is_empty() && exit_code == 0 {
             exit_code = 1;
         }

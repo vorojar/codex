@@ -192,6 +192,7 @@ mod windows_impl {
             allow_null_device(psid_to_use);
             allow_named_pipe_device(psid_to_use);
         }
+        let protected_metadata_runtime = protected_metadata_guard.into_runtime()?;
 
         (|| -> Result<CaptureResult> {
             let spawn_request = SpawnRequest {
@@ -244,8 +245,7 @@ mod windows_impl {
                 }
             };
 
-            let protected_metadata_violations =
-                protected_metadata_guard.cleanup_created_monitored_paths()?;
+            let protected_metadata_violations = protected_metadata_runtime.finish()?;
             if !protected_metadata_violations.is_empty() && exit_code == 0 {
                 exit_code = 1;
             }
