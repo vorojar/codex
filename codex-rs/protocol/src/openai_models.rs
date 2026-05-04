@@ -477,9 +477,13 @@ impl From<ModelInfo> for ModelPreset {
 
 impl ModelPreset {
     pub fn supports_fast_mode(&self) -> bool {
-        self.additional_speed_tiers
+        self.service_tiers
             .iter()
-            .any(|tier| tier == SPEED_TIER_FAST)
+            .any(|tier| tier.id == SPEED_TIER_FAST)
+            || self
+                .additional_speed_tiers
+                .iter()
+                .any(|tier| tier == SPEED_TIER_FAST)
     }
 
     /// Filter models based on authentication mode.
@@ -842,6 +846,20 @@ mod tests {
                 message: "Try Spark.".to_string(),
             })
         );
+        assert!(preset.supports_fast_mode());
+    }
+
+    #[test]
+    fn model_preset_supports_fast_mode_from_service_tiers() {
+        let preset = ModelPreset::from(ModelInfo {
+            service_tiers: vec![ModelServiceTier {
+                id: SPEED_TIER_FAST.to_string(),
+                name: "Fast".to_string(),
+                description: "Priority processing.".to_string(),
+            }],
+            ..test_model(/*spec*/ None)
+        });
+
         assert!(preset.supports_fast_mode());
     }
 }
