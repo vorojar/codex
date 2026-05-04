@@ -15,13 +15,13 @@ use tokio::io::BufWriter;
 
 pub(crate) const CHANNEL_CAPACITY: usize = 128;
 
-pub(crate) type JsonRpcConnectionLifetimeGuard = Box<dyn Send>;
+pub(crate) type JsonRpcTransportLifetime = Box<dyn Send>;
 pub(crate) type JsonRpcConnectionParts = (
     mpsc::Sender<JSONRPCMessage>,
     mpsc::Receiver<JsonRpcConnectionEvent>,
     watch::Receiver<bool>,
     Vec<tokio::task::JoinHandle<()>>,
-    Option<JsonRpcConnectionLifetimeGuard>,
+    Option<JsonRpcTransportLifetime>,
 );
 
 #[derive(Debug)]
@@ -36,7 +36,7 @@ pub(crate) struct JsonRpcConnection {
     incoming_rx: mpsc::Receiver<JsonRpcConnectionEvent>,
     disconnected_rx: watch::Receiver<bool>,
     task_handles: Vec<tokio::task::JoinHandle<()>>,
-    lifetime_guard: Option<JsonRpcConnectionLifetimeGuard>,
+    transport_lifetime: Option<JsonRpcTransportLifetime>,
 }
 
 impl JsonRpcConnection {
@@ -127,7 +127,7 @@ impl JsonRpcConnection {
             incoming_rx,
             disconnected_rx,
             task_handles: vec![reader_task, writer_task],
-            lifetime_guard: None,
+            transport_lifetime: None,
         }
     }
 
@@ -262,12 +262,12 @@ impl JsonRpcConnection {
             incoming_rx,
             disconnected_rx,
             task_handles: vec![reader_task, writer_task],
-            lifetime_guard: None,
+            transport_lifetime: None,
         }
     }
 
-    pub(crate) fn with_lifetime_guard(mut self, guard: JsonRpcConnectionLifetimeGuard) -> Self {
-        self.lifetime_guard = Some(guard);
+    pub(crate) fn with_transport_lifetime(mut self, lifetime: JsonRpcTransportLifetime) -> Self {
+        self.transport_lifetime = Some(lifetime);
         self
     }
 
@@ -277,7 +277,7 @@ impl JsonRpcConnection {
             self.incoming_rx,
             self.disconnected_rx,
             self.task_handles,
-            self.lifetime_guard,
+            self.transport_lifetime,
         )
     }
 }

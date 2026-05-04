@@ -24,7 +24,7 @@ use tokio::task::JoinHandle;
 
 use crate::connection::JsonRpcConnection;
 use crate::connection::JsonRpcConnectionEvent;
-use crate::connection::JsonRpcConnectionLifetimeGuard;
+use crate::connection::JsonRpcTransportLifetime;
 
 #[derive(Debug)]
 pub(crate) enum RpcCallError {
@@ -231,13 +231,19 @@ pub(crate) struct RpcClient {
     disconnected_rx: watch::Receiver<bool>,
     next_request_id: AtomicI64,
     transport_tasks: Vec<JoinHandle<()>>,
-    _transport_lifetime_guard: Option<StdMutex<JsonRpcConnectionLifetimeGuard>>,
+    _transport_lifetime: Option<TransportLifetime>,
     reader_task: JoinHandle<()>,
+}
+
+// Holds transport-owned resources, such as a stdio child process, for as long
+// as the RPC client owns the underlying connection.
+struct TransportLifetime {
+    _guard: StdMutex<JsonRpcTransportLifetime>,
 }
 
 impl RpcClient {
     pub(crate) fn new(connection: JsonRpcConnection) -> (Self, mpsc::Receiver<RpcClientEvent>) {
-        let (write_tx, mut incoming_rx, disconnected_rx, transport_tasks, lifetime_guard) =
+        let (write_tx, mut incoming_rx, disconnected_rx, transport_tasks, transport_lifetime) =
             connection.into_parts();
         let pending = Arc::new(Mutex::new(HashMap::<RequestId, PendingRequest>::new()));
         let (event_tx, event_rx) = mpsc::channel(128);
@@ -279,7 +285,9 @@ impl RpcClient {
                 disconnected_rx,
                 next_request_id: AtomicI64::new(1),
                 transport_tasks,
-                _transport_lifetime_guard: lifetime_guard.map(StdMutex::new),
+                _transport_lifetime: transport_lifetime.map(|lifetime| TransportLifetime {
+                    _guard: StdMutex::new(lifetime),
+                }),
                 reader_task,
             },
             event_rx,

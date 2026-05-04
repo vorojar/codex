@@ -114,7 +114,7 @@ impl ExecServerClient {
                 stdin,
                 format!("exec-server stdio command `{shell_command}`"),
             )
-            .with_lifetime_guard(Box::new(StdioChildGuard { child: Some(child) })),
+            .with_transport_lifetime(Box::new(StdioChildGuard { child: Some(child) })),
             args.into(),
         )
         .await
