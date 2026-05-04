@@ -153,7 +153,11 @@ fn exec_fork_by_id_creates_new_session_with_copied_history() -> anyhow::Result<(
     );
     let fork_reference =
         extract_fork_reference(&forked_path).context("forked rollout should record a reference")?;
-    assert_eq!(fork_reference.0, original_path.to_string_lossy().as_ref());
+    let referenced_path = std::path::PathBuf::from(&fork_reference.0);
+    assert_eq!(
+        std::fs::canonicalize(&referenced_path)?,
+        std::fs::canonicalize(&original_path)?,
+    );
     assert_eq!(fork_reference.1, usize::MAX);
     assert!(
         !forked_content.contains(&marker),
