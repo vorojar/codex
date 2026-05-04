@@ -12,7 +12,6 @@ use crate::ExecServerError;
 use crate::ExecServerRuntimePaths;
 use crate::ExecServerTransport;
 use crate::environment::LOCAL_ENVIRONMENT_ID;
-use crate::environment_provider::EnvironmentProviderSnapshot;
 
 const ENVIRONMENTS_TOML_FILE: &str = "environments.toml";
 
@@ -61,10 +60,10 @@ impl TomlEnvironmentProvider {
 
 #[async_trait]
 impl EnvironmentProvider for TomlEnvironmentProvider {
-    async fn get_environment_snapshot(
+    async fn get_environments(
         &self,
         local_runtime_paths: &ExecServerRuntimePaths,
-    ) -> Result<EnvironmentProviderSnapshot, ExecServerError> {
+    ) -> Result<HashMap<String, Environment>, ExecServerError> {
         let mut environments = HashMap::from([(
             LOCAL_ENVIRONMENT_ID.to_string(),
             Environment::local(local_runtime_paths.clone()),
@@ -80,10 +79,11 @@ impl EnvironmentProvider for TomlEnvironmentProvider {
             );
         }
 
-        Ok(EnvironmentProviderSnapshot {
-            environments,
-            default_environment_id: self.default_environment_id.clone(),
-        })
+        Ok(environments)
+    }
+
+    fn default_environment_id(&self) -> Option<String> {
+        self.default_environment_id.clone()
     }
 }
 
@@ -244,11 +244,10 @@ mod tests {
         .expect("provider");
         let runtime_paths = test_runtime_paths();
 
-        let snapshot = provider
-            .get_environment_snapshot(&runtime_paths)
+        let environments = provider
+            .get_environments(&runtime_paths)
             .await
-            .expect("environment snapshot");
-        let environments = snapshot.environments;
+            .expect("environments");
 
         assert!(!environments[LOCAL_ENVIRONMENT_ID].is_remote());
         assert_eq!(
@@ -256,7 +255,10 @@ mod tests {
             Some("ws://127.0.0.1:8765")
         );
         assert!(environments["ssh-dev"].is_remote());
-        assert_eq!(snapshot.default_environment_id, Some("ssh-dev".to_string()));
+        assert_eq!(
+            provider.default_environment_id(),
+            Some("ssh-dev".to_string())
+        );
     }
 
     #[test]
@@ -423,11 +425,12 @@ default = "none"
         let provider =
             environment_provider_from_codex_home(codex_home.path()).expect("environment provider");
 
-        let snapshot = provider
-            .get_environment_snapshot(&test_runtime_paths())
+        let environments = provider
+            .get_environments(&test_runtime_paths())
             .await
-            .expect("environment snapshot");
+            .expect("environments");
 
-        assert_eq!(snapshot.default_environment_id, None);
+        assert!(environments.contains_key(LOCAL_ENVIRONMENT_ID));
+        assert_eq!(provider.default_environment_id(), None);
     }
 }
