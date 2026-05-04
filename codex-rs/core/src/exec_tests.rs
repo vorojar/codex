@@ -920,6 +920,74 @@ fn windows_metadata_plan_does_not_materialize_nested_missing_git() {
 }
 
 #[test]
+fn windows_shell_runtime_path_resolves_metadata_overrides() {
+    let temp_dir = tempfile::TempDir::new().expect("tempdir");
+    let cwd = dunce::canonicalize(temp_dir.path())
+        .expect("canonical temp dir")
+        .abs();
+    let manager = codex_sandboxing::SandboxManager::new();
+    let permissions = PermissionProfile::workspace_write_with(
+        &[],
+        NetworkSandboxPolicy::Restricted,
+        /*exclude_tmpdir_env_var*/ true,
+        /*exclude_slash_tmp*/ true,
+    );
+    let request = manager
+        .transform(codex_sandboxing::SandboxTransformRequest {
+            command: codex_sandboxing::SandboxCommand {
+                program: "cmd.exe".into(),
+                args: vec!["/c".to_string(), "echo ok".to_string()],
+                cwd: cwd.clone(),
+                env: HashMap::new(),
+                additional_permissions: None,
+            },
+            permissions: &permissions,
+            sandbox: SandboxType::WindowsRestrictedToken,
+            enforce_managed_network: false,
+            network: None,
+            sandbox_policy_cwd: &cwd,
+            codex_linux_sandbox_exe: None,
+            use_legacy_landlock: false,
+            windows_sandbox_level: WindowsSandboxLevel::RestrictedToken,
+            windows_sandbox_private_desktop: false,
+        })
+        .expect("transform");
+    let mut exec_request = crate::sandboxing::ExecRequest::from_sandbox_exec_request(
+        request,
+        crate::sandboxing::ExecOptions {
+            expiration: ExecExpiration::DefaultTimeout,
+            capture_policy: ExecCapturePolicy::ShellTool,
+        },
+        cwd.clone(),
+    );
+
+    assert_eq!(exec_request.windows_sandbox_filesystem_overrides, None);
+
+    ensure_windows_sandbox_filesystem_overrides(&mut exec_request).expect("resolve overrides");
+
+    let overrides = exec_request
+        .windows_sandbox_filesystem_overrides
+        .expect("metadata overrides");
+    assert_eq!(
+        overrides.protected_metadata_targets,
+        vec![
+            WindowsProtectedMetadataTarget {
+                path: cwd.join(".agents"),
+                mode: WindowsProtectedMetadataMode::MissingCreationMonitor,
+            },
+            WindowsProtectedMetadataTarget {
+                path: cwd.join(".codex"),
+                mode: WindowsProtectedMetadataMode::MissingCreationMonitor,
+            },
+            WindowsProtectedMetadataTarget {
+                path: cwd.join(".git"),
+                mode: WindowsProtectedMetadataMode::MissingCreationMonitor,
+            },
+        ]
+    );
+}
+
+#[test]
 fn windows_elevated_rejects_unreadable_split_carveouts() {
     let temp_dir = tempfile::TempDir::new().expect("tempdir");
     let blocked = temp_dir.path().join("blocked");
