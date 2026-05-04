@@ -31,6 +31,7 @@ use core_test_support::test_codex::TestCodex;
 use core_test_support::test_codex::test_codex;
 use core_test_support::test_codex::test_env;
 use core_test_support::wait_for_event;
+use core_test_support::wait_for_event_with_timeout;
 use pretty_assertions::assert_eq;
 use serde_json::Value;
 use serde_json::json;
@@ -40,6 +41,9 @@ use std::process::Command;
 use std::time::SystemTime;
 use std::time::UNIX_EPOCH;
 use tempfile::TempDir;
+use tokio::time::Duration;
+
+const REMOTE_EXEC_COMMAND_ROUTING_TIMEOUT: Duration = Duration::from_secs(60);
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn remote_test_env_can_connect_and_use_filesystem() -> Result<()> {
@@ -167,9 +171,11 @@ async fn exec_command_routing_output(
 
     test.submit_turn_with_environments("route exec command", environments)
         .await?;
-    wait_for_event(&test.codex, |event| {
-        matches!(event, EventMsg::TurnComplete(_))
-    })
+    wait_for_event_with_timeout(
+        &test.codex,
+        |event| matches!(event, EventMsg::TurnComplete(_)),
+        REMOTE_EXEC_COMMAND_ROUTING_TIMEOUT,
+    )
     .await;
 
     response_mock
