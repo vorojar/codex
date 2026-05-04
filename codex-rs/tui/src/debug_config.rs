@@ -10,6 +10,10 @@ use codex_config::NetworkConstraints;
 use codex_config::NetworkDomainPermissionToml;
 use codex_config::NetworkUnixSocketPermissionToml;
 use codex_config::RequirementSource;
+use codex_config::RequirementsExecPolicyDecisionToml;
+use codex_config::RequirementsExecPolicyPatternTokenToml;
+use codex_config::RequirementsExecPolicyPrefixRuleToml;
+use codex_config::RequirementsExecPolicyToml;
 use codex_config::ResidencyRequirement;
 use codex_config::SandboxModeRequirement;
 use codex_config::WebSearchModeRequirement;
@@ -192,11 +196,9 @@ fn render_debug_config_lines(stack: &ConfigLayerStack) -> Vec<Line<'static>> {
         ));
     }
 
-    // TODO(gt): Expand this debug output with detailed skills and rules display.
-    if requirements_toml.rules.is_some() {
-        requirement_lines.push(requirement_line(
-            "rules",
-            "configured".to_string(),
+    if let Some(rules) = requirements_toml.rules.as_ref() {
+        requirement_lines.extend(render_exec_policy_requirements(
+            rules,
             requirements.exec_policy_source(),
         ));
     }
@@ -344,11 +346,80 @@ fn requirement_line(
     format!("  - {name}: {value} (source: {source})").into()
 }
 
+fn render_exec_policy_requirements(
+    rules: &RequirementsExecPolicyToml,
+    source: Option<&RequirementSource>,
+) -> Vec<Line<'static>> {
+    let mut lines = vec![requirement_line(
+        "rules",
+        format!("prefix_rules={}", rules.prefix_rules.len()),
+        source,
+    )];
+
+    if rules.prefix_rules.is_empty() {
+        lines.push("      - <empty>".dim().into());
+        return lines;
+    }
+
+    lines.extend(
+        rules
+            .prefix_rules
+            .iter()
+            .map(|rule| format!("      - {}", format_exec_policy_prefix_rule(rule)).into()),
+    );
+    lines
+}
+
+fn format_exec_policy_prefix_rule(rule: &RequirementsExecPolicyPrefixRuleToml) -> String {
+    let pattern = join_or_placeholder(
+        rule.pattern
+            .iter()
+            .map(format_exec_policy_pattern_token)
+            .collect::<Vec<_>>(),
+        " ",
+    );
+    let decision = rule
+        .decision
+        .map(format_exec_policy_decision)
+        .unwrap_or_else(|| "<missing>".to_string());
+
+    if let Some(justification) = &rule.justification
+        && !justification.trim().is_empty()
+    {
+        return format!("{pattern} -> {decision} ({justification})");
+    }
+
+    format!("{pattern} -> {decision}")
+}
+
+fn format_exec_policy_pattern_token(token: &RequirementsExecPolicyPatternTokenToml) -> String {
+    match (&token.token, &token.any_of) {
+        (Some(token), None) => token.clone(),
+        (None, Some(any_of)) => format!("[{}]", any_of.join("|")),
+        (Some(token), Some(any_of)) => {
+            format!("<invalid token={token} any_of=[{}]>", any_of.join("|"))
+        }
+        (None, None) => "<invalid>".to_string(),
+    }
+}
+
+fn format_exec_policy_decision(decision: RequirementsExecPolicyDecisionToml) -> String {
+    match decision {
+        RequirementsExecPolicyDecisionToml::Allow => "allow".to_string(),
+        RequirementsExecPolicyDecisionToml::Prompt => "prompt".to_string(),
+        RequirementsExecPolicyDecisionToml::Forbidden => "forbidden".to_string(),
+    }
+}
+
 fn join_or_empty(values: Vec<String>) -> String {
+    join_or_placeholder(values, ", ")
+}
+
+fn join_or_placeholder(values: Vec<String>, separator: &str) -> String {
     if values.is_empty() {
         "<empty>".to_string()
     } else {
-        values.join(", ")
+        values.join(separator)
     }
 }
 
@@ -526,6 +597,11 @@ mod tests {
     use codex_config::NetworkUnixSocketPermissionToml;
     use codex_config::NetworkUnixSocketPermissionsToml;
     use codex_config::RequirementSource;
+    use codex_config::RequirementsExecPolicy;
+    use codex_config::RequirementsExecPolicyDecisionToml;
+    use codex_config::RequirementsExecPolicyPatternTokenToml;
+    use codex_config::RequirementsExecPolicyPrefixRuleToml;
+    use codex_config::RequirementsExecPolicyToml;
     use codex_config::ResidencyRequirement;
     use codex_config::SandboxModeRequirement;
     use codex_config::Sourced;
@@ -534,6 +610,7 @@ mod tests {
     use codex_protocol::config_types::WebSearchMode;
     use codex_protocol::models::PermissionProfile;
     use codex_utils_absolute_path::AbsolutePathBuf;
+    use pretty_assertions::assert_eq;
     use ratatui::text::Line;
     use std::collections::BTreeMap;
     use toml::Value as TomlValue;
@@ -956,6 +1033,61 @@ approval_policy = "never"
         assert!(rendered.contains("hooks:"));
         assert!(rendered.contains("handlers=1"));
         assert!(rendered.contains("(source: cloud requirements)"));
+    }
+
+    #[test]
+    fn debug_config_output_expands_rules_requirement() {
+        let rules = RequirementsExecPolicyToml {
+            prefix_rules: vec![
+                RequirementsExecPolicyPrefixRuleToml {
+                    pattern: vec![
+                        RequirementsExecPolicyPatternTokenToml {
+                            token: Some("rg".to_string()),
+                            any_of: None,
+                        },
+                        RequirementsExecPolicyPatternTokenToml {
+                            token: Some("--files".to_string()),
+                            any_of: None,
+                        },
+                    ],
+                    decision: Some(RequirementsExecPolicyDecisionToml::Prompt),
+                    justification: None,
+                },
+                RequirementsExecPolicyPrefixRuleToml {
+                    pattern: vec![
+                        RequirementsExecPolicyPatternTokenToml {
+                            token: None,
+                            any_of: Some(vec!["git".to_string(), "jj".to_string()]),
+                        },
+                        RequirementsExecPolicyPatternTokenToml {
+                            token: Some("commit".to_string()),
+                            any_of: None,
+                        },
+                    ],
+                    decision: Some(RequirementsExecPolicyDecisionToml::Forbidden),
+                    justification: Some("use non-destructive history edits".to_string()),
+                },
+            ],
+        };
+        let requirements = ConfigRequirements {
+            exec_policy: Some(Sourced::new(
+                RequirementsExecPolicy::new(rules.to_policy().expect("rules should parse")),
+                RequirementSource::CloudRequirements,
+            )),
+            ..ConfigRequirements::default()
+        };
+        let requirements_toml = ConfigRequirementsToml {
+            rules: Some(rules),
+            ..ConfigRequirementsToml::default()
+        };
+        let stack = ConfigLayerStack::new(Vec::new(), requirements, requirements_toml)
+            .expect("config layer stack");
+
+        let rendered = render_to_text(&render_debug_config_lines(&stack));
+        assert_eq!(
+            rendered,
+            "/debug-config\n\nConfig layer stack (lowest precedence first):\n  <none>\n\nRequirements:\n  - rules: prefix_rules=2 (source: cloud requirements)\n      - rg --files -> prompt\n      - [git|jj] commit -> forbidden (use non-destructive history edits)"
+        );
     }
 
     #[test]
