@@ -7,7 +7,6 @@ use serde::Deserialize;
 use serde::Serialize;
 
 use crate::DefaultEnvironmentProvider;
-use crate::DefaultEnvironmentSelection;
 use crate::Environment;
 use crate::EnvironmentProvider;
 use crate::ExecServerError;
@@ -87,13 +86,14 @@ impl EnvironmentProvider for TomlEnvironmentProvider {
         Ok(environments)
     }
 
-    fn default_environment_selection(&self) -> DefaultEnvironmentSelection {
+    fn default_environment_id(
+        &self,
+        _environments: &HashMap<String, Environment>,
+    ) -> Option<String> {
         match self.default.as_deref().map(str::trim) {
-            None => DefaultEnvironmentSelection::Environment(LOCAL_ENVIRONMENT_ID.to_string()),
-            Some(default) if default.eq_ignore_ascii_case("none") => {
-                DefaultEnvironmentSelection::Disabled
-            }
-            Some(default) => DefaultEnvironmentSelection::Environment(default.to_string()),
+            None => Some(LOCAL_ENVIRONMENT_ID.to_string()),
+            Some(default) if default.eq_ignore_ascii_case("none") => None,
+            Some(default) => Some(default.to_string()),
         }
     }
 }
@@ -278,8 +278,8 @@ mod tests {
         );
         assert!(environments["ssh-dev"].is_remote());
         assert_eq!(
-            provider.default_environment_selection(),
-            DefaultEnvironmentSelection::Environment("ssh-dev".to_string())
+            provider.default_environment_id(&environments),
+            Some("ssh-dev".to_string())
         );
     }
 
@@ -288,8 +288,8 @@ mod tests {
         let provider = TomlEnvironmentProvider::new(EnvironmentsToml::default()).expect("provider");
 
         assert_eq!(
-            provider.default_environment_selection(),
-            DefaultEnvironmentSelection::Environment(LOCAL_ENVIRONMENT_ID.to_string())
+            provider.default_environment_id(&HashMap::new()),
+            Some(LOCAL_ENVIRONMENT_ID.to_string())
         );
     }
 
@@ -301,10 +301,7 @@ mod tests {
         })
         .expect("provider");
 
-        assert_eq!(
-            provider.default_environment_selection(),
-            DefaultEnvironmentSelection::Disabled
-        );
+        assert_eq!(provider.default_environment_id(&HashMap::new()), None);
     }
 
     #[test]
@@ -450,9 +447,6 @@ default = "none"
         let provider =
             environment_provider_from_codex_home(codex_home.path()).expect("environment provider");
 
-        assert_eq!(
-            provider.default_environment_selection(),
-            DefaultEnvironmentSelection::Disabled
-        );
+        assert_eq!(provider.default_environment_id(&HashMap::new()), None);
     }
 }
