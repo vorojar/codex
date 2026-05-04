@@ -1956,6 +1956,8 @@ async fn forked_spawn_first_request_uses_parent_cache_key_and_mcp_snapshot() -> 
     )
     .await;
     let (_home, mut config) = test_config().await;
+    let _ = config.features.enable(Feature::MultiAgentV2);
+    let _ = config.features.enable(Feature::AgentWatchdog);
     config.model_provider.base_url = Some(format!("{}/v1", server.uri()));
     config.model_provider.supports_websockets = false;
     let mcp_server_path = config.codex_home.join("fake_mcp_server.py");
