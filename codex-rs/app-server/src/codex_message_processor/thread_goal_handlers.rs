@@ -62,26 +62,24 @@ impl CodexMessageProcessor {
         {
             // `/goal` can be the first interaction on a lazily-created thread. Materialize the
             // rollout now so thread list/resume can discover it on disk.
-            if let Err(err) = self.thread_store.persist_thread(thread_id).await {
-                self.send_internal_error(
-                    request_id,
-                    format!("failed to materialize thread before setting goal: {err}"),
-                )
-                .await;
-                return;
-            }
+            self.thread_store
+                .persist_thread(thread_id)
+                .await
+                .map_err(|err| {
+                    internal_error(format!(
+                        "failed to materialize thread before setting goal: {err}"
+                    ))
+                })?;
 
-            let first_user_message = match state_db.get_thread(thread_id).await {
-                Ok(metadata) => metadata.and_then(|metadata| metadata.first_user_message),
-                Err(err) => {
-                    self.send_internal_error(
-                        request_id,
-                        format!("failed to read thread metadata before setting goal: {err}"),
-                    )
-                    .await;
-                    return;
-                }
-            };
+            let first_user_message = state_db
+                .get_thread(thread_id)
+                .await
+                .map_err(|err| {
+                    internal_error(format!(
+                        "failed to read thread metadata before setting goal: {err}"
+                    ))
+                })?
+                .and_then(|metadata| metadata.first_user_message);
             if first_user_message
                 .as_deref()
                 .is_none_or(|message| message.trim().is_empty())
@@ -95,29 +93,23 @@ impl CodexMessageProcessor {
                     local_images: Vec::new(),
                     text_elements: Vec::new(),
                 }));
-                if let Err(err) = self
-                    .thread_store
+                self.thread_store
                     .append_items(StoreAppendThreadItemsParams {
                         thread_id,
                         items: vec![item],
                     })
                     .await
-                {
-                    self.send_internal_error(
-                        request_id,
-                        format!("failed to seed goal-started thread preview: {err}"),
-                    )
-                    .await;
-                    return;
-                }
-                if let Err(err) = self.thread_store.flush_thread(thread_id).await {
-                    self.send_internal_error(
-                        request_id,
-                        format!("failed to flush goal-started thread preview: {err}"),
-                    )
-                    .await;
-                    return;
-                }
+                    .map_err(|err| {
+                        internal_error(format!("failed to seed goal-started thread preview: {err}"))
+                    })?;
+                self.thread_store
+                    .flush_thread(thread_id)
+                    .await
+                    .map_err(|err| {
+                        internal_error(format!(
+                            "failed to flush goal-started thread preview: {err}"
+                        ))
+                    })?;
             }
         }
 
