@@ -284,6 +284,42 @@ fn maybe_wrap_shell_lc_with_snapshot_uses_sh_bootstrap_shell() {
 }
 
 #[test]
+fn maybe_wrap_shell_lc_with_snapshot_bootstraps_powershell_without_profile() {
+    let dir = tempdir().expect("create temp dir");
+    let snapshot_path = dir.path().join("snapshot.ps1");
+    std::fs::write(
+        &snapshot_path,
+        "# Snapshot file\n$env:PATH='C:\\snapshot\\bin'\n",
+    )
+    .expect("write snapshot");
+    let session_shell = shell_with_snapshot(
+        ShellType::PowerShell,
+        "C:\\Program Files\\PowerShell\\7\\pwsh.exe",
+        snapshot_path.abs(),
+        dir.path().abs(),
+    );
+    let command = vec![
+        "C:\\Program Files\\PowerShell\\7\\pwsh.exe".to_string(),
+        "-Command".to_string(),
+        "npm --version".to_string(),
+    ];
+
+    let rewritten = maybe_wrap_shell_lc_with_snapshot(
+        &command,
+        &session_shell,
+        &dir.path().abs(),
+        &HashMap::new(),
+        &HashMap::new(),
+    );
+
+    assert_eq!(rewritten[0], "C:\\Program Files\\PowerShell\\7\\pwsh.exe");
+    assert_eq!(rewritten[1], "-NoProfile");
+    assert_eq!(rewritten[2], "-Command");
+    assert!(rewritten[3].contains(". '"));
+    assert!(rewritten[3].contains("npm --version"));
+}
+
+#[test]
 fn maybe_wrap_shell_lc_with_snapshot_preserves_trailing_args() {
     let dir = tempdir().expect("create temp dir");
     let snapshot_path = dir.path().join("snapshot.sh");

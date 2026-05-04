@@ -186,7 +186,7 @@ async fn write_shell_snapshot(
     output_path: &AbsolutePathBuf,
     cwd: &AbsolutePathBuf,
 ) -> Result<()> {
-    if shell_type == ShellType::PowerShell || shell_type == ShellType::Cmd {
+    if shell_type == ShellType::Cmd {
         bail!("Shell snapshot not supported yet for {shell_type:?}");
     }
     let shell = get_shell(shell_type.clone(), /*path*/ None)
@@ -235,8 +235,14 @@ async fn validate_snapshot(
     snapshot_path: &AbsolutePathBuf,
     cwd: &AbsolutePathBuf,
 ) -> Result<()> {
-    let snapshot_path_display = snapshot_path.display();
-    let script = format!("set -e; . \"{snapshot_path_display}\"");
+    let snapshot_path_display = snapshot_path.display().to_string();
+    let script = match shell.shell_type {
+        ShellType::PowerShell => {
+            let snapshot_path = snapshot_path_display.replace('\'', "''");
+            format!(". '{snapshot_path}'")
+        }
+        _ => format!("set -e; . \"{snapshot_path_display}\""),
+    };
     run_script_with_timeout(
         shell,
         &script,

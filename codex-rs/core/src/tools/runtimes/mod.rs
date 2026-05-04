@@ -8,6 +8,7 @@ use crate::exec_env::CODEX_THREAD_ID_ENV_VAR;
 use crate::path_utils;
 use crate::sandboxing::SandboxPermissions;
 use crate::shell::Shell;
+use crate::shell::ShellType;
 use crate::tools::sandboxing::ToolError;
 #[cfg(target_os = "macos")]
 use codex_network_proxy::CODEX_PROXY_GIT_SSH_COMMAND_MARKER;
@@ -67,18 +68,20 @@ pub(crate) fn exec_env_for_sandbox_permissions(
     env
 }
 
-/// POSIX-only helper: for commands produced by `Shell::derive_exec_args`
-/// for Bash/Zsh/sh of the form `[shell_path, "-lc", "<script>"]`, and
-/// when a snapshot is configured on the session shell, rewrite the argv
-/// to a single non-login shell that sources the snapshot before running
-/// the original script:
+/// Helper for replaying a captured shell snapshot before running the command.
+///
+/// For POSIX shells, commands of the form `[shell_path, "-lc", "<script>"]`
+/// are rewritten to a single non-login shell that sources the snapshot before
+/// running the original script:
 ///
 ///   shell -lc "<script>"
 ///   => user_shell -c ". SNAPSHOT (best effort); exec shell -c <script>"
 ///
-/// This wrapper script uses POSIX constructs (`if`, `.`, `exec`) so it can
-/// be run by Bash/Zsh/sh. On non-matching commands, or when command cwd does
-/// not match the snapshot cwd, this is a no-op.
+/// PowerShell commands are rewritten to `-NoProfile -Command` so the sandbox
+/// reuses the captured profile state without re-running the live profile.
+///
+/// On non-matching commands, or when command cwd does not match the snapshot
+/// cwd, this is a no-op.
 ///
 /// `explicit_env_overrides` and `env` are intentionally separate inputs.
 /// `explicit_env_overrides` contains policy-driven shell env overrides that
@@ -93,10 +96,6 @@ pub(crate) fn maybe_wrap_shell_lc_with_snapshot(
     explicit_env_overrides: &HashMap<String, String>,
     env: &HashMap<String, String>,
 ) -> Vec<String> {
-    if cfg!(windows) {
-        return command.to_vec();
-    }
-
     let Some(snapshot) = session_shell.shell_snapshot() else {
         return command.to_vec();
     };
@@ -109,43 +108,127 @@ pub(crate) fn maybe_wrap_shell_lc_with_snapshot(
         return command.to_vec();
     }
 
-    if command.len() < 3 {
-        return command.to_vec();
-    }
+    match session_shell.shell_type {
+        ShellType::Zsh | ShellType::Bash | ShellType::Sh => {
+            if command.len() < 3 || command[1] != "-lc" {
+                return command.to_vec();
+            }
 
-    let flag = command[1].as_str();
-    if flag != "-lc" {
-        return command.to_vec();
-    }
+            let snapshot_path = snapshot.path.to_string_lossy();
+            let shell_path = session_shell.shell_path.to_string_lossy();
+            let original_shell = shell_single_quote(&command[0]);
+            let original_script = shell_single_quote(&command[2]);
+            let snapshot_path = shell_single_quote(snapshot_path.as_ref());
+            let trailing_args = command[3..]
+                .iter()
+                .map(|arg| format!(" '{}'", shell_single_quote(arg)))
+                .collect::<String>();
+            let mut override_env = explicit_env_overrides.clone();
+            if let Some(thread_id) = env.get(CODEX_THREAD_ID_ENV_VAR) {
+                override_env.insert(CODEX_THREAD_ID_ENV_VAR.to_string(), thread_id.clone());
+            }
+            let (override_captures, override_exports) = build_override_exports(&override_env);
+            let (proxy_captures, proxy_exports) = build_proxy_env_exports();
+            let override_captures = join_shell_blocks([override_captures, proxy_captures]);
+            let override_exports = join_shell_blocks([override_exports, proxy_exports]);
+            let rewritten_script = if override_exports.is_empty() {
+                format!(
+                    "if . '{snapshot_path}' >/dev/null 2>&1; then :; fi\n\nexec '{original_shell}' -c '{original_script}'{trailing_args}"
+                )
+            } else {
+                format!(
+                    "{override_captures}\n\nif . '{snapshot_path}' >/dev/null 2>&1; then :; fi\n\n{override_exports}\n\nexec '{original_shell}' -c '{original_script}'{trailing_args}"
+                )
+            };
 
-    let snapshot_path = snapshot.path.to_string_lossy();
-    let shell_path = session_shell.shell_path.to_string_lossy();
-    let original_shell = shell_single_quote(&command[0]);
-    let original_script = shell_single_quote(&command[2]);
-    let snapshot_path = shell_single_quote(snapshot_path.as_ref());
-    let trailing_args = command[3..]
+            vec![shell_path.to_string(), "-c".to_string(), rewritten_script]
+        }
+        ShellType::PowerShell => wrap_powershell_command_with_snapshot(
+            command,
+            session_shell,
+            &snapshot,
+            explicit_env_overrides,
+            env,
+        ),
+        ShellType::Cmd => command.to_vec(),
+    }
+}
+
+fn wrap_powershell_command_with_snapshot(
+    command: &[String],
+    session_shell: &Shell,
+    snapshot: &crate::shell_snapshot::ShellSnapshot,
+    explicit_env_overrides: &HashMap<String, String>,
+    env: &HashMap<String, String>,
+) -> Vec<String> {
+    let Some(command_idx) = command
         .iter()
-        .map(|arg| format!(" '{}'", shell_single_quote(arg)))
-        .collect::<String>();
-    let mut override_env = explicit_env_overrides.clone();
-    if let Some(thread_id) = env.get(CODEX_THREAD_ID_ENV_VAR) {
-        override_env.insert(CODEX_THREAD_ID_ENV_VAR.to_string(), thread_id.clone());
-    }
-    let (override_captures, override_exports) = build_override_exports(&override_env);
-    let (proxy_captures, proxy_exports) = build_proxy_env_exports();
-    let override_captures = join_shell_blocks([override_captures, proxy_captures]);
-    let override_exports = join_shell_blocks([override_exports, proxy_exports]);
-    let rewritten_script = if override_exports.is_empty() {
-        format!(
-            "if . '{snapshot_path}' >/dev/null 2>&1; then :; fi\n\nexec '{original_shell}' -c '{original_script}'{trailing_args}"
-        )
+        .position(|arg| arg.eq_ignore_ascii_case("-Command"))
+    else {
+        return command.to_vec();
+    };
+    let Some(original_script) = command.get(command_idx + 1) else {
+        return command.to_vec();
+    };
+
+    let snapshot_path = powershell_single_quote(&snapshot.path.to_string_lossy());
+    let restores = build_powershell_env_restores(explicit_env_overrides, env);
+    let rewritten_script = if restores.is_empty() {
+        format!("& {{ . '{snapshot_path}'\n{original_script}\n}}")
     } else {
         format!(
-            "{override_captures}\n\nif . '{snapshot_path}' >/dev/null 2>&1; then :; fi\n\n{override_exports}\n\nexec '{original_shell}' -c '{original_script}'{trailing_args}"
+            "& {{\n{restores}\n. '{snapshot_path}'\n$__codexSnapshotRestore.Invoke()\n{original_script}\n}}"
         )
     };
 
-    vec![shell_path.to_string(), "-c".to_string(), rewritten_script]
+    vec![
+        session_shell.shell_path.to_string_lossy().to_string(),
+        "-NoProfile".to_string(),
+        "-Command".to_string(),
+        rewritten_script,
+    ]
+}
+
+fn build_powershell_env_restores(
+    explicit_env_overrides: &HashMap<String, String>,
+    env: &HashMap<String, String>,
+) -> String {
+    let mut keys = explicit_env_overrides.keys().cloned().collect::<Vec<_>>();
+    if env.contains_key(CODEX_THREAD_ID_ENV_VAR) {
+        keys.push(CODEX_THREAD_ID_ENV_VAR.to_string());
+    }
+    keys.extend(PROXY_ENV_KEYS.iter().map(|key| key.to_string()));
+    keys.sort_unstable();
+    keys.dedup();
+
+    if keys.is_empty() {
+        return String::new();
+    }
+
+    let captures = keys
+        .iter()
+        .enumerate()
+        .map(|(idx, key)| {
+            let key = powershell_single_quote(key);
+            format!(
+                "$__codexSnapshotSet{idx} = [Environment]::GetEnvironmentVariable('{key}') -ne $null\n$__codexSnapshotValue{idx} = [Environment]::GetEnvironmentVariable('{key}')"
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    let restores = keys
+        .iter()
+        .enumerate()
+        .map(|(idx, key)| {
+            let key = powershell_single_quote(key);
+            format!(
+                "if ($__codexSnapshotSet{idx}) {{ [Environment]::SetEnvironmentVariable('{key}', $__codexSnapshotValue{idx}) }} else {{ Remove-Item -LiteralPath 'Env:{key}' -ErrorAction SilentlyContinue }}"
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    format!("{captures}\n$__codexSnapshotRestore = {{\n{restores}\n}}")
 }
 
 fn build_override_exports(explicit_env_overrides: &HashMap<String, String>) -> (String, String) {
@@ -255,6 +338,10 @@ fn is_valid_shell_variable_name(name: &str) -> bool {
 
 fn shell_single_quote(input: &str) -> String {
     input.replace('\'', r#"'"'"'"#)
+}
+
+fn powershell_single_quote(input: &str) -> String {
+    input.replace('\'', "''")
 }
 
 #[cfg(all(test, unix))]
