@@ -358,6 +358,9 @@
           "default": null,
           "description": "Optional feature toggles scoped to this profile.",
           "properties": {
+            "agent_prompt_injection": {
+              "type": "boolean"
+            },
             "agent_watchdog": {
               "type": "boolean"
             },
@@ -3863,6 +3866,9 @@
       "default": null,
       "description": "Centralized feature flags (new). Prefer this over individual toggles.",
       "properties": {
+        "agent_prompt_injection": {
+          "type": "boolean"
+        },
         "agent_watchdog": {
           "type": "boolean"
         },

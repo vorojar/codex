@@ -193,6 +193,7 @@ impl AgentControl {
     }
 
     /// Spawn a new agent thread and submit the initial prompt.
+    #[allow(dead_code)]
     pub(crate) async fn spawn_agent(
         &self,
         config: crate::config::Config,
