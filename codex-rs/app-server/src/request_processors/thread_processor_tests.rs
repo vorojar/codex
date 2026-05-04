@@ -204,6 +204,7 @@ mod thread_processor_behavior_tests {
                     text_elements: Vec::new(),
                 }],
             }],
+            items_view: TurnItemsView::Full,
             error: None,
             status: TurnStatus::InProgress,
             started_at: None,

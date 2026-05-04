@@ -519,6 +519,7 @@ impl TurnRequestProcessor {
         let turn = Turn {
             id: turn_id,
             items: vec![],
+            items_view: TurnItemsView::NotLoaded,
             error: None,
             status: TurnStatus::InProgress,
             started_at: None,
@@ -835,6 +836,7 @@ impl TurnRequestProcessor {
         Turn {
             id: turn_id,
             items,
+            items_view: TurnItemsView::Full,
             error: None,
             status: TurnStatus::InProgress,
             started_at: None,
