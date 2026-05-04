@@ -77,8 +77,13 @@ impl McpRequestProcessor {
         &self,
         _params: Option<()>,
     ) -> Result<McpServerRefreshResponse, JSONRPCErrorError> {
-        self.load_latest_config(/*fallback_cwd*/ None).await?;
-        Self::queue_mcp_server_refresh(&self.thread_manager, &self.config_manager).await;
+        crate::mcp_refresh::queue_strict_refresh(&self.thread_manager, &self.config_manager)
+            .await
+            .map_err(|err| JSONRPCErrorError {
+                code: INTERNAL_ERROR_CODE,
+                message: format!("failed to refresh MCP servers: {err}"),
+                data: None,
+            })?;
         Ok(McpServerRefreshResponse {})
     }
 
@@ -117,25 +122,6 @@ impl McpRequestProcessor {
             })?;
 
         Ok((thread_id, thread))
-    }
-
-    pub(super) async fn queue_mcp_server_refresh(
-        thread_manager: &Arc<ThreadManager>,
-        config_manager: &ConfigManager,
-    ) {
-        // Refresh requests are queued per thread; each thread rebuilds MCP connections on its next
-        // active turn to avoid work for threads that never resume.
-        let config_manager = config_manager.clone();
-        thread_manager
-            .refresh_mcp_servers(move |thread_config| {
-                let config_manager = config_manager.clone();
-                async move {
-                    config_manager
-                        .load_latest_config(Some(thread_config.cwd.to_path_buf()))
-                        .await
-                }
-            })
-            .await;
     }
 
     async fn mcp_server_oauth_login_response(

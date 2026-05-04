@@ -2698,7 +2698,7 @@ fn filter_plugin_mcp_servers_by_allowlist_blocks_unlisted_plugin() {
 }
 
 #[tokio::test]
-async fn with_refreshed_mcp_config_preserves_session_layers_and_current_requirements()
+async fn rebuild_for_mcp_refresh_planning_preserves_session_layers_and_refreshes_requirements()
 -> std::io::Result<()> {
     let codex_home = TempDir::new()?;
     let user_file = AbsolutePathBuf::resolve_path_against_base(CONFIG_TOML_FILE, codex_home.path());
@@ -2866,7 +2866,9 @@ async fn with_refreshed_mcp_config_preserves_session_layers_and_current_requirem
         thread_layer_stack,
     )
     .await?;
-    let config = thread_config.with_refreshed_mcp_config(&refreshed_config)?;
+    let config = thread_config
+        .rebuild_for_mcp_refresh_planning(&refreshed_config)
+        .await?;
 
     assert_eq!(
         config.mcp_servers.get(),
@@ -2898,6 +2900,100 @@ async fn with_refreshed_mcp_config_preserves_session_layers_and_current_requirem
                 },
             ),
         ])
+    );
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn rebuild_for_mcp_refresh_planning_refreshes_plugin_derived_mcp_config() -> anyhow::Result<()>
+{
+    let codex_home = TempDir::new()?;
+    let plugin_root = codex_home
+        .path()
+        .join("plugins/cache")
+        .join("test/sample/local");
+    std::fs::create_dir_all(plugin_root.join(".codex-plugin"))?;
+    std::fs::write(
+        plugin_root.join(".codex-plugin/plugin.json"),
+        r#"{"name":"sample"}"#,
+    )?;
+    std::fs::write(
+        plugin_root.join(".mcp.json"),
+        r#"{
+  "mcpServers": {
+    "sample": {
+      "type": "http",
+      "url": "https://sample.example/mcp"
+    }
+  }
+}"#,
+    )?;
+
+    let user_file = AbsolutePathBuf::resolve_path_against_base(CONFIG_TOML_FILE, codex_home.path());
+    let refreshed_layer_stack = ConfigLayerStack::new(
+        vec![ConfigLayerEntry::new(
+            codex_app_server_protocol::ConfigLayerSource::User {
+                file: user_file.clone(),
+            },
+            toml::toml! {
+                [features]
+                plugins = true
+
+                [plugins."sample@test"]
+                enabled = true
+            }
+            .into(),
+        )],
+        Default::default(),
+        Default::default(),
+    )?;
+    let refreshed_config = Config::load_config_with_layer_stack(
+        LOCAL_FS.as_ref(),
+        refreshed_layer_stack.effective_config().try_into()?,
+        ConfigOverrides {
+            cwd: Some(codex_home.path().to_path_buf()),
+            ..Default::default()
+        },
+        codex_home.abs(),
+        refreshed_layer_stack,
+    )
+    .await?;
+    let thread_layer_stack = ConfigLayerStack::new(
+        vec![ConfigLayerEntry::new(
+            codex_app_server_protocol::ConfigLayerSource::User { file: user_file },
+            toml::toml! {
+                [features]
+                plugins = false
+
+                [plugins."sample@test"]
+                enabled = true
+            }
+            .into(),
+        )],
+        Default::default(),
+        Default::default(),
+    )?;
+    let thread_config = Config::load_config_with_layer_stack(
+        LOCAL_FS.as_ref(),
+        thread_layer_stack.effective_config().try_into()?,
+        ConfigOverrides {
+            cwd: Some(codex_home.path().to_path_buf()),
+            ..Default::default()
+        },
+        codex_home.abs(),
+        thread_layer_stack,
+    )
+    .await?;
+    let config = thread_config
+        .rebuild_for_mcp_refresh_planning(&refreshed_config)
+        .await?;
+    let plugins_manager = PluginsManager::new(codex_home.path().to_path_buf());
+    let mcp_config = config.to_mcp_config(&plugins_manager).await;
+
+    assert_eq!(
+        mcp_config.configured_mcp_servers.get("sample"),
+        Some(&http_mcp("https://sample.example/mcp"))
     );
 
     Ok(())

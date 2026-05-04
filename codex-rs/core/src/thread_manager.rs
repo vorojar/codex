@@ -40,7 +40,6 @@ use codex_protocol::openai_models::ModelPreset;
 use codex_protocol::protocol::Event;
 use codex_protocol::protocol::EventMsg;
 use codex_protocol::protocol::InitialHistory;
-use codex_protocol::protocol::McpServerRefreshConfig;
 use codex_protocol::protocol::Op;
 use codex_protocol::protocol::RolloutItem;
 use codex_protocol::protocol::SessionConfiguredEvent;
@@ -64,7 +63,6 @@ use futures::StreamExt;
 use futures::stream::FuturesUnordered;
 use std::collections::HashMap;
 use std::collections::HashSet;
-use std::future::Future;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
@@ -454,64 +452,6 @@ impl ThreadManager {
 
     pub async fn list_thread_ids(&self) -> Vec<ThreadId> {
         self.state.list_thread_ids().await
-    }
-
-    pub async fn refresh_mcp_servers<F, Fut>(&self, load_refreshed_config: F)
-    where
-        F: Fn(Config) -> Fut,
-        Fut: Future<Output = std::io::Result<Config>>,
-    {
-        let threads = self
-            .state
-            .threads
-            .read()
-            .await
-            .values()
-            .cloned()
-            .collect::<Vec<_>>();
-        for thread in threads {
-            let thread_config = thread.config().await;
-            let refreshed_config = match load_refreshed_config((*thread_config).clone()).await {
-                Ok(config) => config,
-                Err(err) => {
-                    warn!("failed to load refreshed MCP config for thread: {err}");
-                    continue;
-                }
-            };
-            let config = match thread_config.with_refreshed_mcp_config(&refreshed_config) {
-                Ok(config) => config,
-                Err(err) => {
-                    warn!("failed to build refreshed MCP config for thread: {err}");
-                    continue;
-                }
-            };
-            let mcp_servers = self.state.mcp_manager.configured_servers(&config).await;
-            let refresh_config = match (
-                serde_json::to_value(mcp_servers),
-                serde_json::to_value(config.mcp_oauth_credentials_store_mode),
-            ) {
-                (Ok(mcp_servers), Ok(mcp_oauth_credentials_store_mode)) => McpServerRefreshConfig {
-                    mcp_servers,
-                    mcp_oauth_credentials_store_mode,
-                },
-                (Err(err), _) => {
-                    warn!("failed to serialize refreshed MCP servers: {err}");
-                    continue;
-                }
-                (_, Err(err)) => {
-                    warn!("failed to serialize refreshed MCP OAuth store mode: {err}");
-                    continue;
-                }
-            };
-            if let Err(err) = thread
-                .submit(Op::RefreshMcpServers {
-                    config: refresh_config,
-                })
-                .await
-            {
-                warn!("failed to request MCP server refresh: {err}");
-            }
-        }
     }
 
     pub fn subscribe_thread_created(&self) -> broadcast::Receiver<ThreadId> {

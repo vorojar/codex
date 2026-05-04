@@ -1123,7 +1123,7 @@ impl Config {
         }
     }
 
-    pub(crate) fn with_refreshed_mcp_config(
+    pub async fn rebuild_for_mcp_refresh_planning(
         &self,
         refreshed_config: &Config,
     ) -> std::io::Result<Self> {
@@ -1166,20 +1166,17 @@ impl Config {
             .effective_config()
             .try_into()
             .map_err(|err| std::io::Error::new(std::io::ErrorKind::InvalidData, err))?;
-        let mut config = self.clone();
-        config.mcp_servers = constrain_mcp_servers(
-            cfg.mcp_servers.clone(),
-            config_layer_stack.requirements().mcp_servers.as_ref(),
+        Self::load_config_with_layer_stack(
+            LOCAL_FS.as_ref(),
+            cfg,
+            ConfigOverrides {
+                cwd: Some(self.cwd.to_path_buf()),
+                ..Default::default()
+            },
+            refreshed_config.codex_home.clone(),
+            config_layer_stack,
         )
-        .map_err(std::io::Error::from)?;
-        config.mcp_oauth_credentials_store_mode = resolve_mcp_oauth_credentials_store_mode(
-            cfg.mcp_oauth_credentials_store.unwrap_or_default(),
-            env!("CARGO_PKG_VERSION"),
-        );
-        config.mcp_oauth_callback_port = cfg.mcp_oauth_callback_port;
-        config.mcp_oauth_callback_url = cfg.mcp_oauth_callback_url;
-        config.config_layer_stack = config_layer_stack;
-        Ok(config)
+        .await
     }
 
     /// This is the preferred way to create an instance of [Config].
