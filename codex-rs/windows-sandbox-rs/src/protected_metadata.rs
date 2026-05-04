@@ -2,6 +2,7 @@ use crate::setup::ProtectedMetadataMode;
 use crate::setup::ProtectedMetadataTarget;
 use anyhow::Context;
 use anyhow::Result;
+use std::collections::HashSet;
 use std::fs::Metadata;
 use std::io;
 use std::os::windows::fs::FileTypeExt;
@@ -60,11 +61,36 @@ pub(crate) fn prepare_protected_metadata_targets(
 }
 
 pub fn protected_metadata_existing_deny_paths(path: &Path) -> Vec<PathBuf> {
-    if std::fs::symlink_metadata(path).is_ok() {
-        vec![path.to_path_buf()]
-    } else {
-        Vec::new()
+    let Ok(metadata) = std::fs::symlink_metadata(path) else {
+        return Vec::new();
+    };
+
+    let mut seen = HashSet::new();
+    let mut paths = Vec::new();
+    push_deny_path(&mut paths, &mut seen, path.to_path_buf());
+
+    let file_type = metadata.file_type();
+    if (is_directory_reparse_point(&metadata)
+        || file_type.is_symlink_dir()
+        || file_type.is_symlink_file())
+        && let Ok(target_path) = dunce::canonicalize(path)
+    {
+        push_deny_path(&mut paths, &mut seen, target_path);
     }
+
+    paths
+}
+
+fn push_deny_path(paths: &mut Vec<PathBuf>, seen: &mut HashSet<String>, path: PathBuf) {
+    if seen.insert(path_text_key(&path)) {
+        paths.push(path);
+    }
+}
+
+fn path_text_key(path: &Path) -> String {
+    path.to_string_lossy()
+        .replace('\\', "/")
+        .to_ascii_lowercase()
 }
 
 fn existing_metadata_path(path: &Path) -> Result<Option<PathBuf>> {
@@ -168,5 +194,37 @@ mod tests {
         );
         assert!(!target.exists());
         assert!(!created.exists());
+    }
+
+    #[test]
+    fn existing_deny_paths_include_symlink_target() {
+        let temp_dir = tempfile::TempDir::new().expect("tempdir");
+        let target_dir = temp_dir.path().join("target-codex");
+        let symlink_dir = temp_dir.path().join(".codex");
+        std::fs::create_dir_all(&target_dir).expect("create target");
+        if let Err(err) = std::os::windows::fs::symlink_dir(&target_dir, &symlink_dir) {
+            eprintln!("skipping symlink test because symlink creation failed: {err}");
+            return;
+        }
+
+        let guard = prepare_protected_metadata_targets(&[ProtectedMetadataTarget {
+            path: symlink_dir.clone(),
+            mode: ProtectedMetadataMode::ExistingDeny,
+        }]);
+        let deny_paths: Vec<PathBuf> = guard.deny_paths().cloned().collect();
+        let canonical_target = dunce::canonicalize(&target_dir).expect("canonical target");
+
+        assert!(
+            deny_paths
+                .iter()
+                .any(|path| path_text_key(path) == path_text_key(&symlink_dir)),
+            "deny paths should include metadata symlink: {deny_paths:?}"
+        );
+        assert!(
+            deny_paths
+                .iter()
+                .any(|path| path_text_key(path) == path_text_key(&canonical_target)),
+            "deny paths should include symlink target: {deny_paths:?}"
+        );
     }
 }
