@@ -264,6 +264,121 @@ pub(crate) fn apply_legacy_session_acl_rules(
     guards
 }
 
+pub(crate) fn legacy_session_executable_read_roots(
+    env_map: &HashMap<String, String>,
+    command: &[String],
+) -> Vec<PathBuf> {
+    let mut roots = Vec::new();
+    if let Some(program) = command.first() {
+        let program_path = PathBuf::from(program);
+        if program_path.is_absolute()
+            && let Some(parent) = program_path.parent()
+        {
+            roots.push(parent.to_path_buf());
+        }
+    }
+
+    for (name, value) in env_map {
+        if !name.eq_ignore_ascii_case("PATH") {
+            continue;
+        }
+        for path in std::env::split_paths(value) {
+            roots.push(path.clone());
+            if let Some(tool_root) = windows_tool_root_for_path_dir(&path) {
+                add_git_for_windows_support_roots(env_map, &tool_root, &mut roots);
+                roots.push(tool_root);
+            }
+        }
+    }
+
+    canonical_existing_deduped(roots)
+}
+
+pub(crate) fn legacy_session_direct_read_paths(env_map: &HashMap<String, String>) -> Vec<PathBuf> {
+    let mut paths = Vec::new();
+
+    for home in legacy_session_home_dirs(env_map) {
+        paths.push(home.clone());
+        paths.push(home.join(".gitconfig"));
+    }
+
+    canonical_existing_deduped(paths)
+}
+
+fn add_git_for_windows_support_roots(
+    env_map: &HashMap<String, String>,
+    tool_root: &Path,
+    roots: &mut Vec<PathBuf>,
+) {
+    let Some(name) = tool_root.file_name() else {
+        return;
+    };
+    if !name.to_string_lossy().eq_ignore_ascii_case("Git") {
+        return;
+    }
+
+    if let Some(program_data) = env_path(env_map, "PROGRAMDATA") {
+        roots.push(program_data.join("Git"));
+    }
+}
+
+fn legacy_session_home_dirs(env_map: &HashMap<String, String>) -> Vec<PathBuf> {
+    let mut homes = Vec::new();
+
+    if let Some(user_profile) = env_path(env_map, "USERPROFILE") {
+        homes.push(user_profile);
+    }
+    if let Some(home) = env_path(env_map, "HOME") {
+        homes.push(home);
+    }
+    if let (Some(drive), Some(path)) = (
+        env_value(env_map, "HOMEDRIVE"),
+        env_value(env_map, "HOMEPATH"),
+    ) {
+        homes.push(PathBuf::from(format!("{drive}{path}")));
+    }
+
+    canonical_existing_deduped(homes)
+}
+
+fn env_path(env_map: &HashMap<String, String>, name: &str) -> Option<PathBuf> {
+    env_value(env_map, name).map(PathBuf::from)
+}
+
+fn env_value(env_map: &HashMap<String, String>, name: &str) -> Option<String> {
+    env_map
+        .iter()
+        .find(|(key, _)| key.eq_ignore_ascii_case(name))
+        .map(|(_, value)| value.clone())
+}
+
+fn canonical_existing_deduped(paths: Vec<PathBuf>) -> Vec<PathBuf> {
+    let mut deduped = Vec::new();
+    for path in paths {
+        if !path.exists() {
+            continue;
+        }
+        let path = dunce::canonicalize(&path).unwrap_or(path);
+        if !deduped.iter().any(|existing| existing == &path) {
+            deduped.push(path);
+        }
+    }
+    deduped
+}
+
+fn windows_tool_root_for_path_dir(path: &Path) -> Option<PathBuf> {
+    let name = path.file_name()?.to_string_lossy();
+    if !name.eq_ignore_ascii_case("cmd") && !name.eq_ignore_ascii_case("bin") {
+        return None;
+    }
+    let parent = path.parent()?;
+    let parent_name = parent.file_name()?.to_string_lossy();
+    if parent_name.eq_ignore_ascii_case("Git") {
+        return Some(parent.to_path_buf());
+    }
+    None
+}
+
 pub(crate) fn prepare_elevated_spawn_context(
     policy_json_or_preset: &str,
     sandbox_policy_cwd: &Path,
@@ -342,6 +457,8 @@ pub(crate) fn prepare_elevated_spawn_context(
 #[cfg(test)]
 mod tests {
     use super::SandboxPolicy;
+    use super::legacy_session_direct_read_paths;
+    use super::legacy_session_executable_read_roots;
     use super::prepare_legacy_spawn_context;
     use super::prepare_spawn_context_common;
     use super::should_apply_network_block;
@@ -418,5 +535,47 @@ mod tests {
             env_map.get("HTTP_PROXY"),
             Some(&"http://user.proxy:8080".to_string())
         );
+    }
+
+    #[test]
+    fn legacy_session_read_roots_include_git_support_roots() {
+        let tmp = TempDir::new().expect("tempdir");
+        let git_root = tmp.path().join("Git");
+        let git_cmd = git_root.join("cmd");
+        let program_data_git = tmp.path().join("ProgramData").join("Git");
+        std::fs::create_dir_all(&git_cmd).expect("create git cmd");
+        std::fs::create_dir_all(&program_data_git).expect("create programdata git");
+        let env_map = HashMap::from([
+            ("PATH".to_string(), git_cmd.to_string_lossy().to_string()),
+            (
+                "PROGRAMDATA".to_string(),
+                tmp.path().join("ProgramData").to_string_lossy().to_string(),
+            ),
+        ]);
+
+        let roots = legacy_session_executable_read_roots(&env_map, &["cmd.exe".to_string()]);
+
+        assert!(roots.contains(&dunce::canonicalize(git_root).expect("canonical git root")));
+        assert!(
+            roots.contains(&dunce::canonicalize(program_data_git).expect("canonical programdata"))
+        );
+    }
+
+    #[test]
+    fn legacy_session_direct_read_paths_include_home_git_config() {
+        let tmp = TempDir::new().expect("tempdir");
+        let home = tmp.path().join("profile");
+        std::fs::create_dir_all(&home).expect("create profile");
+        let gitconfig = home.join(".gitconfig");
+        std::fs::write(&gitconfig, "[safe]\n").expect("write git config");
+        let env_map = HashMap::from([(
+            "USERPROFILE".to_string(),
+            home.to_string_lossy().to_string(),
+        )]);
+
+        let paths = legacy_session_direct_read_paths(&env_map);
+
+        assert!(paths.contains(&dunce::canonicalize(home).expect("canonical home")));
+        assert!(paths.contains(&dunce::canonicalize(gitconfig).expect("canonical gitconfig")));
     }
 }
