@@ -23,6 +23,7 @@ use core_test_support::responses::ev_assistant_message;
 use core_test_support::responses::ev_completed;
 use core_test_support::responses::ev_function_call;
 use core_test_support::responses::ev_response_created;
+use core_test_support::responses::mount_sse_once;
 use core_test_support::responses::mount_sse_sequence;
 use core_test_support::responses::sse;
 use core_test_support::responses::start_mock_server;
@@ -30,7 +31,6 @@ use core_test_support::skip_if_no_network;
 use core_test_support::test_codex::TestCodex;
 use core_test_support::test_codex::test_codex;
 use core_test_support::test_codex::test_env;
-use core_test_support::wait_for_event;
 use core_test_support::wait_for_event_with_timeout;
 use pretty_assertions::assert_eq;
 use serde_json::Value;
@@ -44,6 +44,23 @@ use tempfile::TempDir;
 use tokio::time::Duration;
 
 const REMOTE_EXEC_COMMAND_ROUTING_TIMEOUT: Duration = Duration::from_secs(60);
+
+fn tool_names(body: &Value) -> Vec<String> {
+    body.get("tools")
+        .and_then(Value::as_array)
+        .map(|tools| {
+            tools
+                .iter()
+                .filter_map(|tool| {
+                    tool.get("name")
+                        .or_else(|| tool.get("type"))
+                        .and_then(Value::as_str)
+                        .map(str::to_string)
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+}
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn remote_test_env_can_connect_and_use_filesystem() -> Result<()> {
@@ -212,17 +229,21 @@ async fn exec_command_routes_across_empty_single_and_multiple_turn_environments(
         )
         .await?;
 
-    let no_env_output = exec_command_routing_output(
-        &test,
+    let no_env_mock = mount_sse_once(
         &server,
-        "call-no-env",
-        json!({ "cmd": "cat marker.txt" }),
-        Some(vec![]),
+        sse(vec![
+            ev_response_created("resp-no-env"),
+            ev_assistant_message("msg-no-env", "done"),
+            ev_completed("resp-no-env"),
+        ]),
     )
-    .await?;
+    .await;
+    test.submit_turn_with_environments("route exec command", Some(vec![]))
+        .await?;
+    let no_env_tools = tool_names(&no_env_mock.single_request().body_json());
     assert!(
-        no_env_output.contains("unified exec is unavailable in this session"),
-        "unexpected no-env output: {no_env_output}",
+        !no_env_tools.contains(&"exec_command".to_string()),
+        "exec_command should be omitted without turn environments; got {no_env_tools:?}",
     );
 
     let local_selection = TurnEnvironmentSelection {
