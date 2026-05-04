@@ -204,11 +204,8 @@ fn elicitation_granular_policy_respects_never_and_config() {
 
 #[tokio::test]
 async fn disabled_permissions_auto_accept_elicitation_with_empty_form_schema() {
-    let manager = ElicitationRequestManager::new(
-        AskForApproval::Never,
-        PermissionProfile::Disabled,
-        /*auto_deny*/ false,
-    );
+    let manager =
+        ElicitationRequestManager::new(AskForApproval::Never, PermissionProfile::Disabled);
     let (tx_event, _rx_event) = async_channel::bounded(1);
     let sender = manager.make_sender("server".to_string(), tx_event);
 
@@ -237,11 +234,8 @@ async fn disabled_permissions_auto_accept_elicitation_with_empty_form_schema() {
 
 #[tokio::test]
 async fn disabled_permissions_do_not_auto_accept_elicitation_with_requested_fields() {
-    let manager = ElicitationRequestManager::new(
-        AskForApproval::Never,
-        PermissionProfile::Disabled,
-        /*auto_deny*/ false,
-    );
+    let manager =
+        ElicitationRequestManager::new(AskForApproval::Never, PermissionProfile::Disabled);
     let (tx_event, _rx_event) = async_channel::bounded(1);
     let sender = manager.make_sender("server".to_string(), tx_event);
 
@@ -270,40 +264,6 @@ async fn disabled_permissions_do_not_auto_accept_elicitation_with_requested_fiel
             meta: None,
         }
     );
-}
-
-#[tokio::test]
-async fn auto_deny_declines_elicitation_before_auto_accept() {
-    let manager = ElicitationRequestManager::new(
-        AskForApproval::Never,
-        PermissionProfile::Disabled,
-        /*auto_deny*/ true,
-    );
-    let (tx_event, rx_event) = async_channel::bounded(1);
-    let sender = manager.make_sender("server".to_string(), tx_event);
-
-    let response = sender(
-        NumberOrString::Number(1),
-        CreateElicitationRequestParams::FormElicitationParams {
-            meta: None,
-            message: "Confirm?".to_string(),
-            requested_schema: rmcp::model::ElicitationSchema::builder()
-                .build()
-                .expect("schema should build"),
-        },
-    )
-    .await
-    .expect("elicitation should auto decline");
-
-    assert_eq!(
-        response,
-        ElicitationResponse {
-            action: ElicitationAction::Decline,
-            content: None,
-            meta: None,
-        }
-    );
-    assert!(rx_event.try_recv().is_err());
 }
 
 #[test]
@@ -842,8 +802,7 @@ async fn list_all_tools_uses_startup_snapshot_when_client_startup_fails() {
 #[test]
 fn elicitation_capability_uses_2025_06_18_shape_for_all_servers() {
     for server_name in [CODEX_APPS_MCP_SERVER_NAME, "custom_mcp"] {
-        let capability =
-            elicitation_capability_for_server(server_name, /*elicitations_auto_deny*/ false);
+        let capability = elicitation_capability_for_server(server_name);
         assert_eq!(capability, Some(ElicitationCapability::default()));
         assert_eq!(
             serde_json::to_value(capability).expect("serialize elicitation capability"),

@@ -247,7 +247,6 @@ impl Session {
             turn_context.sub_id.clone(),
             self.get_tx_event(),
             turn_context.permission_profile(),
-            turn_context.mcp_elicitations_auto_deny,
             mcp_runtime_environment,
             config.codex_home.to_path_buf(),
             codex_apps_tools_cache_key(auth.as_ref()),
@@ -255,6 +254,10 @@ impl Session {
             auth.as_ref(),
         )
         .await;
+        {
+            let current_manager = self.services.mcp_connection_manager.read().await;
+            refreshed_manager.set_elicitations_auto_deny(current_manager.elicitations_auto_deny());
+        }
         {
             let mut guard = self.services.mcp_startup_cancellation_token.lock().await;
             if guard.is_cancelled() {

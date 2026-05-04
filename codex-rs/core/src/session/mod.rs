@@ -614,7 +614,6 @@ impl Codex {
             metrics_service_name,
             app_server_client_name: None,
             app_server_client_version: None,
-            mcp_elicitations_auto_deny: config.mcp_elicitations_auto_deny,
             session_source,
             dynamic_tools,
             persist_extended_history,
@@ -756,10 +755,12 @@ impl Codex {
             .update_settings(SessionSettingsUpdate {
                 app_server_client_name,
                 app_server_client_version,
-                mcp_elicitations_auto_deny: Some(mcp_elicitations_auto_deny),
                 ..Default::default()
             })
-            .await
+            .await?;
+        let mcp_connection_manager = self.session.services.mcp_connection_manager.read().await;
+        mcp_connection_manager.set_elicitations_auto_deny(mcp_elicitations_auto_deny);
+        Ok(())
     }
 
     pub(crate) async fn agent_status(&self) -> AgentStatus {

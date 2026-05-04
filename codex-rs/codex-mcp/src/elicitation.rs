@@ -43,13 +43,12 @@ impl ElicitationRequestManager {
     pub(crate) fn new(
         approval_policy: AskForApproval,
         permission_profile: PermissionProfile,
-        auto_deny: bool,
     ) -> Self {
         Self {
             requests: Arc::new(Mutex::new(HashMap::new())),
             approval_policy: Arc::new(StdMutex::new(approval_policy)),
             permission_profile: Arc::new(StdMutex::new(permission_profile)),
-            auto_deny: Arc::new(StdMutex::new(auto_deny)),
+            auto_deny: Arc::new(StdMutex::new(false)),
         }
     }
 

@@ -85,7 +85,6 @@ impl McpConnectionManager {
             elicitation_requests: ElicitationRequestManager::new(
                 approval_policy.value(),
                 permission_profile.get().clone(),
-                false,
             ),
             startup_cancellation_token: CancellationToken::new(),
         }
@@ -129,6 +128,10 @@ impl McpConnectionManager {
         }
     }
 
+    pub fn elicitations_auto_deny(&self) -> bool {
+        self.elicitation_requests.auto_deny()
+    }
+
     pub fn set_elicitations_auto_deny(&self, auto_deny: bool) {
         self.elicitation_requests.set_auto_deny(auto_deny);
     }
@@ -142,7 +145,6 @@ impl McpConnectionManager {
         submit_id: String,
         tx_event: Sender<Event>,
         initial_permission_profile: PermissionProfile,
-        elicitations_auto_deny: bool,
         runtime_environment: McpRuntimeEnvironment,
         codex_home: PathBuf,
         codex_apps_tools_cache_key: CodexAppsToolsCacheKey,
@@ -153,11 +155,8 @@ impl McpConnectionManager {
         let mut clients = HashMap::new();
         let mut server_origins = HashMap::new();
         let mut join_set = JoinSet::new();
-        let elicitation_requests = ElicitationRequestManager::new(
-            approval_policy.value(),
-            initial_permission_profile,
-            elicitations_auto_deny,
-        );
+        let elicitation_requests =
+            ElicitationRequestManager::new(approval_policy.value(), initial_permission_profile);
         let tool_plugin_provenance = Arc::new(tool_plugin_provenance);
         let startup_submit_id = submit_id.clone();
         let codex_apps_auth_provider = auth

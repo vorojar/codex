@@ -319,12 +319,7 @@ impl From<anyhow::Error> for StartupOutcomeError {
 
 pub(crate) fn elicitation_capability_for_server(
     _server_name: &str,
-    elicitations_auto_deny: bool,
 ) -> Option<ElicitationCapability> {
-    if elicitations_auto_deny {
-        return None;
-    }
-
     // https://modelcontextprotocol.io/specification/2025-06-18/client/elicitation#capabilities
     // indicates this should be an empty object.
     Some(ElicitationCapability::default())
@@ -462,8 +457,7 @@ async fn start_server_task(
         elicitation_requests,
         codex_apps_tools_cache_context,
     } = params;
-    let elicitation =
-        elicitation_capability_for_server(&server_name, elicitation_requests.auto_deny());
+    let elicitation = elicitation_capability_for_server(&server_name);
     let params = InitializeRequestParams {
         meta: None,
         capabilities: ClientCapabilities {

@@ -170,7 +170,6 @@ pub(super) async fn user_input_or_turn_inner(
                     personality,
                     app_server_client_name: None,
                     app_server_client_version: None,
-                    mcp_elicitations_auto_deny: None,
                 },
                 None,
             )
@@ -223,7 +222,6 @@ pub(super) async fn user_input_or_turn_inner(
                     personality,
                     app_server_client_name: None,
                     app_server_client_version: None,
-                    mcp_elicitations_auto_deny: None,
                 },
                 responsesapi_client_metadata,
             )

@@ -85,7 +85,6 @@ pub(crate) struct SessionConfiguration {
     pub(super) metrics_service_name: Option<String>,
     pub(super) app_server_client_name: Option<String>,
     pub(super) app_server_client_version: Option<String>,
-    pub(super) mcp_elicitations_auto_deny: bool,
     /// Source of the session (cli, vscode, exec, mcp, ...)
     pub(super) session_source: SessionSource,
     pub(super) dynamic_tools: Vec<DynamicToolSpec>,
@@ -268,9 +267,6 @@ impl SessionConfiguration {
         if let Some(app_server_client_version) = updates.app_server_client_version.clone() {
             next_configuration.app_server_client_version = Some(app_server_client_version);
         }
-        if let Some(mcp_elicitations_auto_deny) = updates.mcp_elicitations_auto_deny {
-            next_configuration.mcp_elicitations_auto_deny = mcp_elicitations_auto_deny;
-        }
         Ok(next_configuration)
     }
 
@@ -317,7 +313,6 @@ pub(crate) struct SessionSettingsUpdate {
     pub(crate) personality: Option<Personality>,
     pub(crate) app_server_client_name: Option<String>,
     pub(crate) app_server_client_version: Option<String>,
-    pub(crate) mcp_elicitations_auto_deny: Option<bool>,
 }
 
 pub(crate) struct AppServerClientMetadata {
@@ -996,7 +991,6 @@ impl Session {
                 INITIAL_SUBMIT_ID.to_owned(),
                 tx_event.clone(),
                 session_configuration.permission_profile(),
-                session_configuration.mcp_elicitations_auto_deny,
                 mcp_runtime_environment,
                 config.codex_home.to_path_buf(),
                 codex_apps_tools_cache_key(auth),

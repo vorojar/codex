@@ -120,8 +120,6 @@ pub struct McpConfig {
     pub skill_mcp_dependency_install_enabled: bool,
     /// Approval policy used for MCP tool calls and MCP elicitation requests.
     pub approval_policy: Constrained<AskForApproval>,
-    /// Whether MCP elicitation requests should be declined without surfacing them.
-    pub elicitations_auto_deny: bool,
     /// Optional path to `codex-linux-sandbox` for sandboxed MCP tool execution.
     pub codex_linux_sandbox_exe: Option<PathBuf>,
     /// Whether to use legacy Landlock behavior in the MCP sandbox state.
@@ -252,7 +250,6 @@ pub async fn read_mcp_resource(
         String::new(),
         tx_event,
         PermissionProfile::default(),
-        config.elicitations_auto_deny,
         runtime_environment,
         config.codex_home.clone(),
         codex_apps_tools_cache_key(auth),
@@ -318,7 +315,6 @@ pub async fn collect_mcp_server_status_snapshot_with_detail(
         submit_id,
         tx_event,
         PermissionProfile::default(),
-        config.elicitations_auto_deny,
         runtime_environment,
         config.codex_home.clone(),
         codex_apps_tools_cache_key(auth),
