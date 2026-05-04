@@ -201,15 +201,10 @@ impl HooksBrowserView {
             return;
         }
 
-        let enable = !hook.enabled;
         hook.trust_status = HookTrustStatus::Trusted;
-        if enable {
-            hook.enabled = true;
-        }
         self.app_event_tx.send(AppEvent::TrustHook {
             key: hook.key.clone(),
             current_hash: hook.current_hash.clone(),
-            enable,
         });
     }
 
@@ -1289,7 +1284,7 @@ mod tests {
     }
 
     #[test]
-    fn trust_key_trusts_review_needed_handler() {
+    fn trust_key_trusts_review_needed_handler_without_changing_enablement() {
         let (tx_raw, mut rx) = unbounded_channel::<AppEvent>();
         let mut untrusted_hook = hook(
             "path:untrusted",
@@ -1316,11 +1311,48 @@ mod tests {
             AppEvent::TrustHook {
                 key,
                 current_hash: hash_to_trust,
-                enable,
             } => {
                 assert_eq!(key, "path:untrusted");
                 assert_eq!(hash_to_trust, current_hash);
-                assert!(enable);
+            }
+            other => panic!("expected hook trust event, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn trust_key_preserves_disabled_modified_handler() {
+        let (tx_raw, mut rx) = unbounded_channel::<AppEvent>();
+        let mut modified_hook = hook(
+            "path:modified",
+            HookEventName::PreToolUse,
+            HookSource::User,
+            /*plugin_id*/ None,
+            "/tmp/pre-tool-use-check.sh",
+            /*enabled*/ false,
+            /*is_managed*/ false,
+            /*display_order*/ 0,
+        );
+        modified_hook.trust_status = HookTrustStatus::Modified;
+        let current_hash = modified_hook.current_hash.clone();
+        let mut view = HooksBrowserView::new(
+            vec![modified_hook],
+            Vec::new(),
+            Vec::new(),
+            AppEventSender::new(tx_raw),
+        );
+        view.handle_key_event(KeyEvent::from(KeyCode::Enter));
+        view.handle_key_event(KeyEvent::from(KeyCode::Char('t')));
+
+        let hook = view.hooks.first().expect("trusted hook");
+        assert_eq!(hook.enabled, false);
+        assert_eq!(hook.trust_status, HookTrustStatus::Trusted);
+        match rx.try_recv().expect("trust event") {
+            AppEvent::TrustHook {
+                key,
+                current_hash: hash_to_trust,
+            } => {
+                assert_eq!(key, "path:modified");
+                assert_eq!(hash_to_trust, current_hash);
             }
             other => panic!("expected hook trust event, got {other:?}"),
         }

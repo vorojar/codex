@@ -757,7 +757,6 @@ pub(crate) enum AppEvent {
     TrustHook {
         key: String,
         current_hash: String,
-        enable: bool,
     },
 
     /// Result of persisting hook enabled state.
