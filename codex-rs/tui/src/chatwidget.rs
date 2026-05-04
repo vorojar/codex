@@ -320,6 +320,8 @@ use self::goal_status::GoalStatusState;
 #[cfg(test)]
 use self::goal_status::goal_status_indicator_from_app_goal;
 mod goal_menu;
+mod ide_context;
+use self::ide_context::IdeContextState;
 mod interrupts;
 use self::interrupts::InterruptManager;
 mod keymap_picker;
@@ -838,6 +840,7 @@ pub(crate) struct ChatWidget {
     connectors_partial_snapshot: Option<ConnectorsSnapshot>,
     connectors_prefetch_in_flight: bool,
     connectors_force_refetch_pending: bool,
+    ide_context: IdeContextState,
     plugins_cache: PluginsCacheState,
     plugins_fetch_state: PluginListFetchState,
     plugin_install_apps_needing_auth: Vec<AppSummary>,
@@ -1138,6 +1141,7 @@ pub(crate) struct ThreadInputState {
     composer: Option<ThreadComposerState>,
     pending_steers: VecDeque<UserMessage>,
     pending_steer_history_records: VecDeque<UserMessageHistoryRecord>,
+    pending_steer_compare_keys: VecDeque<PendingSteerCompareKey>,
     rejected_steers_queue: VecDeque<UserMessage>,
     rejected_steer_history_records: VecDeque<UserMessageHistoryRecord>,
     queued_user_messages: VecDeque<QueuedUserMessage>,
@@ -1451,16 +1455,16 @@ fn user_message_display_for_history(
     history_record: &UserMessageHistoryRecord,
 ) -> UserMessageDisplay {
     let message = user_message_for_restore(message, history_record);
-    UserMessageDisplay {
-        message: message.text,
-        remote_image_urls: message.remote_image_urls,
-        local_images: message
+    ChatWidget::user_message_display_from_parts(
+        message.text,
+        message.text_elements,
+        message
             .local_images
             .into_iter()
             .map(|image| image.path)
             .collect(),
-        text_elements: message.text_elements,
-    }
+        message.remote_image_urls,
+    )
 }
 
 fn merge_user_messages_with_history_record(
@@ -1860,10 +1864,13 @@ impl ChatWidget {
     /// Applies status-line item selection from the setup view to in-memory config.
     ///
     /// An empty selection persists as an explicit empty list.
-    pub(crate) fn setup_status_line(&mut self, items: Vec<StatusLineItem>) {
-        tracing::info!("status line setup confirmed with items: {items:#?}");
+    pub(crate) fn setup_status_line(&mut self, items: Vec<StatusLineItem>, use_theme_colors: bool) {
+        tracing::info!(
+            "status line setup confirmed with items: {items:#?}, use_theme_colors: {use_theme_colors}"
+        );
         let ids = items.iter().map(ToString::to_string).collect::<Vec<_>>();
         self.config.tui_status_line = Some(ids);
+        self.config.tui_status_line_use_colors = use_theme_colors;
         self.refresh_status_line();
     }
 
@@ -2931,6 +2938,12 @@ impl ChatWidget {
     fn finalize_turn(&mut self) {
         // Ensure any spinner is replaced by a red ✗ and flushed into history.
         self.finalize_active_cell_as_failed();
+        // Turn-scoped hook rows are transient live state; once the turn is over,
+        // do not leave an orphaned running row behind if no matching completion
+        // event arrived before cancellation.
+        if self.active_hook_cell.take().is_some() {
+            self.bump_active_cell_revision();
+        }
         // Reset running state and clear streaming buffers.
         self.user_turn_pending_start = false;
         self.agent_turn_running = false;
@@ -3232,6 +3245,11 @@ impl ChatWidget {
                 .iter()
                 .map(|pending| pending.history_record.clone())
                 .collect(),
+            pending_steer_compare_keys: self
+                .pending_steers
+                .iter()
+                .map(|pending| pending.compare_key.clone())
+                .collect(),
             rejected_steers_queue: self.rejected_steers_queue.clone(),
             rejected_steer_history_records: self.rejected_steer_history_records.clone(),
             queued_user_messages: self.queued_user_messages.clone(),
@@ -3285,16 +3303,19 @@ impl ChatWidget {
                 input_state.pending_steers.len(),
                 UserMessageHistoryRecord::UserMessageText,
             );
+            let mut pending_steer_compare_keys = input_state.pending_steer_compare_keys;
             self.pending_steers = input_state
                 .pending_steers
                 .into_iter()
                 .zip(pending_steer_history_records)
                 .map(|(user_message, history_record)| PendingSteer {
-                    compare_key: PendingSteerCompareKey {
-                        message: user_message.text.clone(),
-                        image_count: user_message.local_images.len()
-                            + user_message.remote_image_urls.len(),
-                    },
+                    compare_key: pending_steer_compare_keys.pop_front().unwrap_or_else(|| {
+                        PendingSteerCompareKey {
+                            message: user_message.text.clone(),
+                            image_count: user_message.local_images.len()
+                                + user_message.remote_image_urls.len(),
+                        }
+                    }),
                     history_record,
                     user_message,
                 })
@@ -4880,6 +4901,7 @@ impl ChatWidget {
             connectors_partial_snapshot: None,
             connectors_prefetch_in_flight: false,
             connectors_force_refetch_pending: false,
+            ide_context: IdeContextState::default(),
             plugins_cache: PluginsCacheState::default(),
             plugins_fetch_state: PluginListFetchState::default(),
             plugin_install_apps_needing_auth: Vec::new(),
@@ -4966,6 +4988,9 @@ impl ChatWidget {
         }
         widget
             .bottom_pane
+            .set_vim_enabled(widget.config.tui_vim_mode_default);
+        widget
+            .bottom_pane
             .set_realtime_conversation_enabled(widget.realtime_conversation_enabled());
         widget
             .bottom_pane
@@ -5013,6 +5038,7 @@ impl ChatWidget {
                 } if modifiers.contains(KeyModifiers::CONTROL) && c.eq_ignore_ascii_case(&'c')
             )
             && !key_hint::ctrl(KeyCode::Char('r')).is_press(key_event)
+            && !key_hint::ctrl(KeyCode::Char('u')).is_press(key_event)
         {
             self.bottom_pane.handle_key_event(key_event);
             if self.bottom_pane.no_modal_or_popup_active() {
@@ -5114,6 +5140,7 @@ impl ChatWidget {
             && !self.pending_steers.is_empty()
             && self.bottom_pane.is_task_running()
             && self.bottom_pane.no_modal_or_popup_active()
+            && !self.should_handle_vim_insert_escape(key_event)
         {
             self.submit_pending_steers_after_interrupt = true;
             if !self.submit_op(AppCommand::interrupt()) {
@@ -5742,6 +5769,9 @@ impl ChatWidget {
             ));
             return (false, None);
         }
+
+        self.maybe_apply_ide_context(&mut items);
+
         let collaboration_mode = if self.collaboration_modes_enabled() {
             self.active_collaboration_mask
                 .as_ref()
@@ -5824,7 +5854,7 @@ impl ChatWidget {
 
         // Show replayable user content in conversation history.
         let display_user_message = render_in_history.then(|| {
-            user_message_for_restore(
+            user_message_display_for_history(
                 UserMessage {
                     text,
                     local_images,
@@ -5835,49 +5865,8 @@ impl ChatWidget {
                 &history_record,
             )
         });
-        if let Some(display_user_message) = display_user_message {
-            let UserMessage {
-                text,
-                local_images,
-                remote_image_urls,
-                text_elements,
-                mention_bindings: _,
-            } = display_user_message;
-            if !text.is_empty() {
-                let local_image_paths = local_images
-                    .into_iter()
-                    .map(|img| img.path)
-                    .collect::<Vec<_>>();
-                self.last_rendered_user_message_display =
-                    Some(Self::user_message_display_from_parts(
-                        text.clone(),
-                        text_elements.clone(),
-                        local_image_paths.clone(),
-                        remote_image_urls.clone(),
-                    ));
-                self.add_to_history(history_cell::new_user_prompt(
-                    text,
-                    text_elements,
-                    local_image_paths,
-                    remote_image_urls,
-                ));
-                self.record_visible_user_turn_for_copy();
-            } else if !remote_image_urls.is_empty() {
-                self.last_rendered_user_message_display =
-                    Some(Self::user_message_display_from_parts(
-                        String::new(),
-                        Vec::new(),
-                        Vec::new(),
-                        remote_image_urls.clone(),
-                    ));
-                self.add_to_history(history_cell::new_user_prompt(
-                    String::new(),
-                    Vec::new(),
-                    Vec::new(),
-                    remote_image_urls,
-                ));
-                self.record_visible_user_turn_for_copy();
-            }
+        if let Some(display) = display_user_message {
+            self.on_user_message_display(display);
         }
 
         self.needs_final_message_separator = false;
@@ -6615,6 +6604,7 @@ impl ChatWidget {
         self.last_rendered_user_message_display = Some(display.clone());
         if !display.message.trim().is_empty()
             || !display.text_elements.is_empty()
+            || !display.local_images.is_empty()
             || !display.remote_image_urls.is_empty()
         {
             self.record_visible_user_turn_for_copy();
@@ -6899,6 +6889,7 @@ impl ChatWidget {
         let configured_status_line_items = self.configured_status_line_items();
         let view = StatusLineSetupView::new(
             Some(configured_status_line_items.as_slice()),
+            self.config.tui_status_line_use_colors,
             self.status_surface_preview_data(),
             self.app_event_tx.clone(),
         );
@@ -8129,7 +8120,7 @@ impl ChatWidget {
             .send(AppEvent::PersistModelSelection { model, effort });
     }
 
-    /// Open the permissions popup (alias for /permissions).
+    /// Open the permissions popup.
     pub(crate) fn open_approvals_popup(&mut self) {
         self.open_permissions_popup();
     }
@@ -8702,8 +8693,8 @@ impl ChatWidget {
         // new permission profile, so downstream policy-change hooks don't
         // re-trigger the warning.
         let mut accept_actions: Vec<SelectionAction> = Vec::new();
-        // Suppress the immediate re-scan only when a preset will be applied (i.e., via /approvals or
-        // /permissions), to avoid duplicate warnings from the ensuing policy change.
+        // Suppress the immediate re-scan only when a preset will be applied via
+        // /permissions, to avoid duplicate warnings from the ensuing policy change.
         if preset.is_some() {
             accept_actions.push(Box::new(|tx| {
                 tx.send(AppEvent::SkipNextWorldWritableScan);
@@ -10265,6 +10256,16 @@ impl ChatWidget {
         self.bottom_pane.is_task_running()
     }
 
+    pub(crate) fn toggle_vim_mode_and_notify(&mut self) {
+        let enabled = self.bottom_pane.toggle_vim_enabled();
+        let message = if enabled {
+            "Vim mode enabled."
+        } else {
+            "Vim mode disabled."
+        };
+        self.add_info_message(message.to_string(), /*hint*/ None);
+    }
+
     pub(crate) fn submit_user_message_with_mode(
         &mut self,
         text: String,
@@ -10304,6 +10305,11 @@ impl ChatWidget {
     /// In this state Esc-Esc backtracking is enabled.
     pub(crate) fn is_normal_backtrack_mode(&self) -> bool {
         self.bottom_pane.is_normal_backtrack_mode()
+    }
+
+    pub(crate) fn should_handle_vim_insert_escape(&self, key_event: KeyEvent) -> bool {
+        self.bottom_pane
+            .composer_should_handle_vim_insert_escape(key_event)
     }
 
     pub(crate) fn insert_str(&mut self, text: &str) {
@@ -10522,6 +10528,9 @@ impl ChatWidget {
         &mut self,
         plugins: Option<Vec<PluginCapabilitySummary>>,
     ) {
+        if self.bottom_pane.plugins() == plugins.as_ref() {
+            return;
+        }
         self.bottom_pane.set_plugin_mentions(plugins);
     }
 
@@ -10839,6 +10848,10 @@ impl Renderable for ChatWidget {
 
     fn cursor_pos(&self, area: Rect) -> Option<(u16, u16)> {
         self.as_renderable().cursor_pos(area)
+    }
+
+    fn cursor_style(&self, area: Rect) -> crossterm::cursor::SetCursorStyle {
+        self.as_renderable().cursor_style(area)
     }
 }
 

@@ -1,3 +1,12 @@
+//! Key binding primitives and input matching for the TUI.
+//!
+//! This module provides `KeyBinding`, the runtime representation of a single
+//! keybinding (key code + modifier set), along with matching logic that handles
+//! cross-terminal inconsistencies in how shifted letters are reported.
+//!
+//! It also supplies rendering helpers that convert bindings into styled
+//! `ratatui::text::Span` values for UI hint display.
+
 use crossterm::event::KeyCode;
 use crossterm::event::KeyEvent;
 use crossterm::event::KeyEventKind;
@@ -17,10 +26,13 @@ const SHIFT_PREFIX: &str = "shift + ";
 
 /// One concrete key event that can trigger a TUI action.
 ///
-/// The binding stores the terminal key code plus the exact modifier set that
-/// must be present on an incoming press or repeat event. It does not model
-/// multi-key chords or partial matches; callers that need sequences must keep
-/// that state outside this type.
+/// Matching via `is_press` handles both exact equality and a shifted-letter
+/// compatibility fallback for terminals that report uppercase letters without
+/// the SHIFT modifier flag. This means a binding defined as `shift-a` will
+/// match a terminal event of either `Shift+a` or plain `A`.
+///
+/// This does not model multi-key chords or partial matches; callers that need
+/// sequences must keep that state outside this type.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub(crate) struct KeyBinding {
     key: KeyCode,
@@ -32,6 +44,11 @@ impl KeyBinding {
         Self { key, modifiers }
     }
 
+    pub(crate) fn from_event(event: KeyEvent) -> Self {
+        let (key, modifiers) = normalize_shifted_ascii_char(event.code, event.modifiers);
+        Self { key, modifiers }
+    }
+
     pub fn is_press(&self, event: KeyEvent) -> bool {
         normalize_shifted_ascii_char(self.key, self.modifiers)
             == normalize_shifted_ascii_char(event.code, event.modifiers)
@@ -40,6 +57,22 @@ impl KeyBinding {
 
     pub(crate) const fn parts(&self) -> (KeyCode, KeyModifiers) {
         (self.key, self.modifiers)
+    }
+
+    pub(crate) fn display_label(&self) -> String {
+        let modifiers = modifiers_to_string(self.modifiers);
+        let key = match self.key {
+            KeyCode::Enter => "enter".to_string(),
+            KeyCode::Char(' ') => "space".to_string(),
+            KeyCode::Up => "↑".to_string(),
+            KeyCode::Down => "↓".to_string(),
+            KeyCode::Left => "←".to_string(),
+            KeyCode::Right => "→".to_string(),
+            KeyCode::PageUp => "pgup".to_string(),
+            KeyCode::PageDown => "pgdn".to_string(),
+            _ => self.key.to_string().to_ascii_lowercase(),
+        };
+        format!("{modifiers}{key}")
     }
 }
 
@@ -131,20 +164,7 @@ impl From<KeyBinding> for Span<'static> {
 }
 impl From<&KeyBinding> for Span<'static> {
     fn from(binding: &KeyBinding) -> Self {
-        let KeyBinding { key, modifiers } = binding;
-        let modifiers = modifiers_to_string(*modifiers);
-        let key = match key {
-            KeyCode::Enter => "enter".to_string(),
-            KeyCode::Char(' ') => "space".to_string(),
-            KeyCode::Up => "↑".to_string(),
-            KeyCode::Down => "↓".to_string(),
-            KeyCode::Left => "←".to_string(),
-            KeyCode::Right => "→".to_string(),
-            KeyCode::PageUp => "pgup".to_string(),
-            KeyCode::PageDown => "pgdn".to_string(),
-            _ => format!("{key}").to_ascii_lowercase(),
-        };
-        Span::styled(format!("{modifiers}{key}"), key_hint_style())
+        Span::styled(binding.display_label(), key_hint_style())
     }
 }
 
@@ -205,8 +225,27 @@ mod tests {
     fn shifted_letter_binding_matches_uppercase_char_events() {
         let binding = shift(KeyCode::Char('a'));
 
+        assert!(binding.is_press(KeyEvent::new(KeyCode::Char('a'), KeyModifiers::SHIFT)));
         assert!(binding.is_press(KeyEvent::new(KeyCode::Char('A'), KeyModifiers::NONE)));
         assert!(binding.is_press(KeyEvent::new(KeyCode::Char('A'), KeyModifiers::SHIFT)));
+    }
+
+    #[test]
+    fn shift_letter_binding_preserves_other_modifiers_with_uppercase_compat() {
+        let binding = KeyBinding::new(
+            KeyCode::Char('i'),
+            KeyModifiers::CONTROL | KeyModifiers::SHIFT,
+        );
+
+        assert!(binding.is_press(KeyEvent::new(KeyCode::Char('I'), KeyModifiers::CONTROL)));
+    }
+
+    #[test]
+    fn shift_letter_binding_does_not_match_plain_lowercase_or_other_uppercase() {
+        let binding = shift(KeyCode::Char('o'));
+
+        assert!(!binding.is_press(KeyEvent::new(KeyCode::Char('o'), KeyModifiers::NONE)));
+        assert!(!binding.is_press(KeyEvent::new(KeyCode::Char('P'), KeyModifiers::NONE)));
     }
 
     #[test]

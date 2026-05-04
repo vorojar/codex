@@ -48,7 +48,6 @@ use crate::legacy_core::config::ConfigOverrides;
 use crate::legacy_core::config::edit::ConfigEdit;
 use crate::legacy_core::config::edit::ConfigEditsBuilder;
 use crate::legacy_core::lookup_message_history_entry;
-use crate::legacy_core::plugins::PluginsManager;
 #[cfg(target_os = "windows")]
 use crate::legacy_core::windows_sandbox::WindowsSandboxLevelExt;
 use crate::model_catalog::ModelCatalog;
@@ -126,6 +125,7 @@ use codex_app_server_protocol::TurnStatus;
 use codex_config::ConfigLayerStackOrdering;
 use codex_config::types::ApprovalsReviewer;
 use codex_config::types::ModelAvailabilityNuxConfig;
+use codex_core_plugins::PluginsManager;
 use codex_exec_server::EnvironmentManager;
 use codex_features::Feature;
 use codex_model_provider::create_model_provider;
@@ -302,8 +302,8 @@ struct AutoReviewMode {
 }
 
 /// Enabling the Auto-review experiment in the TUI should also switch the
-/// current `/approvals` settings to the matching Auto-review mode. Users
-/// can still change `/approvals` afterward; this just assumes that opting into
+/// current `/permissions` settings to the matching Auto-review mode. Users
+/// can still change `/permissions` afterward; this just assumes that opting into
 /// the experiment means they want Auto-review enabled immediately.
 fn auto_review_mode() -> AutoReviewMode {
     AutoReviewMode {
@@ -423,6 +423,7 @@ struct SessionSummary {
 #[derive(Debug, Default)]
 struct InitialHistoryReplayBuffer {
     retained_lines: VecDeque<Line<'static>>,
+    render_from_transcript_tail: bool,
 }
 
 pub(crate) struct App {
@@ -714,6 +715,12 @@ impl App {
         let enhanced_keys_supported = tui.enhanced_keys_supported();
         let wait_for_initial_session_configured =
             Self::should_wait_for_initial_session(&session_selection);
+        let should_prompt_for_paused_goal_after_startup_resume =
+            Self::should_prompt_for_paused_goal_after_startup_resume(
+                &session_selection,
+                &initial_prompt,
+                &initial_images,
+            );
         let (mut chat_widget, initial_started_thread) = match session_selection {
             SessionSelection::StartFresh | SessionSelection::Exit => {
                 let started = app_server.start_thread(&config).await?;
@@ -889,8 +896,13 @@ See the Codex keymap documentation for supported actions and examples."
             pending_hook_enabled_writes: HashMap::new(),
         };
         if let Some(started) = initial_started_thread {
+            let thread_id = started.session.thread_id;
             app.enqueue_primary_thread_session(started.session, started.turns)
                 .await?;
+            if should_prompt_for_paused_goal_after_startup_resume {
+                app.maybe_prompt_resume_paused_goal_after_resume(&mut app_server, thread_id)
+                    .await;
+            }
         }
 
         // On startup, if a managed filesystem sandbox is active, warn about
@@ -1100,15 +1112,19 @@ See the Codex keymap documentation for supported actions and examples."
                         self.chat_widget.desired_height(tui.terminal.size()?.width);
                     if terminal_resize_reflow_enabled {
                         tui.draw_with_resize_reflow(desired_height, |frame| {
-                            self.chat_widget.render(frame.area(), frame.buffer);
-                            if let Some((x, y)) = self.chat_widget.cursor_pos(frame.area()) {
+                            let area = frame.area();
+                            self.chat_widget.render(area, frame.buffer);
+                            if let Some((x, y)) = self.chat_widget.cursor_pos(area) {
+                                frame.set_cursor_style(self.chat_widget.cursor_style(area));
                                 frame.set_cursor_position((x, y));
                             }
                         })?;
                     } else {
                         tui.draw(desired_height, |frame| {
-                            self.chat_widget.render(frame.area(), frame.buffer);
-                            if let Some((x, y)) = self.chat_widget.cursor_pos(frame.area()) {
+                            let area = frame.area();
+                            self.chat_widget.render(area, frame.buffer);
+                            if let Some((x, y)) = self.chat_widget.cursor_pos(area) {
+                                frame.set_cursor_style(self.chat_widget.cursor_style(area));
                                 frame.set_cursor_position((x, y));
                             }
                         })?;

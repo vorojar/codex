@@ -1,4 +1,5 @@
 use super::*;
+use codex_app_server_protocol::PluginAvailability;
 use pretty_assertions::assert_eq;
 
 pub(super) async fn test_config() -> Config {
@@ -248,6 +249,7 @@ pub(super) async fn make_chatwidget_manual(
         newly_installed_marketplace_tab_id: None,
         connectors_prefetch_in_flight: false,
         connectors_force_refetch_pending: false,
+        ide_context: super::super::ide_context::IdeContextState::default(),
         plugins_cache: PluginsCacheState::default(),
         plugins_fetch_state: PluginListFetchState::default(),
         interrupts: InterruptManager::new(),
@@ -1422,6 +1424,7 @@ pub(super) fn plugins_test_summary(
         enabled,
         install_policy,
         auth_policy: PluginAuthPolicy::OnInstall,
+        availability: PluginAvailability::Available,
         interface: Some(plugins_test_interface(
             display_name,
             description,
