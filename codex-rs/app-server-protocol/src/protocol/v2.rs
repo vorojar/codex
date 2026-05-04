@@ -2941,6 +2941,8 @@ pub struct AppsListResponse {
 /// EXPERIMENTAL - notification emitted when the app list changes.
 pub struct AppListUpdatedNotification {
     pub data: Vec<AppInfo>,
+    /// Whether the notification includes the complete merged app list.
+    pub is_final: bool,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, JsonSchema, TS)]
