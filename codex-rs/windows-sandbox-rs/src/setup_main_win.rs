@@ -79,6 +79,8 @@ use sandbox_users::resolve_sandbox_users_group_sid;
 use sandbox_users::resolve_sid;
 use sandbox_users::sid_bytes_to_psid;
 
+/// Layer: Windows enforcement request boundary. Helper-process copy of the
+/// setup payload decoded from the orchestrator.
 #[derive(Debug, Clone, Deserialize, Serialize)]
 struct Payload {
     version: u32,

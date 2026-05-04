@@ -91,6 +91,9 @@ pub struct SandboxSetupRequest<'a> {
     pub proxy_enforced: bool,
 }
 
+/// Layer: Windows enforcement request boundary. These overrides are already
+/// projected by the adapter layer; setup code only packages them for the helper
+/// process.
 #[derive(Default)]
 pub struct SetupRootOverrides {
     pub read_roots: Option<Vec<PathBuf>>,
@@ -430,6 +433,8 @@ pub(crate) fn gather_write_roots(
     out
 }
 
+/// Layer: Windows enforcement request boundary. Serialized setup-helper process
+/// input; this carries prepared enforcement data, not policy decisions.
 #[derive(Serialize)]
 struct ElevationPayload {
     version: u32,
