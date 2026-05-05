@@ -578,13 +578,21 @@ pub(crate) fn app_tool_policy(
     annotations: Option<&ToolAnnotations>,
 ) -> AppToolPolicy {
     let apps_config = read_apps_config(config);
-    app_tool_policy_from_apps_config(
+    let mut policy = app_tool_policy_from_apps_config(
         apps_config.as_ref(),
         connector_id,
         tool_name,
         tool_title,
         annotations,
-    )
+    );
+    if let Some(approval) = managed_app_tool_approval(
+        config.config_layer_stack.requirements_toml().apps.as_ref(),
+        connector_id,
+        tool_name,
+    ) {
+        policy.approval = approval;
+    }
+    policy
 }
 
 pub(crate) fn codex_app_tool_is_enabled(config: &Config, tool_info: &ToolInfo) -> bool {
@@ -640,22 +648,23 @@ fn apply_requirements_apps_constraints(
             let app = apps_config.apps.entry(app_id.clone()).or_default();
             app.enabled = false;
         }
-
-        let Some(requirement_tools) = requirement.tools.as_ref() else {
-            continue;
-        };
-        let app = apps_config.apps.entry(app_id.clone()).or_default();
-        let app_tools = app.tools.get_or_insert_with(Default::default);
-        for (tool_name, tool_requirement) in &requirement_tools.tools {
-            if let Some(approval_mode) = tool_requirement.approval_mode {
-                app_tools
-                    .tools
-                    .entry(tool_name.clone())
-                    .or_default()
-                    .approval_mode = Some(approval_mode);
-            }
-        }
     }
+}
+
+fn managed_app_tool_approval(
+    requirements_apps_config: Option<&AppsRequirementsToml>,
+    connector_id: Option<&str>,
+    tool_name: &str,
+) -> Option<AppToolApproval> {
+    let connector_id = connector_id?;
+    requirements_apps_config?
+        .apps
+        .get(connector_id)?
+        .tools
+        .as_ref()?
+        .tools
+        .get(tool_name)?
+        .approval_mode
 }
 
 fn app_is_enabled(apps_config: &AppsConfigToml, connector_id: Option<&str>) -> bool {

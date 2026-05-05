@@ -814,26 +814,7 @@ fn app_tool_policy_honors_default_app_enabled_false() {
 }
 
 #[test]
-fn requirements_tool_approval_overrides_user_tool_approval() {
-    let mut effective_apps = AppsConfigToml {
-        default: None,
-        apps: HashMap::from([(
-            "connector_123123".to_string(),
-            AppConfig {
-                enabled: true,
-                tools: Some(AppToolsConfig {
-                    tools: HashMap::from([(
-                        "calendar/list_events".to_string(),
-                        AppToolConfig {
-                            enabled: None,
-                            approval_mode: Some(AppToolApproval::Prompt),
-                        },
-                    )]),
-                }),
-                ..Default::default()
-            },
-        )]),
-    };
+fn managed_app_tool_approval_uses_raw_tool_name() {
     let requirements_apps = AppsRequirementsToml {
         apps: BTreeMap::from([(
             "connector_123123".to_string(),
@@ -851,16 +832,21 @@ fn requirements_tool_approval_overrides_user_tool_approval() {
         )]),
     };
 
-    apply_requirements_apps_constraints(&mut effective_apps, Some(&requirements_apps));
-
     assert_eq!(
-        effective_apps
-            .apps
-            .get("connector_123123")
-            .and_then(|app| app.tools.as_ref())
-            .and_then(|tools| tools.tools.get("calendar/list_events"))
-            .and_then(|tool| tool.approval_mode),
+        managed_app_tool_approval(
+            Some(&requirements_apps),
+            Some("connector_123123"),
+            "calendar/list_events",
+        ),
         Some(AppToolApproval::Approve)
+    );
+    assert_eq!(
+        managed_app_tool_approval(
+            Some(&requirements_apps),
+            Some("connector_123123"),
+            "calendar/create_event",
+        ),
+        None
     );
 }
 
@@ -979,6 +965,55 @@ approval_mode = "prompt"
         AppToolPolicy {
             enabled: true,
             approval: AppToolApproval::Approve,
+        }
+    );
+}
+
+#[tokio::test]
+async fn local_requirements_tool_approval_does_not_match_tool_title() {
+    let codex_home = tempdir().expect("tempdir should succeed");
+    let mut config = ConfigBuilder::default()
+        .codex_home(codex_home.path().to_path_buf())
+        .fallback_cwd(Some(codex_home.path().to_path_buf()))
+        .build()
+        .await
+        .expect("config should build");
+
+    let requirements = ConfigRequirementsToml {
+        apps: Some(AppsRequirementsToml {
+            apps: BTreeMap::from([(
+                "connector_123123".to_string(),
+                AppRequirementToml {
+                    enabled: None,
+                    tools: Some(AppToolsRequirementsToml {
+                        tools: BTreeMap::from([(
+                            "calendar/list_events".to_string(),
+                            AppToolRequirementToml {
+                                approval_mode: Some(AppToolApproval::Approve),
+                            },
+                        )]),
+                    }),
+                },
+            )]),
+        }),
+        ..Default::default()
+    };
+    config.config_layer_stack =
+        ConfigLayerStack::new(Vec::new(), ConfigRequirements::default(), requirements)
+            .expect("requirements stack");
+
+    let policy = app_tool_policy(
+        &config,
+        Some("connector_123123"),
+        "calendar/create_event",
+        Some("calendar/list_events"),
+        /*annotations*/ None,
+    );
+    assert_eq!(
+        policy,
+        AppToolPolicy {
+            enabled: true,
+            approval: AppToolApproval::Auto,
         }
     );
 }
