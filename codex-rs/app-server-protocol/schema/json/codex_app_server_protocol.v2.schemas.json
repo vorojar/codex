@@ -6696,6 +6696,102 @@
       ],
       "type": "string"
     },
+    "ImageGenerationContent": {
+      "oneOf": [
+        {
+          "properties": {
+            "byteLength": {
+              "format": "uint64",
+              "minimum": 0.0,
+              "type": "integer"
+            },
+            "dataBase64": {
+              "type": "string"
+            },
+            "height": {
+              "format": "uint32",
+              "minimum": 0.0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "mimeType": {
+              "type": "string"
+            },
+            "type": {
+              "enum": [
+                "inline"
+              ],
+              "title": "InlineImageGenerationContentType",
+              "type": "string"
+            },
+            "width": {
+              "format": "uint32",
+              "minimum": 0.0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "byteLength",
+            "dataBase64",
+            "mimeType",
+            "type"
+          ],
+          "title": "InlineImageGenerationContent",
+          "type": "object"
+        },
+        {
+          "properties": {
+            "byteLength": {
+              "format": "uint64",
+              "minimum": 0.0,
+              "type": "integer"
+            },
+            "contentId": {
+              "type": "string"
+            },
+            "height": {
+              "format": "uint32",
+              "minimum": 0.0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "mimeType": {
+              "type": "string"
+            },
+            "type": {
+              "enum": [
+                "deferred"
+              ],
+              "title": "DeferredImageGenerationContentType",
+              "type": "string"
+            },
+            "width": {
+              "format": "uint32",
+              "minimum": 0.0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "byteLength",
+            "contentId",
+            "mimeType",
+            "type"
+          ],
+          "title": "DeferredImageGenerationContent",
+          "type": "object"
+        }
+      ]
+    },
     "InitializeCapabilities": {
       "description": "Client-declared capabilities negotiated during initialize.",
       "properties": {
@@ -6880,6 +6976,13 @@
       ],
       "title": "ItemStartedNotification",
       "type": "object"
+    },
+    "LargeContentMode": {
+      "enum": [
+        "inline",
+        "deferred"
+      ],
+      "type": "string"
     },
     "ListMcpServerStatusParams": {
       "$schema": "http://json-schema.org/draft-07/schema#",
@@ -13837,6 +13940,21 @@
         },
         {
           "properties": {
+            "content": {
+              "allOf": [
+                {
+                  "$ref": "#/definitions/ImageGenerationContent"
+                }
+              ],
+              "default": {
+                "byteLength": 0,
+                "dataBase64": "",
+                "height": null,
+                "mimeType": "image/png",
+                "type": "inline",
+                "width": null
+              }
+            },
             "id": {
               "type": "string"
             },

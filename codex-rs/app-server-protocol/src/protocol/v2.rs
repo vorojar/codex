@@ -3763,6 +3763,11 @@ pub struct ThreadResumeParams {
     #[experimental("thread/resume.excludeTurns")]
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub exclude_turns: bool,
+    /// Controls whether large item payloads are embedded in returned turns or
+    /// replaced with deferred-content metadata.
+    #[experimental("thread/resume.largeContent")]
+    #[ts(optional = nullable)]
+    pub large_content: Option<LargeContentMode>,
     /// If true, persist additional EventMsg variants to the rollout file.
     /// However, `thread/read`, `thread/resume`, and `thread/fork` still only
     /// return the limited form of thread history for scalability reasons.
@@ -4460,6 +4465,10 @@ pub struct ThreadTurnsListParams {
     /// Optional turn pagination direction; defaults to descending.
     #[ts(optional = nullable)]
     pub sort_direction: Option<SortDirection>,
+    /// Controls whether large item payloads are embedded in returned turns or
+    /// replaced with deferred-content metadata.
+    #[ts(optional = nullable)]
+    pub large_content: Option<LargeContentMode>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, JsonSchema, TS)]
@@ -4475,6 +4484,70 @@ pub struct ThreadTurnsListResponse {
     /// Use it with the opposite `sortDirection` to include the anchor turn again
     /// and catch updates to that turn.
     pub backwards_cursor: Option<String>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, JsonSchema, TS, Default)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "v2/")]
+pub enum LargeContentMode {
+    #[default]
+    Inline,
+    Deferred,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "v2/")]
+pub struct ThreadTurnsItemsListParams {
+    pub thread_id: String,
+    pub turn_id: String,
+    /// Opaque cursor to pass to the next call to continue after the last item.
+    #[ts(optional = nullable)]
+    pub cursor: Option<String>,
+    /// Optional item page size.
+    #[ts(optional = nullable)]
+    pub limit: Option<u32>,
+    /// Optional item pagination direction; defaults to ascending.
+    #[ts(optional = nullable)]
+    pub sort_direction: Option<SortDirection>,
+    /// Controls whether large item payloads are embedded in returned items or
+    /// replaced with deferred-content metadata.
+    #[ts(optional = nullable)]
+    pub large_content: Option<LargeContentMode>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "v2/")]
+pub struct ThreadTurnsItemsListResponse {
+    pub data: Vec<ThreadItem>,
+    /// Opaque cursor to pass to the next call to continue after the last item.
+    /// if None, there are no more items to return.
+    pub next_cursor: Option<String>,
+    /// Opaque cursor to pass as `cursor` when reversing `sortDirection`.
+    /// This is only populated when the page contains at least one item.
+    /// Use it with the opposite `sortDirection` to include the anchor item again
+    /// and catch updates to that item.
+    pub backwards_cursor: Option<String>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "v2/")]
+pub struct ThreadItemContentReadParams {
+    pub thread_id: String,
+    pub turn_id: String,
+    pub item_id: String,
+    pub content_id: String,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "v2/")]
+pub struct ThreadItemContentReadResponse {
+    pub mime_type: String,
+    pub data_base64: String,
+    pub byte_length: u64,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, JsonSchema, TS)]
@@ -6017,6 +6090,8 @@ pub enum ThreadItem {
         id: String,
         status: String,
         revised_prompt: Option<String>,
+        #[serde(default)]
+        content: ImageGenerationContent,
         result: String,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         #[ts(optional)]
@@ -6031,6 +6106,52 @@ pub enum ThreadItem {
     #[serde(rename_all = "camelCase")]
     #[ts(rename_all = "camelCase")]
     ContextCompaction { id: String },
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, JsonSchema, TS)]
+#[serde(tag = "type", rename_all = "camelCase")]
+#[ts(tag = "type", export_to = "v2/")]
+pub enum ImageGenerationContent {
+    #[serde(rename_all = "camelCase")]
+    #[ts(rename_all = "camelCase")]
+    Inline {
+        mime_type: String,
+        data_base64: String,
+        byte_length: u64,
+        width: Option<u32>,
+        height: Option<u32>,
+    },
+    #[serde(rename_all = "camelCase")]
+    #[ts(rename_all = "camelCase")]
+    Deferred {
+        content_id: String,
+        mime_type: String,
+        byte_length: u64,
+        width: Option<u32>,
+        height: Option<u32>,
+    },
+}
+
+impl Default for ImageGenerationContent {
+    fn default() -> Self {
+        Self::Inline {
+            mime_type: "image/png".to_string(),
+            data_base64: String::new(),
+            byte_length: 0,
+            width: None,
+            height: None,
+        }
+    }
+}
+
+pub(crate) fn image_generation_byte_length(data_base64: &str) -> u64 {
+    let padding_len = data_base64
+        .as_bytes()
+        .iter()
+        .rev()
+        .take_while(|byte| **byte == b'=')
+        .count();
+    ((data_base64.len() / 4) * 3).saturating_sub(padding_len) as u64
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, JsonSchema, TS)]
@@ -6494,6 +6615,13 @@ impl From<CoreTurnItem> for ThreadItem {
                 id: image.id,
                 status: image.status,
                 revised_prompt: image.revised_prompt,
+                content: ImageGenerationContent::Inline {
+                    mime_type: "image/png".to_string(),
+                    data_base64: image.result.clone(),
+                    byte_length: image_generation_byte_length(&image.result),
+                    width: None,
+                    height: None,
+                },
                 result: image.result,
                 saved_path: image.saved_path,
             },
@@ -8748,6 +8876,31 @@ mod tests {
         let decoded = serde_json::from_value::<FsReadFileResponse>(value)
             .expect("deserialize fs/readFile response");
         assert_eq!(decoded, response);
+    }
+
+    #[test]
+    fn image_generation_defaults_missing_content_for_legacy_payloads() {
+        let item: ThreadItem = serde_json::from_value(json!({
+            "type": "imageGeneration",
+            "id": "ig_123",
+            "status": "completed",
+            "revisedPrompt": null,
+            "result": "Zm9v",
+            "savedPath": null
+        }))
+        .expect("legacy image generation item should deserialize");
+
+        assert_eq!(
+            item,
+            ThreadItem::ImageGeneration {
+                id: "ig_123".to_string(),
+                status: "completed".to_string(),
+                revised_prompt: None,
+                content: ImageGenerationContent::default(),
+                result: "Zm9v".to_string(),
+                saved_path: None,
+            }
+        );
     }
 
     #[test]
