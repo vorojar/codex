@@ -39,126 +39,89 @@ enum Lenient<T> {
     Failure,
 }
 
-pub(crate) fn sanitize_config_toml_enums(
-    value: &mut TomlValue,
-    source: impl Into<String>,
-) -> Vec<String> {
-    let source = source.into();
+pub(crate) fn sanitize_config_toml_enums(value: &mut TomlValue) -> Vec<String> {
     let mut warnings = Vec::new();
     let Some(table) = value.as_table_mut() else {
         return warnings;
     };
 
-    sanitize_config_table(table, &source, &mut warnings);
+    sanitize_config_table(table, &mut warnings);
     warnings
 }
 
-fn sanitize_config_table(
-    table: &mut TomlMap<String, TomlValue>,
-    source: &str,
-    warnings: &mut Vec<String>,
-) {
-    remove_invalid_enum::<AskForApproval>(
-        table,
-        "approval_policy",
-        "approval_policy",
-        source,
-        warnings,
-    );
+fn sanitize_config_table(table: &mut TomlMap<String, TomlValue>, warnings: &mut Vec<String>) {
+    remove_invalid_enum::<AskForApproval>(table, "approval_policy", "approval_policy", warnings);
     remove_invalid_enum::<ApprovalsReviewer>(
         table,
         "approvals_reviewer",
         "approvals_reviewer",
-        source,
         warnings,
     );
-    remove_invalid_enum::<SandboxMode>(table, "sandbox_mode", "sandbox_mode", source, warnings);
+    remove_invalid_enum::<SandboxMode>(table, "sandbox_mode", "sandbox_mode", warnings);
     remove_invalid_enum::<ReasoningEffort>(
         table,
         "model_reasoning_effort",
         "model_reasoning_effort",
-        source,
         warnings,
     );
     remove_invalid_enum::<ReasoningEffort>(
         table,
         "plan_mode_reasoning_effort",
         "plan_mode_reasoning_effort",
-        source,
         warnings,
     );
     remove_invalid_enum::<ReasoningSummary>(
         table,
         "model_reasoning_summary",
         "model_reasoning_summary",
-        source,
         warnings,
     );
-    remove_invalid_enum::<Verbosity>(
-        table,
-        "model_verbosity",
-        "model_verbosity",
-        source,
-        warnings,
-    );
-    remove_invalid_enum::<Personality>(table, "personality", "personality", source, warnings);
-    remove_invalid_enum::<ServiceTier>(table, "service_tier", "service_tier", source, warnings);
+    remove_invalid_enum::<Verbosity>(table, "model_verbosity", "model_verbosity", warnings);
+    remove_invalid_enum::<Personality>(table, "personality", "personality", warnings);
+    remove_invalid_enum::<ServiceTier>(table, "service_tier", "service_tier", warnings);
     remove_invalid_enum::<ForcedLoginMethod>(
         table,
         "forced_login_method",
         "forced_login_method",
-        source,
         warnings,
     );
     remove_invalid_enum::<AuthCredentialsStoreMode>(
         table,
         "cli_auth_credentials_store",
         "cli_auth_credentials_store",
-        source,
         warnings,
     );
     remove_invalid_enum::<OAuthCredentialsStoreMode>(
         table,
         "mcp_oauth_credentials_store",
         "mcp_oauth_credentials_store",
-        source,
         warnings,
     );
-    remove_invalid_enum::<UriBasedFileOpener>(
-        table,
-        "file_opener",
-        "file_opener",
-        source,
-        warnings,
-    );
+    remove_invalid_enum::<UriBasedFileOpener>(table, "file_opener", "file_opener", warnings);
     remove_invalid_enum::<ThreadStoreProbe>(
         table,
         "experimental_thread_store",
         "experimental_thread_store",
-        source,
         warnings,
     );
-    remove_invalid_enum::<WebSearchMode>(table, "web_search", "web_search", source, warnings);
+    remove_invalid_enum::<WebSearchMode>(table, "web_search", "web_search", warnings);
     if let Some(tui) = table.get_mut("tui").and_then(TomlValue::as_table_mut) {
         remove_invalid_enum::<NotificationMethod>(
             tui,
             "notification_method",
             "tui.notification_method",
-            source,
             warnings,
         );
         remove_invalid_enum::<NotificationCondition>(
             tui,
             "notification_condition",
             "tui.notification_condition",
-            source,
             warnings,
         );
         remove_invalid_enum::<AltScreenMode>(
             tui,
             "alternate_screen",
             "tui.alternate_screen",
-            source,
             warnings,
         );
     }
@@ -171,7 +134,6 @@ fn sanitize_config_table(
             shell,
             "inherit",
             "shell_environment_policy.inherit",
-            source,
             warnings,
         );
     }
@@ -181,25 +143,17 @@ fn sanitize_config_table(
             windows,
             "sandbox",
             "windows.sandbox",
-            source,
             warnings,
         );
     }
 
     if let Some(realtime) = table.get_mut("realtime").and_then(TomlValue::as_table_mut) {
-        remove_invalid_enum::<RealtimeWsVersion>(
-            realtime,
-            "version",
-            "realtime.version",
-            source,
-            warnings,
-        );
-        remove_invalid_enum::<RealtimeWsMode>(realtime, "type", "realtime.type", source, warnings);
+        remove_invalid_enum::<RealtimeWsVersion>(realtime, "version", "realtime.version", warnings);
+        remove_invalid_enum::<RealtimeWsMode>(realtime, "type", "realtime.type", warnings);
         remove_invalid_enum::<RealtimeTransport>(
             realtime,
             "transport",
             "realtime.transport",
-            source,
             warnings,
         );
     }
@@ -214,7 +168,6 @@ fn sanitize_config_table(
             web_search_tool,
             "search_context_size",
             "tools.web_search.search_context_size",
-            source,
             warnings,
         );
         if let Some(user_location) = web_search_tool
@@ -225,7 +178,6 @@ fn sanitize_config_table(
                 user_location,
                 "type",
                 "tools.web_search.user_location.type",
-                source,
                 warnings,
             );
         }
@@ -238,25 +190,20 @@ fn sanitize_config_table(
                     project,
                     "trust_level",
                     &format!("projects.{name}.trust_level"),
-                    source,
                     warnings,
                 );
             }
         }
     }
 
-    sanitize_profiles(table, source, warnings);
-    sanitize_permissions(table, source, warnings);
-    sanitize_mcp_servers(table, source, warnings);
-    sanitize_plugins(table, source, warnings);
-    sanitize_otel(table, source, warnings);
+    sanitize_profiles(table, warnings);
+    sanitize_permissions(table, warnings);
+    sanitize_mcp_servers(table, warnings);
+    sanitize_plugins(table, warnings);
+    sanitize_otel(table, warnings);
 }
 
-fn sanitize_profiles(
-    table: &mut TomlMap<String, TomlValue>,
-    source: &str,
-    warnings: &mut Vec<String>,
-) {
+fn sanitize_profiles(table: &mut TomlMap<String, TomlValue>, warnings: &mut Vec<String>) {
     let Some(profiles) = table.get_mut("profiles").and_then(TomlValue::as_table_mut) else {
         return;
     };
@@ -268,70 +215,60 @@ fn sanitize_profiles(
             profile,
             "service_tier",
             &format!("profiles.{name}.service_tier"),
-            source,
             warnings,
         );
         remove_invalid_enum::<AskForApproval>(
             profile,
             "approval_policy",
             &format!("profiles.{name}.approval_policy"),
-            source,
             warnings,
         );
         remove_invalid_enum::<ApprovalsReviewer>(
             profile,
             "approvals_reviewer",
             &format!("profiles.{name}.approvals_reviewer"),
-            source,
             warnings,
         );
         remove_invalid_enum::<SandboxMode>(
             profile,
             "sandbox_mode",
             &format!("profiles.{name}.sandbox_mode"),
-            source,
             warnings,
         );
         remove_invalid_enum::<ReasoningEffort>(
             profile,
             "model_reasoning_effort",
             &format!("profiles.{name}.model_reasoning_effort"),
-            source,
             warnings,
         );
         remove_invalid_enum::<ReasoningEffort>(
             profile,
             "plan_mode_reasoning_effort",
             &format!("profiles.{name}.plan_mode_reasoning_effort"),
-            source,
             warnings,
         );
         remove_invalid_enum::<ReasoningSummary>(
             profile,
             "model_reasoning_summary",
             &format!("profiles.{name}.model_reasoning_summary"),
-            source,
             warnings,
         );
         remove_invalid_enum::<Verbosity>(
             profile,
             "model_verbosity",
             &format!("profiles.{name}.model_verbosity"),
-            source,
             warnings,
         );
         remove_invalid_enum::<Personality>(
             profile,
             "personality",
             &format!("profiles.{name}.personality"),
-            source,
             warnings,
         );
         remove_invalid_enum::<WebSearchMode>(
             profile,
             "web_search",
             &format!("profiles.{name}.web_search"),
-            source,
             warnings,
         );
         if let Some(windows) = profile.get_mut("windows").and_then(TomlValue::as_table_mut) {
@@ -339,18 +276,13 @@ fn sanitize_profiles(
                 windows,
                 "sandbox",
                 &format!("profiles.{name}.windows.sandbox"),
-                source,
                 warnings,
             );
         }
     }
 }
 
-fn sanitize_permissions(
-    table: &mut TomlMap<String, TomlValue>,
-    source: &str,
-    warnings: &mut Vec<String>,
-) {
+fn sanitize_permissions(table: &mut TomlMap<String, TomlValue>, warnings: &mut Vec<String>) {
     let Some(permissions) = table
         .get_mut("permissions")
         .and_then(TomlValue::as_table_mut)
@@ -369,7 +301,6 @@ fn sanitize_permissions(
             remove_invalid_map_enums::<NetworkDomainPermissionToml>(
                 domains,
                 &format!("permissions.{profile_name}.network.domains"),
-                source,
                 warnings,
             );
         }
@@ -380,18 +311,13 @@ fn sanitize_permissions(
             remove_invalid_map_enums::<NetworkUnixSocketPermissionToml>(
                 unix_sockets,
                 &format!("permissions.{profile_name}.network.unix_sockets"),
-                source,
                 warnings,
             );
         }
     }
 }
 
-fn sanitize_mcp_servers(
-    table: &mut TomlMap<String, TomlValue>,
-    source: &str,
-    warnings: &mut Vec<String>,
-) {
+fn sanitize_mcp_servers(table: &mut TomlMap<String, TomlValue>, warnings: &mut Vec<String>) {
     let Some(mcp_servers) = table
         .get_mut("mcp_servers")
         .and_then(TomlValue::as_table_mut)
@@ -406,7 +332,6 @@ fn sanitize_mcp_servers(
             server,
             "default_tools_approval_mode",
             &format!("mcp_servers.{server_name}.default_tools_approval_mode"),
-            source,
             warnings,
         );
         if let Some(tools) = server.get_mut("tools").and_then(TomlValue::as_table_mut) {
@@ -416,7 +341,6 @@ fn sanitize_mcp_servers(
                         tool,
                         "approval_mode",
                         &format!("mcp_servers.{server_name}.tools.{tool_name}.approval_mode"),
-                        source,
                         warnings,
                     );
                 }
@@ -425,11 +349,7 @@ fn sanitize_mcp_servers(
     }
 }
 
-fn sanitize_plugins(
-    table: &mut TomlMap<String, TomlValue>,
-    source: &str,
-    warnings: &mut Vec<String>,
-) {
+fn sanitize_plugins(table: &mut TomlMap<String, TomlValue>, warnings: &mut Vec<String>) {
     let Some(plugins) = table.get_mut("plugins").and_then(TomlValue::as_table_mut) else {
         return;
     };
@@ -451,7 +371,6 @@ fn sanitize_plugins(
                 &format!(
                     "plugins.{plugin_name}.mcp_servers.{server_name}.default_tools_approval_mode"
                 ),
-                source,
                 warnings,
             );
             if let Some(tools) = server.get_mut("tools").and_then(TomlValue::as_table_mut) {
@@ -463,7 +382,6 @@ fn sanitize_plugins(
                             &format!(
                                 "plugins.{plugin_name}.mcp_servers.{server_name}.tools.{tool_name}.approval_mode"
                             ),
-                            source,
                             warnings,
                         );
                     }
@@ -473,24 +391,22 @@ fn sanitize_plugins(
     }
 }
 
-fn sanitize_otel(table: &mut TomlMap<String, TomlValue>, source: &str, warnings: &mut Vec<String>) {
+fn sanitize_otel(table: &mut TomlMap<String, TomlValue>, warnings: &mut Vec<String>) {
     let Some(otel) = table.get_mut("otel").and_then(TomlValue::as_table_mut) else {
         return;
     };
-    remove_invalid_enum::<OtelHttpProtocol>(otel, "protocol", "otel.protocol", source, warnings);
-    remove_invalid_enum::<OtelExporterKind>(otel, "exporter", "otel.exporter", source, warnings);
+    remove_invalid_enum::<OtelHttpProtocol>(otel, "protocol", "otel.protocol", warnings);
+    remove_invalid_enum::<OtelExporterKind>(otel, "exporter", "otel.exporter", warnings);
     remove_invalid_enum::<OtelExporterKind>(
         otel,
         "trace_exporter",
         "otel.trace_exporter",
-        source,
         warnings,
     );
     remove_invalid_enum::<OtelExporterKind>(
         otel,
         "metrics_exporter",
         "otel.metrics_exporter",
-        source,
         warnings,
     );
 }
@@ -498,7 +414,6 @@ fn sanitize_otel(table: &mut TomlMap<String, TomlValue>, source: &str, warnings:
 fn remove_invalid_map_enums<T>(
     table: &mut TomlMap<String, TomlValue>,
     path: &str,
-    source: &str,
     warnings: &mut Vec<String>,
 ) where
     T: DeserializeOwned,
@@ -511,11 +426,7 @@ fn remove_invalid_map_enums<T>(
         let Some(value) = table.remove(&key) else {
             continue;
         };
-        warnings.push(invalid_enum_warning(
-            source,
-            &format!("{path}.{key}"),
-            &value,
-        ));
+        warnings.push(invalid_enum_warning(&format!("{path}.{key}"), &value));
     }
 }
 
@@ -523,7 +434,6 @@ fn remove_invalid_enum<T>(
     table: &mut TomlMap<String, TomlValue>,
     key: &str,
     path: &str,
-    source: &str,
     warnings: &mut Vec<String>,
 ) where
     T: DeserializeOwned,
@@ -537,7 +447,7 @@ fn remove_invalid_enum<T>(
     let Some(value) = table.remove(key) else {
         return;
     };
-    warnings.push(invalid_enum_warning(source, path, &value));
+    warnings.push(invalid_enum_warning(path, &value));
 }
 
 fn invalid_enum<T>(value: &TomlValue) -> bool
@@ -550,8 +460,8 @@ where
     }
 }
 
-fn invalid_enum_warning(source: &str, path: &str, value: &TomlValue) -> String {
-    format!("Ignoring invalid config value in {source} at {path}: {value}")
+fn invalid_enum_warning(path: &str, value: &TomlValue) -> String {
+    format!("Ignoring invalid config value at {path}: {value}")
 }
 
 #[derive(serde::Deserialize)]

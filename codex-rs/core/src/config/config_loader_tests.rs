@@ -143,7 +143,7 @@ notification_method = "loudly"
     )
     .await?;
 
-    let effective_config = layers.effective_config();
+    let (effective_config, enum_warnings) = layers.effective_config_with_warnings();
     let expected_config = toml::from_str::<TomlValue>(
         r#"
 model = "gpt-5-codex"
@@ -153,21 +153,12 @@ model = "gpt-5-codex"
     )
     .expect("expected config should parse");
     let expected_startup_warnings = vec![
-        format!(
-            "Ignoring invalid config value in user config {} at sandbox_mode: \"make-it-so\"",
-            config_path.display()
-        ),
-        format!(
-            "Ignoring invalid config value in user config {} at tui.notification_method: \"loudly\"",
-            config_path.display()
-        ),
+        "Ignoring invalid config value at sandbox_mode: \"make-it-so\"".to_string(),
+        "Ignoring invalid config value at tui.notification_method: \"loudly\"".to_string(),
     ];
 
     assert_eq!(
-        (
-            effective_config,
-            layers.startup_warnings().unwrap_or_default().to_vec()
-        ),
+        (effective_config, enum_warnings),
         (expected_config, expected_startup_warnings)
     );
     Ok(())

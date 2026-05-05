@@ -15,7 +15,6 @@ use crate::diagnostics::ConfigError;
 use crate::diagnostics::config_error_from_toml;
 use crate::diagnostics::first_layer_config_error_from_entries as typed_first_layer_config_error_from_entries;
 use crate::diagnostics::io_error_from_config_error;
-use crate::lenient::sanitize_config_toml_enums;
 use crate::merge::merge_toml_values;
 use crate::overrides::build_cli_overrides_layer;
 use crate::project_root_markers::default_project_root_markers;
@@ -174,8 +173,6 @@ pub async fn load_config_layers_state(
         )?)
     };
 
-    let mut startup_warnings = Vec::new();
-
     // Include an entry for the "system" config folder, loading its config.toml,
     // if it exists.
     let system_config_toml_file = system_config_toml_file_with_overrides(&overrides)?;
@@ -189,12 +186,7 @@ pub async fn load_config_layers_state(
             )
         })
         .await?;
-    push_config_layer_with_enum_warnings(
-        system_layer,
-        &mut layers,
-        &mut startup_warnings,
-        CONFIG_TOML_FILE,
-    );
+    layers.push(system_layer);
 
     // Add a layer for $CODEX_HOME/config.toml so folder-derived resources such
     // as rules/ can still be discovered. When user config is ignored, preserve
@@ -218,14 +210,9 @@ pub async fn load_config_layers_state(
         })
         .await?
     };
-    push_config_layer_with_enum_warnings(
-        user_layer,
-        &mut layers,
-        &mut startup_warnings,
-        CONFIG_TOML_FILE,
-    );
+    layers.push(user_layer);
 
-    let checked_stack_warnings = cwd.is_some();
+    let mut startup_warnings = None;
     if let Some(cwd) = cwd {
         let mut merged_so_far = TomlValue::Table(toml::map::Map::new());
         for layer in &layers {
@@ -283,7 +270,7 @@ pub async fn load_config_layers_state(
         )
         .await?;
         layers.extend(project_layers.layers);
-        startup_warnings.extend(project_layers.startup_warnings);
+        startup_warnings = Some(project_layers.startup_warnings);
     }
 
     // Add a layer for runtime overrides from the CLI or UI, if any exist.
@@ -319,16 +306,10 @@ pub async fn load_config_layers_state(
         })?;
         let managed_config =
             resolve_relative_paths_in_config_toml(config.managed_config, managed_parent)?;
-        let managed_layer = ConfigLayerEntry::new(
+        layers.push(ConfigLayerEntry::new(
             ConfigLayerSource::LegacyManagedConfigTomlFromFile { file: config.file },
             managed_config,
-        );
-        push_config_layer_with_enum_warnings(
-            managed_layer,
-            &mut layers,
-            &mut startup_warnings,
-            CONFIG_TOML_FILE,
-        );
+        ));
     }
     if let Some(config) = managed_config_from_mdm {
         // As a general rule, config from MDM should _not_ include relative
@@ -338,17 +319,11 @@ pub async fn load_config_layers_state(
         // value for base_dir, so codex_home is as good a value as any.
         let managed_config =
             resolve_relative_paths_in_config_toml(config.managed_config, codex_home)?;
-        let managed_layer = ConfigLayerEntry::new_with_raw_toml(
+        layers.push(ConfigLayerEntry::new_with_raw_toml(
             ConfigLayerSource::LegacyManagedConfigTomlFromMdm,
             managed_config,
             config.raw_toml,
-        );
-        push_config_layer_with_enum_warnings(
-            managed_layer,
-            &mut layers,
-            &mut startup_warnings,
-            CONFIG_TOML_FILE,
-        );
+        ));
     }
 
     let config_layer_stack = ConfigLayerStack::new(
@@ -357,46 +332,10 @@ pub async fn load_config_layers_state(
         config_requirements_toml.into_toml(),
     )?
     .with_user_and_project_exec_policy_rules_ignored(ignore_user_and_project_exec_policy_rules);
-    Ok(if checked_stack_warnings || !startup_warnings.is_empty() {
-        config_layer_stack.with_startup_warnings(startup_warnings)
-    } else {
-        config_layer_stack
+    Ok(match startup_warnings {
+        Some(startup_warnings) => config_layer_stack.with_startup_warnings(startup_warnings),
+        None => config_layer_stack,
     })
-}
-
-fn push_config_layer_with_enum_warnings(
-    mut layer: ConfigLayerEntry,
-    layers: &mut Vec<ConfigLayerEntry>,
-    startup_warnings: &mut Vec<String>,
-    config_toml_file: &str,
-) {
-    startup_warnings.extend(sanitize_config_toml_enums(
-        &mut layer.config,
-        config_warning_source(&layer.name, config_toml_file),
-    ));
-    layers.push(layer);
-}
-
-fn config_warning_source(layer: &ConfigLayerSource, config_toml_file: &str) -> String {
-    match layer {
-        ConfigLayerSource::System { file } => {
-            format!("system config {}", file.as_path().display())
-        }
-        ConfigLayerSource::User { file } => {
-            format!("user config {}", file.as_path().display())
-        }
-        ConfigLayerSource::Project { dot_codex_folder } => format!(
-            "project config {}",
-            dot_codex_folder.as_path().join(config_toml_file).display()
-        ),
-        ConfigLayerSource::SessionFlags => "session config overrides".to_string(),
-        ConfigLayerSource::LegacyManagedConfigTomlFromFile { file } => {
-            format!("managed config {}", file.as_path().display())
-        }
-        ConfigLayerSource::Mdm { .. } | ConfigLayerSource::LegacyManagedConfigTomlFromMdm => {
-            "managed device config".to_string()
-        }
-    }
 }
 
 fn insert_layer_by_precedence(layers: &mut Vec<ConfigLayerEntry>, layer: ConfigLayerEntry) {
@@ -1085,12 +1024,6 @@ async fn load_project_layers(
                 };
                 let mut config = config;
                 let ignored_project_config_keys = sanitize_project_config(&mut config);
-                if disabled_reason.is_none() {
-                    startup_warnings.extend(sanitize_config_toml_enums(
-                        &mut config,
-                        format!("project config {}", config_file.as_path().display()),
-                    ));
-                }
                 let config =
                     resolve_relative_paths_in_config_toml(config, dot_codex_abs.as_path())?;
                 if disabled_reason.is_none() && !ignored_project_config_keys.is_empty() {

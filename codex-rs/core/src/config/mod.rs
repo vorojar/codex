@@ -963,7 +963,8 @@ impl ConfigBuilder {
                 .unwrap_or(&codex_config::NoopThreadConfigLoader),
         )
         .await?;
-        let merged_toml = config_layer_stack.effective_config();
+        let (merged_toml, enum_warnings) = config_layer_stack.effective_config_with_warnings();
+        let config_layer_stack = config_layer_stack.with_additional_startup_warnings(enum_warnings);
 
         // Note that each layer in ConfigLayerStack should have resolved
         // relative paths to absolute paths based on the parent folder of the
@@ -1225,7 +1226,7 @@ pub async fn load_config_as_toml_with_cli_and_loader_overrides(
     )
     .await?;
 
-    let merged_toml = config_layer_stack.effective_config();
+    let (merged_toml, _enum_warnings) = config_layer_stack.effective_config_with_warnings();
     let cfg = deserialize_config_toml_with_base(merged_toml, codex_home).map_err(|e| {
         tracing::error!("Failed to deserialize overridden config: {e}");
         e
