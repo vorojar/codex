@@ -98,7 +98,7 @@ fn remove_marketplace_root(root: &Path) -> Result<Option<AbsolutePathBuf>, Marke
     let file_type = metadata.file_type();
     let remove_result = if file_type.is_dir() {
         fs::remove_dir_all(root)
-    } else if file_type.is_file() {
+    } else if file_type.is_file() || file_type.is_symlink() {
         fs::remove_file(root)
     } else {
         return Err(MarketplaceRemoveError::Internal(format!(
@@ -285,6 +285,53 @@ mod tests {
             }
         );
         assert!(!installed_root.exists());
+        let config =
+            fs::read_to_string(codex_home.path().join(codex_config::CONFIG_TOML_FILE)).unwrap();
+        assert!(!config.contains("[marketplaces.debug]"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn remove_marketplace_sync_removes_symlink_installed_root() {
+        let codex_home = TempDir::new().unwrap();
+        record_user_marketplace(
+            codex_home.path(),
+            "debug",
+            &MarketplaceConfigUpdate {
+                last_updated: "2026-04-13T00:00:00Z",
+                last_revision: None,
+                source_type: "git",
+                source: "https://github.com/owner/repo.git",
+                ref_name: Some("main"),
+                sparse_paths: &[],
+            },
+        )
+        .unwrap();
+        let installed_root = marketplace_install_root(codex_home.path()).join("debug");
+        fs::create_dir_all(installed_root.parent().unwrap()).unwrap();
+        let target_root = codex_home.path().join("debug-target");
+        fs::create_dir_all(&target_root).unwrap();
+        std::os::unix::fs::symlink(&target_root, &installed_root).unwrap();
+
+        let outcome = remove_marketplace_sync(
+            codex_home.path(),
+            MarketplaceRemoveRequest {
+                marketplace_name: "debug".to_string(),
+            },
+        )
+        .unwrap();
+
+        assert_eq!(
+            outcome,
+            MarketplaceRemoveOutcome {
+                marketplace_name: "debug".to_string(),
+                removed_installed_root: Some(
+                    AbsolutePathBuf::try_from(installed_root.clone()).unwrap()
+                ),
+            }
+        );
+        assert!(!installed_root.exists());
+        assert!(target_root.exists());
         let config =
             fs::read_to_string(codex_home.path().join(codex_config::CONFIG_TOML_FILE)).unwrap();
         assert!(!config.contains("[marketplaces.debug]"));
