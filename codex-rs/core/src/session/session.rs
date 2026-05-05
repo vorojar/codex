@@ -577,20 +577,6 @@ impl Session {
                 .notify
                 .as_ref()
                 .is_some_and(|argv| !argv.is_empty() && !argv[0].is_empty());
-            if legacy_notify_configured {
-                post_session_configured_events.push(Event {
-                    id: INITIAL_SUBMIT_ID.to_owned(),
-                    msg: EventMsg::DeprecationNotice(DeprecationNoticeEvent {
-                        summary:
-                            "`notify` is deprecated and will be removed in a future release."
-                                .to_string(),
-                        details: Some(
-                            "Switch to a `Stop` hook for end-of-turn automation. See https://developers.openai.com/codex/hooks."
-                                .to_string(),
-                        ),
-                    }),
-                });
-            }
             for message in &config.startup_warnings {
                 post_session_configured_events.push(Event {
                     id: "".to_owned(),
