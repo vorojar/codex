@@ -319,14 +319,22 @@ impl Session {
                 tool_name,
             } => Box::pin(async move {
                 if tool_name != codex_tools::UPDATE_GOAL_TOOL_NAME {
-                    self.account_thread_goal_progress(turn_context, BudgetLimitSteering::Allowed)
-                        .await?;
+                    self.account_thread_goal_progress(
+                        turn_context,
+                        BudgetLimitSteering::Allowed,
+                        TerminalMetricEmission::Emit,
+                    )
+                    .await?;
                 }
                 Ok(())
             }),
             GoalRuntimeEvent::ToolCompletedGoal { turn_context } => Box::pin(async move {
-                self.account_thread_goal_progress(turn_context, BudgetLimitSteering::Suppressed)
-                    .await?;
+                self.account_thread_goal_progress(
+                    turn_context,
+                    BudgetLimitSteering::Suppressed,
+                    TerminalMetricEmission::Suppress,
+                )
+                .await?;
                 Ok(())
             }),
             GoalRuntimeEvent::TurnFinished {
@@ -807,7 +815,11 @@ impl Session {
     ) {
         if turn_completed
             && let Err(err) = self
-                .account_thread_goal_progress(turn_context, BudgetLimitSteering::Suppressed)
+                .account_thread_goal_progress(
+                    turn_context,
+                    BudgetLimitSteering::Suppressed,
+                    TerminalMetricEmission::Emit,
+                )
                 .await
         {
             tracing::warn!("failed to account thread goal progress at turn end: {err}");
@@ -836,7 +848,11 @@ impl Session {
             self.take_thread_goal_continuation_turn(&turn_context.sub_id)
                 .await;
             if let Err(err) = self
-                .account_thread_goal_progress(turn_context, BudgetLimitSteering::Suppressed)
+                .account_thread_goal_progress(
+                    turn_context,
+                    BudgetLimitSteering::Suppressed,
+                    TerminalMetricEmission::Emit,
+                )
                 .await
             {
                 tracing::warn!("failed to account thread goal progress after abort: {err}");
@@ -862,6 +878,7 @@ impl Session {
         &self,
         turn_context: &TurnContext,
         budget_limit_steering: BudgetLimitSteering,
+        terminal_metric_emission: TerminalMetricEmission,
     ) -> anyhow::Result<()> {
         if !self.enabled(Feature::Goals) {
             return Ok(());
@@ -940,7 +957,7 @@ impl Session {
                         accounting.wall_clock.clear_active_goal();
                     }
                 }
-                if matches!(budget_limit_steering, BudgetLimitSteering::Allowed) {
+                if matches!(terminal_metric_emission, TerminalMetricEmission::Emit) {
                     self.emit_goal_terminal_metrics_if_status_changed(previous_status, &goal);
                 }
                 goal
@@ -982,6 +999,7 @@ impl Session {
                 .account_thread_goal_progress(
                     turn_context.as_ref(),
                     BudgetLimitSteering::Suppressed,
+                    TerminalMetricEmission::Emit,
                 )
                 .await;
         }
