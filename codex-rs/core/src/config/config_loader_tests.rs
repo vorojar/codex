@@ -143,7 +143,8 @@ notification_method = "loudly"
     )
     .await?;
 
-    let (effective_config, enum_warnings) = layers.effective_config_with_warnings();
+    let (effective_config, _config_toml, enum_warnings): (TomlValue, ConfigToml, Vec<String>) =
+        layers.deserialize_effective_config_with_warnings()?;
     let expected_config = toml::from_str::<TomlValue>(
         r#"
 model = "gpt-5-codex"

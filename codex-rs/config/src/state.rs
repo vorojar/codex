@@ -4,7 +4,7 @@ use crate::config_requirements::ConfigRequirementsToml;
 use super::fingerprint::record_origins;
 use super::fingerprint::version_for_toml;
 use super::key_aliases::normalized_with_key_aliases;
-use super::lenient::sanitize_config_toml_enums;
+use super::lenient::deserialize_with_enum_warnings;
 use super::merge::merge_toml_values;
 use codex_app_server_protocol::ConfigLayer;
 use codex_app_server_protocol::ConfigLayerMetadata;
@@ -311,10 +311,13 @@ impl ConfigLayerStack {
         merged
     }
 
-    pub fn effective_config_with_warnings(&self) -> (TomlValue, Vec<String>) {
-        let mut merged = self.effective_config();
-        let warnings = sanitize_config_toml_enums(&mut merged);
-        (merged, warnings)
+    pub fn deserialize_effective_config_with_warnings<T>(
+        &self,
+    ) -> Result<(TomlValue, T, Vec<String>), toml::de::Error>
+    where
+        T: serde::de::DeserializeOwned,
+    {
+        deserialize_with_enum_warnings(self.effective_config())
     }
 
     /// Returns field origins for the merged config-layer view.

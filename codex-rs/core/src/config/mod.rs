@@ -963,15 +963,14 @@ impl ConfigBuilder {
                 .unwrap_or(&codex_config::NoopThreadConfigLoader),
         )
         .await?;
-        let (merged_toml, enum_warnings) = config_layer_stack.effective_config_with_warnings();
-        let config_layer_stack = config_layer_stack.with_additional_startup_warnings(enum_warnings);
-
         // Note that each layer in ConfigLayerStack should have resolved
         // relative paths to absolute paths based on the parent folder of the
         // respective config file, so we should be safe to deserialize without
         // AbsolutePathBufGuard here.
-        let config_toml: ConfigToml = match merged_toml.try_into() {
-            Ok(config_toml) => config_toml,
+        let (_merged_toml, config_toml, enum_warnings) = match config_layer_stack
+            .deserialize_effective_config_with_warnings::<ConfigToml>()
+        {
+            Ok(result) => result,
             Err(err) => {
                 if let Some(config_error) = codex_config::first_layer_config_error::<ConfigToml>(
                     &config_layer_stack,
@@ -988,6 +987,7 @@ impl ConfigBuilder {
                 return Err(std::io::Error::new(std::io::ErrorKind::InvalidData, err));
             }
         };
+        let config_layer_stack = config_layer_stack.with_additional_startup_warnings(enum_warnings);
         let config_lock_settings = config_toml
             .debug
             .as_ref()
@@ -1226,11 +1226,14 @@ pub async fn load_config_as_toml_with_cli_and_loader_overrides(
     )
     .await?;
 
-    let (merged_toml, _enum_warnings) = config_layer_stack.effective_config_with_warnings();
-    let cfg = deserialize_config_toml_with_base(merged_toml, codex_home).map_err(|e| {
-        tracing::error!("Failed to deserialize overridden config: {e}");
-        e
-    })?;
+    let _guard = AbsolutePathBufGuard::new(codex_home);
+    let (_merged_toml, cfg, _enum_warnings) = config_layer_stack
+        .deserialize_effective_config_with_warnings::<ConfigToml>()
+        .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))
+        .map_err(|e| {
+            tracing::error!("Failed to deserialize overridden config: {e}");
+            e
+        })?;
 
     Ok(cfg)
 }
