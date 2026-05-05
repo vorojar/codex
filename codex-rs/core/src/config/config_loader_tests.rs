@@ -164,6 +164,43 @@ sandbox_mode = "make-it-so"
 }
 
 #[tokio::test]
+async fn invalid_enum_values_emit_startup_warnings_when_loading_config() -> std::io::Result<()> {
+    let tmp = tempdir().expect("tempdir");
+    let codex_home = tmp.path().join("home");
+    tokio::fs::create_dir_all(&codex_home).await?;
+    std::fs::write(
+        codex_home.join(CONFIG_TOML_FILE),
+        r#"
+model = "gpt-5-codex"
+sandbox_mode = "make-it-so"
+
+[profiles.dev]
+model_reasoning_effort = "much"
+"#,
+    )
+    .expect("write config");
+
+    let config = ConfigBuilder::without_managed_config_for_tests()
+        .codex_home(codex_home)
+        .build()
+        .await?;
+
+    assert_eq!(
+        (config.model.as_deref(), config.startup_warnings),
+        (
+            Some("gpt-5-codex"),
+            vec![
+                "Ignoring invalid config value at sandbox_mode: \"make-it-so\"".to_string(),
+                "Ignoring invalid config value at profiles.dev.model_reasoning_effort: \"much\""
+                    .to_string(),
+            ],
+        )
+    );
+
+    Ok(())
+}
+
+#[tokio::test]
 async fn ignore_user_config_keeps_empty_user_layer() -> std::io::Result<()> {
     let tmp = tempdir().expect("tempdir");
     std::fs::write(
