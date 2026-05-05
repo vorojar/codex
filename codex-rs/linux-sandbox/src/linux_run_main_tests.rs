@@ -61,6 +61,7 @@ fn inserts_bwrap_argv0_before_command_separator() {
             ..Default::default()
         },
     )
+    .expect("build bwrap argv")
     .args;
     apply_inner_command_argv0_for_launcher(
         &mut argv,
@@ -104,6 +105,7 @@ fn rewrites_inner_command_path_when_bwrap_lacks_argv0() {
             ..Default::default()
         },
     )
+    .expect("build bwrap argv")
     .args;
     apply_inner_command_argv0_for_launcher(
         &mut argv,
@@ -172,6 +174,7 @@ fn inserts_unshare_net_when_network_isolation_requested() {
             ..Default::default()
         },
     )
+    .expect("build bwrap argv")
     .args;
     assert!(argv.contains(&"--unshare-net".to_string()));
 }
@@ -190,6 +193,7 @@ fn inserts_unshare_net_when_proxy_only_network_mode_requested() {
             ..Default::default()
         },
     )
+    .expect("build bwrap argv")
     .args;
     assert!(argv.contains(&"--unshare-net".to_string()));
 }
@@ -201,6 +205,49 @@ fn proxy_only_mode_takes_precedence_over_full_network_policy() {
         /*allow_network_for_proxy*/ true,
     );
     assert_eq!(mode, BwrapNetworkMode::ProxyOnly);
+}
+
+#[cfg(unix)]
+#[test]
+fn returns_bwrap_build_error_for_protected_codex_symlink() {
+    use codex_protocol::protocol::FileSystemAccessMode;
+    use codex_protocol::protocol::FileSystemPath;
+    use codex_protocol::protocol::FileSystemSandboxEntry;
+    use std::os::unix::fs::symlink;
+
+    let temp_dir = tempfile::TempDir::new().expect("tempdir");
+    let workspace = temp_dir.path().join("workspace");
+    let codex_target = workspace.join("codex-target");
+    let dot_codex = workspace.join(".codex");
+    std::fs::create_dir_all(&codex_target).expect("create codex target");
+    symlink(&codex_target, &dot_codex).expect("create .codex symlink");
+
+    let workspace = AbsolutePathBuf::from_absolute_path(&workspace).expect("absolute workspace");
+    let file_system_sandbox_policy =
+        FileSystemSandboxPolicy::restricted(vec![FileSystemSandboxEntry {
+            path: FileSystemPath::Path { path: workspace },
+            access: FileSystemAccessMode::Write,
+        }]);
+
+    let err = build_bwrap_argv(
+        vec!["/bin/true".to_string()],
+        &file_system_sandbox_policy,
+        temp_dir.path(),
+        temp_dir.path(),
+        BwrapOptions {
+            mount_proc: true,
+            network_mode: BwrapNetworkMode::FullAccess,
+            ..Default::default()
+        },
+    )
+    .expect_err("protected .codex symlink should fail closed");
+    let message = err.to_string();
+
+    assert!(
+        message.contains("cannot enforce sandbox read-only path"),
+        "{message}"
+    );
+    assert!(message.contains(&dot_codex.to_string_lossy()), "{message}");
 }
 
 #[test]
@@ -265,6 +312,7 @@ fn managed_proxy_preflight_argv_is_wrapped_for_full_access_policy() {
         &FileSystemSandboxPolicy::unrestricted(),
         mode,
     )
+    .expect("build preflight argv")
     .args;
     assert!(argv.iter().any(|arg| arg == "--"));
 }
