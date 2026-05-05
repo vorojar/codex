@@ -119,6 +119,61 @@ async fn returns_config_error_for_invalid_user_config_toml() {
 }
 
 #[tokio::test]
+async fn invalid_enum_values_emit_warnings_without_poisoning_config() -> std::io::Result<()> {
+    let tmp = tempdir().expect("tempdir");
+    let contents = r#"
+model = "gpt-5-codex"
+sandbox_mode = "make-it-so"
+
+[tui]
+notification_method = "loudly"
+"#;
+    let config_path = tmp.path().join(CONFIG_TOML_FILE);
+    std::fs::write(&config_path, contents).expect("write config");
+
+    let cwd = AbsolutePathBuf::try_from(tmp.path()).expect("cwd");
+    let layers = load_config_layers_state(
+        LOCAL_FS.as_ref(),
+        tmp.path(),
+        Some(cwd),
+        &[] as &[(String, TomlValue)],
+        LoaderOverrides::default(),
+        CloudRequirementsLoader::default(),
+        &codex_config::NoopThreadConfigLoader,
+    )
+    .await?;
+
+    let effective_config = layers.effective_config();
+    let expected_config = toml::from_str::<TomlValue>(
+        r#"
+model = "gpt-5-codex"
+
+[tui]
+"#,
+    )
+    .expect("expected config should parse");
+    let expected_startup_warnings = vec![
+        format!(
+            "Ignoring invalid config value in user config {} at sandbox_mode: \"make-it-so\"",
+            config_path.display()
+        ),
+        format!(
+            "Ignoring invalid config value in user config {} at tui.notification_method: \"loudly\"",
+            config_path.display()
+        ),
+    ];
+
+    assert_eq!(
+        (
+            effective_config,
+            layers.startup_warnings().unwrap_or_default().to_vec()
+        ),
+        (expected_config, expected_startup_warnings)
+    );
+    Ok(())
+}
+
+#[tokio::test]
 async fn ignore_user_config_keeps_empty_user_layer() -> std::io::Result<()> {
     let tmp = tempdir().expect("tempdir");
     std::fs::write(

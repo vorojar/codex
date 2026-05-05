@@ -7,6 +7,7 @@ mod fingerprint;
 mod hook_config;
 mod host_name;
 mod key_aliases;
+mod lenient;
 pub mod loader;
 mod marketplace_edit;
 mod mcp_edit;
