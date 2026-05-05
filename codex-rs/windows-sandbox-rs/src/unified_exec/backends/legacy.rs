@@ -325,7 +325,8 @@ pub(crate) async fn spawn_windows_sandbox_session_legacy(
     allow_null_device_for_workspace_write(common.is_workspace_write);
 
     let persist_aces = common.is_workspace_write;
-    let protected_metadata_guard = prepare_protected_metadata_targets(protected_metadata_targets);
+    let mut protected_metadata_guard =
+        prepare_protected_metadata_targets(protected_metadata_targets)?;
     let additional_deny_write_paths: Vec<PathBuf> =
         protected_metadata_guard.deny_paths().cloned().collect();
     let guards = apply_legacy_session_acl_rules(
@@ -339,6 +340,7 @@ pub(crate) async fn spawn_windows_sandbox_session_legacy(
         persist_aces,
         &additional_deny_write_paths,
     );
+    protected_metadata_guard.arm_sentinel_cleanup()?;
     let protected_metadata_runtime = protected_metadata_guard.into_runtime()?;
 
     let (writer_tx, writer_rx) = mpsc::channel::<Vec<u8>>(128);

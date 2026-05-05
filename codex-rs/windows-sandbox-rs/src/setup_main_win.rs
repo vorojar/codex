@@ -19,6 +19,7 @@ use codex_windows_sandbox::canonicalize_path;
 use codex_windows_sandbox::convert_string_sid_to_sid;
 use codex_windows_sandbox::ensure_allow_mask_aces_with_inheritance;
 use codex_windows_sandbox::ensure_allow_write_aces;
+use codex_windows_sandbox::ensure_missing_deny_sentinel;
 use codex_windows_sandbox::extract_setup_failure;
 use codex_windows_sandbox::hide_newly_created_users;
 use codex_windows_sandbox::install_wfp_filters;
@@ -824,10 +825,16 @@ fn run_setup_full(payload: &Payload, log: &mut File, sbx_dir: &Path) -> Result<(
     }
 
     for target in &payload.protected_metadata_targets {
-        if !matches!(target.mode, ProtectedMetadataMode::ExistingDeny) {
-            continue;
-        }
-        let deny_paths = protected_metadata_existing_deny_paths(&target.path);
+        let deny_paths = match target.mode {
+            ProtectedMetadataMode::ExistingDeny => {
+                protected_metadata_existing_deny_paths(&target.path)
+            }
+            ProtectedMetadataMode::MissingCreationMonitor => continue,
+            ProtectedMetadataMode::MissingDenySentinel => {
+                ensure_missing_deny_sentinel(&target.path)?;
+                protected_metadata_existing_deny_paths(&target.path)
+            }
+        };
         if deny_paths.is_empty() {
             log_line(
                 log,

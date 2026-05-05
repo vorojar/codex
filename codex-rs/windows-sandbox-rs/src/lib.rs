@@ -170,6 +170,8 @@ pub use process::read_handle_loop;
 #[cfg(target_os = "windows")]
 pub use process::spawn_process_with_pipes;
 #[cfg(target_os = "windows")]
+pub use protected_metadata::ensure_missing_deny_sentinel;
+#[cfg(target_os = "windows")]
 pub use protected_metadata::protected_metadata_existing_deny_paths;
 #[cfg(target_os = "windows")]
 pub use session::spawn_windows_sandbox_session_elevated;
@@ -449,8 +451,8 @@ mod windows_impl {
             compute_allow_paths(&policy, sandbox_policy_cwd, &current_dir, &env_map);
         let read_roots = legacy_session_executable_read_roots(&env_map, &command);
         let direct_read_paths = legacy_session_direct_read_paths(&env_map);
-        let protected_metadata_guard =
-            prepare_protected_metadata_targets(protected_metadata_targets);
+        let mut protected_metadata_guard =
+            prepare_protected_metadata_targets(protected_metadata_targets)?;
         for path in protected_metadata_guard.deny_paths() {
             deny.insert(path.clone());
         }
@@ -520,6 +522,7 @@ mod windows_impl {
                 allow_named_pipe_device(psid);
             }
         }
+        protected_metadata_guard.arm_sentinel_cleanup()?;
         let protected_metadata_runtime = protected_metadata_guard.into_runtime()?;
         let (stdin_pair, stdout_pair, stderr_pair) = unsafe { setup_stdio_pipes()? };
         let ((in_r, in_w), (out_r, out_w), (err_r, err_w)) = (stdin_pair, stdout_pair, stderr_pair);

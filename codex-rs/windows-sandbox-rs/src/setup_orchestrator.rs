@@ -35,7 +35,7 @@ use windows_sys::Win32::Security::CheckTokenMembership;
 use windows_sys::Win32::Security::FreeSid;
 use windows_sys::Win32::Security::SECURITY_NT_AUTHORITY;
 
-pub const SETUP_VERSION: u32 = 5;
+pub const SETUP_VERSION: u32 = 6;
 pub const OFFLINE_USERNAME: &str = "CodexSandboxOffline";
 pub const ONLINE_USERNAME: &str = "CodexSandboxOnline";
 const ERROR_CANCELLED: u32 = 1223;
@@ -112,12 +112,14 @@ pub struct ProtectedMetadataTarget {
 }
 
 /// Layer: Windows enforcement request boundary. The helper must distinguish
-/// existing metadata objects from missing names that need create monitoring.
+/// existing metadata objects from missing names that need pre-command denial or
+/// reactive cleanup.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum ProtectedMetadataMode {
     ExistingDeny,
     MissingCreationMonitor,
+    MissingDenySentinel,
 }
 
 pub fn run_setup_refresh(

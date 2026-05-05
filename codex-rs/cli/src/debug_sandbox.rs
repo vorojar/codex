@@ -478,7 +478,7 @@ fn windows_debug_protected_metadata_targets(
             let mode = if std::fs::symlink_metadata(path.as_path()).is_ok() {
                 codex_windows_sandbox::ProtectedMetadataMode::ExistingDeny
             } else {
-                codex_windows_sandbox::ProtectedMetadataMode::MissingCreationMonitor
+                codex_windows_sandbox::ProtectedMetadataMode::MissingDenySentinel
             };
             targets.push(codex_windows_sandbox::ProtectedMetadataTarget {
                 path: path.as_path().to_path_buf(),

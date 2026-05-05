@@ -121,13 +121,13 @@ pub(crate) struct WindowsProtectedMetadataTarget {
     pub(crate) mode: WindowsProtectedMetadataMode,
 }
 
-/// Layer: Windows adapter layer. The enforcement layer needs to know why a
-/// protected metadata path is absent instead of treating every missing path as
-/// an existing filesystem object.
+/// Layer: Windows adapter layer. The enforcement layer needs to know whether a
+/// protected metadata path already exists or must be denied before the command
+/// can create it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub(crate) enum WindowsProtectedMetadataMode {
     ExistingDeny,
-    MissingCreationMonitor,
+    MissingDenySentinel,
 }
 
 fn windows_sandbox_uses_elevated_backend(
@@ -666,8 +666,8 @@ async fn exec_windows_sandbox(
                         WindowsProtectedMetadataMode::ExistingDeny => {
                             codex_windows_sandbox::ProtectedMetadataMode::ExistingDeny
                         }
-                        WindowsProtectedMetadataMode::MissingCreationMonitor => {
-                            codex_windows_sandbox::ProtectedMetadataMode::MissingCreationMonitor
+                        WindowsProtectedMetadataMode::MissingDenySentinel => {
+                            codex_windows_sandbox::ProtectedMetadataMode::MissingDenySentinel
                         }
                     };
                     codex_windows_sandbox::ProtectedMetadataTarget {
@@ -1361,7 +1361,7 @@ fn windows_protected_metadata_mode(path: &AbsolutePathBuf) -> WindowsProtectedMe
         return WindowsProtectedMetadataMode::ExistingDeny;
     }
 
-    WindowsProtectedMetadataMode::MissingCreationMonitor
+    WindowsProtectedMetadataMode::MissingDenySentinel
 }
 
 fn has_reopened_writable_descendant(

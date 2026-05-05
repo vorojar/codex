@@ -183,15 +183,15 @@ fn open_session_prepares_windows_metadata_overrides_for_unified_exec() {
         vec![
             crate::exec::WindowsProtectedMetadataTarget {
                 path: cwd.join(".agents"),
-                mode: crate::exec::WindowsProtectedMetadataMode::MissingCreationMonitor,
+                mode: crate::exec::WindowsProtectedMetadataMode::MissingDenySentinel,
             },
             crate::exec::WindowsProtectedMetadataTarget {
                 path: cwd.join(".codex"),
-                mode: crate::exec::WindowsProtectedMetadataMode::MissingCreationMonitor,
+                mode: crate::exec::WindowsProtectedMetadataMode::MissingDenySentinel,
             },
             crate::exec::WindowsProtectedMetadataTarget {
                 path: cwd.join(".git"),
-                mode: crate::exec::WindowsProtectedMetadataMode::MissingCreationMonitor,
+                mode: crate::exec::WindowsProtectedMetadataMode::MissingDenySentinel,
             },
         ]
     );

@@ -666,15 +666,15 @@ fn windows_restricted_token_supports_full_read_split_write_read_carveouts() {
             protected_metadata_targets: vec![
                 WindowsProtectedMetadataTarget {
                     path: cwd.join(".agents"),
-                    mode: WindowsProtectedMetadataMode::MissingCreationMonitor,
+                    mode: WindowsProtectedMetadataMode::MissingDenySentinel,
                 },
                 WindowsProtectedMetadataTarget {
                     path: cwd.join(".codex"),
-                    mode: WindowsProtectedMetadataMode::MissingCreationMonitor,
+                    mode: WindowsProtectedMetadataMode::MissingDenySentinel,
                 },
                 WindowsProtectedMetadataTarget {
                     path: cwd.join(".git"),
-                    mode: WindowsProtectedMetadataMode::MissingCreationMonitor,
+                    mode: WindowsProtectedMetadataMode::MissingDenySentinel,
                 },
             ],
         }))
@@ -778,15 +778,15 @@ fn windows_elevated_supports_split_write_read_carveouts() {
             protected_metadata_targets: vec![
                 WindowsProtectedMetadataTarget {
                     path: expected_root.join(".agents"),
-                    mode: WindowsProtectedMetadataMode::MissingCreationMonitor,
+                    mode: WindowsProtectedMetadataMode::MissingDenySentinel,
                 },
                 WindowsProtectedMetadataTarget {
                     path: expected_root.join(".codex"),
-                    mode: WindowsProtectedMetadataMode::MissingCreationMonitor,
+                    mode: WindowsProtectedMetadataMode::MissingDenySentinel,
                 },
                 WindowsProtectedMetadataTarget {
                     path: expected_root.join(".git"),
-                    mode: WindowsProtectedMetadataMode::MissingCreationMonitor,
+                    mode: WindowsProtectedMetadataMode::MissingDenySentinel,
                 },
             ],
         }))
@@ -840,11 +840,11 @@ fn windows_metadata_plan_marks_existing_metadata_for_deny() {
             protected_metadata_targets: vec![
                 WindowsProtectedMetadataTarget {
                     path: cwd.join(".agents"),
-                    mode: WindowsProtectedMetadataMode::MissingCreationMonitor,
+                    mode: WindowsProtectedMetadataMode::MissingDenySentinel,
                 },
                 WindowsProtectedMetadataTarget {
                     path: cwd.join(".codex"),
-                    mode: WindowsProtectedMetadataMode::MissingCreationMonitor,
+                    mode: WindowsProtectedMetadataMode::MissingDenySentinel,
                 },
                 WindowsProtectedMetadataTarget {
                     path: cwd.join(".git"),
@@ -856,7 +856,7 @@ fn windows_metadata_plan_marks_existing_metadata_for_deny() {
 }
 
 #[test]
-fn windows_metadata_plan_does_not_materialize_nested_missing_git() {
+fn windows_metadata_plan_uses_sentinel_for_nested_missing_git() {
     let temp_dir = tempfile::TempDir::new().expect("tempdir");
     let repo = dunce::canonicalize(temp_dir.path())
         .expect("canonical temp dir")
@@ -904,15 +904,15 @@ fn windows_metadata_plan_does_not_materialize_nested_missing_git() {
             protected_metadata_targets: vec![
                 WindowsProtectedMetadataTarget {
                     path: cwd.join(".agents"),
-                    mode: WindowsProtectedMetadataMode::MissingCreationMonitor,
+                    mode: WindowsProtectedMetadataMode::MissingDenySentinel,
                 },
                 WindowsProtectedMetadataTarget {
                     path: cwd.join(".codex"),
-                    mode: WindowsProtectedMetadataMode::MissingCreationMonitor,
+                    mode: WindowsProtectedMetadataMode::MissingDenySentinel,
                 },
                 WindowsProtectedMetadataTarget {
                     path: cwd.join(".git"),
-                    mode: WindowsProtectedMetadataMode::MissingCreationMonitor,
+                    mode: WindowsProtectedMetadataMode::MissingDenySentinel,
                 },
             ],
         }))
@@ -973,15 +973,15 @@ fn windows_shell_runtime_path_resolves_metadata_overrides() {
         vec![
             WindowsProtectedMetadataTarget {
                 path: cwd.join(".agents"),
-                mode: WindowsProtectedMetadataMode::MissingCreationMonitor,
+                mode: WindowsProtectedMetadataMode::MissingDenySentinel,
             },
             WindowsProtectedMetadataTarget {
                 path: cwd.join(".codex"),
-                mode: WindowsProtectedMetadataMode::MissingCreationMonitor,
+                mode: WindowsProtectedMetadataMode::MissingDenySentinel,
             },
             WindowsProtectedMetadataTarget {
                 path: cwd.join(".git"),
-                mode: WindowsProtectedMetadataMode::MissingCreationMonitor,
+                mode: WindowsProtectedMetadataMode::MissingDenySentinel,
             },
         ]
     );

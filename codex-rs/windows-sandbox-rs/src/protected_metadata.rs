@@ -23,29 +23,48 @@ use windows_sys::Win32::Foundation::TRUE;
 use windows_sys::Win32::Foundation::WAIT_FAILED;
 use windows_sys::Win32::Foundation::WAIT_OBJECT_0;
 use windows_sys::Win32::Storage::FileSystem::FILE_ATTRIBUTE_REPARSE_POINT;
+use windows_sys::Win32::Storage::FileSystem::FILE_FLAG_BACKUP_SEMANTICS;
+use windows_sys::Win32::Storage::FileSystem::FILE_FLAG_DELETE_ON_CLOSE;
 use windows_sys::Win32::Storage::FileSystem::FILE_NOTIFY_CHANGE_CREATION;
 use windows_sys::Win32::Storage::FileSystem::FILE_NOTIFY_CHANGE_DIR_NAME;
 use windows_sys::Win32::Storage::FileSystem::FILE_NOTIFY_CHANGE_FILE_NAME;
+use windows_sys::Win32::Storage::FileSystem::FILE_SHARE_DELETE;
+use windows_sys::Win32::Storage::FileSystem::FILE_SHARE_READ;
+use windows_sys::Win32::Storage::FileSystem::FILE_SHARE_WRITE;
+use windows_sys::Win32::Storage::FileSystem::CreateFileW;
+use windows_sys::Win32::Storage::FileSystem::DELETE;
 use windows_sys::Win32::Storage::FileSystem::FindCloseChangeNotification;
 use windows_sys::Win32::Storage::FileSystem::FindFirstChangeNotificationW;
 use windows_sys::Win32::Storage::FileSystem::FindNextChangeNotification;
+use windows_sys::Win32::Storage::FileSystem::OPEN_EXISTING;
 use windows_sys::Win32::System::Threading::CreateEventW;
 use windows_sys::Win32::System::Threading::INFINITE;
 use windows_sys::Win32::System::Threading::SetEvent;
 use windows_sys::Win32::System::Threading::WaitForMultipleObjects;
 
 /// Layer: Windows enforcement layer. Existing metadata objects can be protected
-/// with ACLs; missing names are monitored and removed if the sandbox creates
-/// them.
+/// with ACLs. Missing names are materialized as empty deny sentinels when the
+/// caller needs pre-command creation denial, or monitored and removed after
+/// creation when the caller explicitly requests reactive cleanup.
 #[derive(Debug)]
 pub(crate) struct ProtectedMetadataGuard {
     deny_paths: Vec<PathBuf>,
     monitored_paths: Vec<PathBuf>,
+    sentinel_paths: Vec<PathBuf>,
+    sentinel_handles: Vec<SentinelHandle>,
 }
 
 impl ProtectedMetadataGuard {
     pub(crate) fn deny_paths(&self) -> impl Iterator<Item = &PathBuf> {
         self.deny_paths.iter()
+    }
+
+    pub(crate) fn arm_sentinel_cleanup(&mut self) -> Result<()> {
+        for path in &self.sentinel_paths {
+            self.sentinel_handles
+                .push(open_delete_on_close_directory(path)?);
+        }
+        Ok(())
     }
 
     pub(crate) fn into_runtime(self) -> Result<ProtectedMetadataRuntime> {
@@ -56,9 +75,10 @@ impl ProtectedMetadataGuard {
         })
     }
 
-    pub(crate) fn cleanup_created_monitored_paths(&self) -> Result<Vec<PathBuf>> {
+    pub(crate) fn cleanup_created_paths(&mut self) -> Result<Vec<PathBuf>> {
+        self.sentinel_handles.clear();
         let mut removed = Vec::new();
-        for path in &self.monitored_paths {
+        for path in self.monitored_paths.iter().chain(self.sentinel_paths.iter()) {
             let Some(existing_path) = existing_metadata_path(path)? else {
                 continue;
             };
@@ -70,6 +90,15 @@ impl ProtectedMetadataGuard {
     }
 }
 
+impl Drop for ProtectedMetadataGuard {
+    fn drop(&mut self) {
+        self.sentinel_handles.clear();
+        for path in &self.sentinel_paths {
+            let _ = remove_metadata_path(path);
+        }
+    }
+}
+
 pub(crate) struct ProtectedMetadataRuntime {
     guard: ProtectedMetadataGuard,
     monitor: MissingCreationMonitor,
@@ -77,9 +106,32 @@ pub(crate) struct ProtectedMetadataRuntime {
 
 impl ProtectedMetadataRuntime {
     pub(crate) fn finish(mut self) -> Result<Vec<PathBuf>> {
-        let mut removed = self.monitor.finish()?;
-        removed.extend(self.guard.cleanup_created_monitored_paths()?);
-        Ok(unique_paths(removed))
+        let monitor_result = self.monitor.finish();
+        let cleanup_result = self.guard.cleanup_created_paths();
+        match (monitor_result, cleanup_result) {
+            (Ok(mut removed), Ok(cleaned)) => {
+                removed.extend(cleaned);
+                Ok(unique_paths(removed))
+            }
+            (Err(err), Ok(_)) | (Ok(_), Err(err)) => Err(err),
+            (Err(monitor_err), Err(cleanup_err)) => Err(anyhow!(
+                "protected metadata monitor failed: {monitor_err:#}; cleanup also failed: {cleanup_err:#}"
+            )),
+        }
+    }
+}
+
+#[derive(Debug)]
+struct SentinelHandle(HANDLE);
+
+impl Drop for SentinelHandle {
+    fn drop(&mut self) {
+        if self.0 != 0 && self.0 != INVALID_HANDLE_VALUE {
+            unsafe {
+                CloseHandle(self.0);
+            }
+            self.0 = 0;
+        }
     }
 }
 
@@ -336,9 +388,10 @@ fn record_monitor_error(errors: &Arc<Mutex<Vec<String>>>, message: String) {
 
 pub(crate) fn prepare_protected_metadata_targets(
     targets: &[ProtectedMetadataTarget],
-) -> ProtectedMetadataGuard {
+) -> Result<ProtectedMetadataGuard> {
     let mut deny_paths = Vec::new();
     let mut monitored_paths = Vec::new();
+    let mut sentinel_paths = Vec::new();
     for target in targets {
         match target.mode {
             ProtectedMetadataMode::ExistingDeny => {
@@ -347,12 +400,26 @@ pub(crate) fn prepare_protected_metadata_targets(
             ProtectedMetadataMode::MissingCreationMonitor => {
                 monitored_paths.push(target.path.clone());
             }
+            ProtectedMetadataMode::MissingDenySentinel => {
+                let created = ensure_missing_deny_sentinel(&target.path)?;
+                let existing_deny_paths = protected_metadata_existing_deny_paths(&target.path);
+                if existing_deny_paths.is_empty() {
+                    deny_paths.push(target.path.clone());
+                } else {
+                    deny_paths.extend(existing_deny_paths);
+                }
+                if created {
+                    sentinel_paths.push(target.path.clone());
+                }
+            }
         }
     }
-    ProtectedMetadataGuard {
+    Ok(ProtectedMetadataGuard {
         deny_paths,
         monitored_paths,
-    }
+        sentinel_paths,
+        sentinel_handles: Vec::new(),
+    })
 }
 
 pub fn protected_metadata_existing_deny_paths(path: &Path) -> Vec<PathBuf> {
@@ -472,6 +539,47 @@ fn remove_metadata_path(path: &Path) -> Result<()> {
     Ok(())
 }
 
+/// Creates an empty sentinel directory for a missing protected metadata name.
+///
+/// Returns true when this call created the sentinel. If the target already
+/// exists by the time enforcement prepares, callers should still deny it, but
+/// must not claim it for cleanup as a Codex-created sentinel.
+pub fn ensure_missing_deny_sentinel(path: &Path) -> Result<bool> {
+    if existing_metadata_path(path)?.is_some() {
+        return Ok(false);
+    }
+
+    match std::fs::create_dir(path) {
+        Ok(()) => Ok(true),
+        Err(err) if err.kind() == io::ErrorKind::AlreadyExists => Ok(false),
+        Err(err) => Err(err)
+            .with_context(|| format!("failed to create protected metadata sentinel {}", path.display())),
+    }
+}
+
+fn open_delete_on_close_directory(path: &Path) -> Result<SentinelHandle> {
+    let path_wide = to_wide(path);
+    let handle = unsafe {
+        CreateFileW(
+            path_wide.as_ptr(),
+            DELETE,
+            FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+            std::ptr::null_mut(),
+            OPEN_EXISTING,
+            FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_DELETE_ON_CLOSE,
+            0,
+        )
+    };
+    if handle == INVALID_HANDLE_VALUE {
+        return Err(anyhow!(
+            "failed to arm protected metadata sentinel cleanup for {}: {}",
+            path.display(),
+            io::Error::last_os_error()
+        ));
+    }
+    Ok(SentinelHandle(handle))
+}
+
 fn is_directory_reparse_point(metadata: &Metadata) -> bool {
     metadata.is_dir() && (metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT) != 0
 }
@@ -485,17 +593,18 @@ mod tests {
     use std::time::Instant;
 
     #[test]
-    fn cleanup_created_monitored_paths_removes_case_variant() {
+    fn cleanup_created_paths_removes_case_variant() {
         let temp_dir = tempfile::TempDir::new().expect("tempdir");
         let target = temp_dir.path().join(".git");
         let created = temp_dir.path().join(".GIT");
         std::fs::create_dir_all(&created).expect("create metadata");
-        let guard = prepare_protected_metadata_targets(&[ProtectedMetadataTarget {
+        let mut guard = prepare_protected_metadata_targets(&[ProtectedMetadataTarget {
             path: target.clone(),
             mode: ProtectedMetadataMode::MissingCreationMonitor,
-        }]);
+        }])
+        .expect("guard");
 
-        let removed = guard.cleanup_created_monitored_paths().expect("cleanup");
+        let removed = guard.cleanup_created_paths().expect("cleanup");
         assert_eq!(removed.len(), 1);
         assert!(
             removed[0]
@@ -517,6 +626,7 @@ mod tests {
             path: target,
             mode: ProtectedMetadataMode::MissingCreationMonitor,
         }])
+        .expect("guard")
         .into_runtime()
         .expect("runtime");
 
@@ -553,7 +663,8 @@ mod tests {
         let guard = prepare_protected_metadata_targets(&[ProtectedMetadataTarget {
             path: symlink_dir.clone(),
             mode: ProtectedMetadataMode::ExistingDeny,
-        }]);
+        }])
+        .expect("guard");
         let deny_paths: Vec<PathBuf> = guard.deny_paths().cloned().collect();
         let canonical_target = dunce::canonicalize(&target_dir).expect("canonical target");
 
@@ -569,5 +680,44 @@ mod tests {
                 .any(|path| path_text_key(path) == path_text_key(&canonical_target)),
             "deny paths should include symlink target: {deny_paths:?}"
         );
+    }
+
+    #[test]
+    fn missing_deny_sentinel_creates_and_cleans_path() {
+        let temp_dir = tempfile::TempDir::new().expect("tempdir");
+        let target = temp_dir.path().join(".git");
+
+        let mut guard = prepare_protected_metadata_targets(&[ProtectedMetadataTarget {
+            path: target.clone(),
+            mode: ProtectedMetadataMode::MissingDenySentinel,
+        }])
+        .expect("guard");
+
+        assert!(target.is_dir(), "sentinel directory should be created");
+        assert!(
+            guard.deny_paths().any(|path| path_text_key(path) == path_text_key(&target)),
+            "sentinel should be deny-listed"
+        );
+
+        let removed = guard.cleanup_created_paths().expect("cleanup");
+        assert_eq!(removed, vec![target.clone()]);
+        assert!(!target.exists(), "sentinel directory should be removed");
+    }
+
+    #[test]
+    fn missing_deny_sentinel_does_not_cleanup_preexisting_path() {
+        let temp_dir = tempfile::TempDir::new().expect("tempdir");
+        let target = temp_dir.path().join(".git");
+        std::fs::create_dir_all(&target).expect("create metadata");
+
+        let mut guard = prepare_protected_metadata_targets(&[ProtectedMetadataTarget {
+            path: target.clone(),
+            mode: ProtectedMetadataMode::MissingDenySentinel,
+        }])
+        .expect("guard");
+
+        let removed = guard.cleanup_created_paths().expect("cleanup");
+        assert!(removed.is_empty(), "pre-existing metadata is not Codex-owned cleanup");
+        assert!(target.exists(), "pre-existing metadata should not be removed");
     }
 }
