@@ -860,7 +860,6 @@ impl ChatWidget {
             | SlashCommand::Status
             | SlashCommand::DebugConfig
             | SlashCommand::Ps
-            | SlashCommand::Upload
             | SlashCommand::Stop
             | SlashCommand::MemoryDrop
             | SlashCommand::MemoryUpdate
@@ -898,6 +897,7 @@ impl ChatWidget {
             | SlashCommand::Experimental
             | SlashCommand::AutoReview
             | SlashCommand::Memories
+            | SlashCommand::Upload
             | SlashCommand::Quit
             | SlashCommand::Exit
             | SlashCommand::Logout
