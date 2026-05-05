@@ -18,6 +18,7 @@ use codex_config::version_for_toml;
 use codex_plugin::PluginHookSource;
 use codex_utils_absolute_path::AbsolutePathBuf;
 use serde::Deserialize;
+use serde::Serialize;
 use std::collections::HashMap;
 
 use super::ConfiguredHandler;
@@ -380,7 +381,7 @@ fn append_matcher_groups(
             ));
             continue;
         }
-        for (handler_index, handler) in group.hooks.into_iter().enumerate() {
+        for (handler_index, handler) in group.hooks.iter().cloned().enumerate() {
             match handler {
                 HookHandlerConfig::Command {
                     command,
@@ -403,13 +404,14 @@ fn append_matcher_groups(
                         continue;
                     }
                     let timeout_sec = timeout_sec.unwrap_or(600).max(1);
-                    let current_hash = command_hook_hash(
-                        event_name,
-                        matcher,
-                        &command,
-                        timeout_sec,
-                        status_message.as_deref(),
-                    );
+                    let normalized_handler = HookHandlerConfig::Command {
+                        command: command.clone(),
+                        timeout_sec: Some(timeout_sec),
+                        r#async,
+                        status_message: status_message.clone(),
+                    };
+                    let current_hash =
+                        command_hook_hash(event_name, matcher, &group, normalized_handler);
                     let command = source.env.iter().fold(command, |command, (key, value)| {
                         command.replace(&format!("${{{key}}}"), value)
                     });
@@ -476,47 +478,32 @@ fn append_matcher_groups(
     }
 }
 
-/// Hash normalized handler fields instead of source text so equivalent hooks
-/// from config TOML and hooks.json converge on the same trust identity.
+/// Hash a normalized, config-derived identity instead of source text so equivalent
+/// hooks from config TOML and hooks.json converge on the same trust identity.
+#[derive(Serialize)]
+struct NormalizedHookIdentity {
+    event_name: &'static str,
+    #[serde(flatten)]
+    group: MatcherGroup,
+}
+
 fn command_hook_hash(
     event_name: codex_protocol::protocol::HookEventName,
     matcher: Option<&str>,
-    command: &str,
-    timeout_sec: u64,
-    status_message: Option<&str>,
+    group: &MatcherGroup,
+    normalized_handler: HookHandlerConfig,
 ) -> String {
-    let TomlValue::Table(mut table) = TomlValue::Table(Default::default()) else {
-        unreachable!("TOML table construction should stay a table");
+    let mut group = group.clone();
+    group.matcher = matcher.map(ToOwned::to_owned);
+    group.hooks = vec![normalized_handler];
+    let identity = NormalizedHookIdentity {
+        event_name: hook_event_key_label(event_name),
+        group,
     };
-    table.insert(
-        "event_name".to_string(),
-        TomlValue::String(hook_event_key_label(event_name).to_string()),
-    );
-    if let Some(matcher) = matcher {
-        table.insert(
-            "matcher".to_string(),
-            TomlValue::String(matcher.to_string()),
-        );
-    }
-    table.insert(
-        "handler_type".to_string(),
-        TomlValue::String("command".to_string()),
-    );
-    table.insert(
-        "command".to_string(),
-        TomlValue::String(command.to_string()),
-    );
-    table.insert(
-        "timeout_sec".to_string(),
-        TomlValue::Integer(i64::try_from(timeout_sec).unwrap_or(i64::MAX)),
-    );
-    if let Some(status_message) = status_message {
-        table.insert(
-            "status_message".to_string(),
-            TomlValue::String(status_message.to_string()),
-        );
-    }
-    version_for_toml(&TomlValue::Table(table))
+    let Ok(value) = TomlValue::try_from(identity) else {
+        unreachable!("normalized hook identity should serialize to TOML");
+    };
+    version_for_toml(&value)
 }
 
 fn hook_event_key_label(event_name: codex_protocol::protocol::HookEventName) -> &'static str {

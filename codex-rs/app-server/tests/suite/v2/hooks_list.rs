@@ -27,52 +27,42 @@ use codex_protocol::config_types::TrustLevel;
 use codex_utils_absolute_path::AbsolutePathBuf;
 use core_test_support::skip_if_windows;
 use pretty_assertions::assert_eq;
+use serde::Serialize;
 use tempfile::TempDir;
 use tokio::time::timeout;
 
 const DEFAULT_TIMEOUT: Duration = Duration::from_secs(30);
 
+#[derive(Serialize)]
+struct NormalizedHookIdentity {
+    event_name: &'static str,
+    #[serde(flatten)]
+    group: codex_config::MatcherGroup,
+}
+
 fn command_hook_hash(
-    event_name: &str,
+    event_name: &'static str,
     matcher: Option<&str>,
     command: &str,
     timeout_sec: u64,
     status_message: Option<&str>,
 ) -> String {
-    let codex_config::TomlValue::Table(mut table) =
-        codex_config::TomlValue::Table(Default::default())
-    else {
-        unreachable!("TOML table construction should stay a table");
+    let identity = NormalizedHookIdentity {
+        event_name,
+        group: codex_config::MatcherGroup {
+            matcher: matcher.map(ToOwned::to_owned),
+            hooks: vec![codex_config::HookHandlerConfig::Command {
+                command: command.to_string(),
+                timeout_sec: Some(timeout_sec),
+                r#async: false,
+                status_message: status_message.map(ToOwned::to_owned),
+            }],
+        },
     };
-    table.insert(
-        "event_name".to_string(),
-        codex_config::TomlValue::String(event_name.to_string()),
-    );
-    if let Some(matcher) = matcher {
-        table.insert(
-            "matcher".to_string(),
-            codex_config::TomlValue::String(matcher.to_string()),
-        );
-    }
-    table.insert(
-        "handler_type".to_string(),
-        codex_config::TomlValue::String("command".to_string()),
-    );
-    table.insert(
-        "command".to_string(),
-        codex_config::TomlValue::String(command.to_string()),
-    );
-    table.insert(
-        "timeout_sec".to_string(),
-        codex_config::TomlValue::Integer(i64::try_from(timeout_sec).unwrap_or(i64::MAX)),
-    );
-    if let Some(status_message) = status_message {
-        table.insert(
-            "status_message".to_string(),
-            codex_config::TomlValue::String(status_message.to_string()),
-        );
-    }
-    codex_config::version_for_toml(&codex_config::TomlValue::Table(table))
+    let Ok(value) = codex_config::TomlValue::try_from(identity) else {
+        unreachable!("normalized hook identity should serialize to TOML");
+    };
+    codex_config::version_for_toml(&value)
 }
 
 fn write_user_hook_config(codex_home: &std::path::Path) -> Result<()> {
