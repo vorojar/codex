@@ -830,7 +830,9 @@ impl ModelClient {
         auth_context: AuthRequestTelemetryContext,
         request_route_telemetry: RequestRouteTelemetry,
     ) -> std::result::Result<ApiWebSocketConnection, ApiError> {
-        let headers = self.build_websocket_headers(turn_state.as_ref(), turn_metadata_header);
+        let headers = self
+            .build_websocket_headers(&api_provider, turn_state.as_ref(), turn_metadata_header)
+            .await;
         let websocket_telemetry = ModelClientSession::build_websocket_telemetry(
             session_telemetry,
             auth_context,
@@ -907,8 +909,9 @@ impl ModelClient {
     ///
     /// Callers should pass the current turn-state lock when available so sticky-routing state is
     /// replayed on reconnect within the same turn.
-    fn build_websocket_headers(
+    async fn build_websocket_headers(
         &self,
+        provider: &codex_api::Provider,
         turn_state: Option<&Arc<OnceLock<String>>>,
         turn_metadata_header: Option<&str>,
     ) -> ApiHeaderMap {
@@ -924,6 +927,8 @@ impl ModelClient {
         }
         headers.extend(build_conversation_headers(Some(conversation_id)));
         headers.extend(self.build_responses_identity_headers());
+        self.extend_attestation_header_for(&mut headers, provider, AttestationPurpose::Response)
+            .await;
         headers.insert(
             OPENAI_BETA_HEADER,
             HeaderValue::from_static(RESPONSES_WEBSOCKETS_V2_BETA_HEADER_VALUE),

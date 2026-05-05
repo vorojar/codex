@@ -563,6 +563,26 @@ async fn responses_generate_fresh_attestation_headers_for_chatgpt_codex() {
 }
 
 #[tokio::test]
+async fn websocket_handshake_includes_attestation_for_chatgpt_codex_responses() {
+    let provider = api_provider("https://chatgpt.com/backend-api/codex/");
+    let (model_client, attestation_calls) = model_client_with_counting_attestation();
+
+    let headers = model_client
+        .build_websocket_headers(
+            &provider, /*turn_state*/ None, /*turn_metadata_header*/ None,
+        )
+        .await;
+
+    assert_eq!(
+        headers
+            .get(crate::attestation::X_OAI_ATTESTATION_HEADER)
+            .and_then(|value| value.to_str().ok()),
+        Some("v1.header-1"),
+    );
+    assert_eq!(attestation_calls.load(Ordering::Relaxed), 1);
+}
+
+#[tokio::test]
 async fn compact_generate_fresh_attestation_headers_for_chatgpt_codex() {
     let provider = api_provider("https://chatgpt.com/backend-api/codex/");
     let (model_client, attestation_calls) = model_client_with_counting_attestation();
