@@ -642,9 +642,20 @@ fn allow_managed_hooks_only_false_keeps_unmanaged_hooks() {
     );
 
     assert!(engine.warnings().is_empty());
-    assert_eq!(engine.handlers.len(), 1);
-    assert!(!engine.handlers[0].source.is_managed());
-    assert_eq!(engine.handlers[0].command, "python3 /tmp/user-hook.py");
+    assert!(engine.handlers.is_empty());
+    let discovered =
+        super::discovery::discover_handlers(Some(&config_layer_stack), Vec::new(), Vec::new());
+    assert_eq!(discovered.hook_entries.len(), 1);
+    assert_eq!(discovered.hook_entries[0].source, HookSource::User);
+    assert!(!discovered.hook_entries[0].is_managed);
+    assert_eq!(
+        discovered.hook_entries[0].trust_status,
+        HookTrustStatus::Untrusted
+    );
+    assert_eq!(
+        discovered.hook_entries[0].command.as_deref(),
+        Some("python3 /tmp/user-hook.py")
+    );
 }
 
 #[test]
@@ -685,9 +696,20 @@ fn allow_managed_hooks_only_in_config_toml_does_not_enable_policy() {
     );
 
     assert!(engine.warnings().is_empty());
-    assert_eq!(engine.handlers.len(), 1);
-    assert!(!engine.handlers[0].source.is_managed());
-    assert_eq!(engine.handlers[0].command, "python3 /tmp/user-hook.py");
+    assert!(engine.handlers.is_empty());
+    let discovered =
+        super::discovery::discover_handlers(Some(&config_layer_stack), Vec::new(), Vec::new());
+    assert_eq!(discovered.hook_entries.len(), 1);
+    assert_eq!(discovered.hook_entries[0].source, HookSource::User);
+    assert!(!discovered.hook_entries[0].is_managed);
+    assert_eq!(
+        discovered.hook_entries[0].trust_status,
+        HookTrustStatus::Untrusted
+    );
+    assert_eq!(
+        discovered.hook_entries[0].command.as_deref(),
+        Some("python3 /tmp/user-hook.py")
+    );
 }
 
 #[test]
@@ -864,12 +886,16 @@ fn allow_managed_hooks_only_keeps_managed_requirement_and_config_layer_hooks() {
             "python3 /tmp/legacy-mdm-hook.py",
         ]
     );
-    assert!(
-        engine
-            .handlers
-            .iter()
-            .all(|handler| handler.source.is_managed())
-    );
+    assert!(engine.handlers.iter().all(|handler| {
+        matches!(
+            handler.source,
+            HookSource::System
+                | HookSource::Mdm
+                | HookSource::CloudRequirements
+                | HookSource::LegacyManagedConfigFile
+                | HookSource::LegacyManagedConfigMdm
+        )
+    }));
 }
 
 #[test]

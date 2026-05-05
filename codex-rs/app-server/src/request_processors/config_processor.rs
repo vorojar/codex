@@ -626,3 +626,61 @@ fn config_write_error(code: ConfigWriteErrorCode, message: impl Into<String>) ->
         })),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use std::path::PathBuf;
+
+    use codex_config::ConfigRequirementsToml;
+    use codex_config::HookEventsToml;
+    use codex_config::ManagedHooksRequirementsToml;
+    use pretty_assertions::assert_eq;
+
+    use super::map_requirements_toml_to_api;
+
+    #[test]
+    fn map_requirements_toml_to_api_reads_allow_managed_hooks_only_from_hooks() {
+        let mapped = map_requirements_toml_to_api(ConfigRequirementsToml {
+            hooks: Some(ManagedHooksRequirementsToml {
+                allow_managed_hooks_only: Some(true),
+                managed_dir: Some(PathBuf::from("/enterprise/hooks")),
+                windows_managed_dir: Some(PathBuf::from(r"C:\enterprise\hooks")),
+                hooks: HookEventsToml::default(),
+            }),
+            ..ConfigRequirementsToml::default()
+        });
+
+        assert_eq!(mapped.allow_managed_hooks_only, Some(true));
+        assert_eq!(
+            mapped.hooks.map(|hooks| {
+                (
+                    hooks.managed_dir,
+                    hooks.windows_managed_dir,
+                    hooks.pre_tool_use,
+                    hooks.permission_request,
+                    hooks.post_tool_use,
+                    hooks.session_start,
+                    hooks.user_prompt_submit,
+                    hooks.stop,
+                )
+            }),
+            Some((
+                Some(PathBuf::from("/enterprise/hooks")),
+                Some(PathBuf::from(r"C:\enterprise\hooks")),
+                Vec::new(),
+                Vec::new(),
+                Vec::new(),
+                Vec::new(),
+                Vec::new(),
+                Vec::new(),
+            ))
+        );
+    }
+
+    #[test]
+    fn map_requirements_toml_to_api_leaves_allow_managed_hooks_only_unset_without_hooks() {
+        let mapped = map_requirements_toml_to_api(ConfigRequirementsToml::default());
+
+        assert_eq!(mapped.allow_managed_hooks_only, None);
+    }
+}
