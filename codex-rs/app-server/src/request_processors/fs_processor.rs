@@ -37,6 +37,8 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use uuid::Uuid;
 
+const MAX_UPLOAD_FILE_BYTES: usize = 50 * 1024 * 1024;
+
 #[derive(Clone)]
 pub(crate) struct FsRequestProcessor {
     file_system: Arc<dyn ExecutorFileSystem>,
@@ -96,11 +98,7 @@ impl FsRequestProcessor {
         params: FsUploadFileParams,
     ) -> Result<FsUploadFileResponse, JSONRPCErrorError> {
         let file_name = sanitize_upload_file_name(&params.file_name)?;
-        let bytes = STANDARD.decode(params.data_base64).map_err(|err| {
-            invalid_request(format!(
-                "fs/uploadFile requires valid base64 dataBase64: {err}"
-            ))
-        })?;
+        let bytes = decode_upload_data_base64(&params.data_base64)?;
         let upload_dir = absolute_path(
             self.codex_home
                 .join("uploads")
@@ -239,6 +237,35 @@ fn sanitize_upload_file_name(file_name: &str) -> Result<&str, JSONRPCErrorError>
         .ok_or_else(|| invalid_request("fs/uploadFile requires a fileName".to_string()))
 }
 
+fn decode_upload_data_base64(data_base64: &str) -> Result<Vec<u8>, JSONRPCErrorError> {
+    decode_upload_data_base64_with_limit(data_base64, MAX_UPLOAD_FILE_BYTES)
+}
+
+fn decode_upload_data_base64_with_limit(
+    data_base64: &str,
+    max_bytes: usize,
+) -> Result<Vec<u8>, JSONRPCErrorError> {
+    let max_base64_len = max_bytes.div_ceil(3) * 4;
+    if data_base64.len() > max_base64_len {
+        return Err(upload_too_large_error(max_bytes));
+    }
+    let bytes = STANDARD.decode(data_base64).map_err(|err| {
+        invalid_request(format!(
+            "fs/uploadFile requires valid base64 dataBase64: {err}"
+        ))
+    })?;
+    if bytes.len() > max_bytes {
+        return Err(upload_too_large_error(max_bytes));
+    }
+    Ok(bytes)
+}
+
+fn upload_too_large_error(max_bytes: usize) -> JSONRPCErrorError {
+    invalid_request(format!(
+        "fs/uploadFile accepts files up to {max_bytes} bytes"
+    ))
+}
+
 fn absolute_path(path: PathBuf) -> Result<AbsolutePathBuf, JSONRPCErrorError> {
     AbsolutePathBuf::try_from(path).map_err(|err| internal_error(err.to_string()))
 }
@@ -248,5 +275,18 @@ fn map_fs_error(err: io::Error) -> JSONRPCErrorError {
         invalid_request(err.to_string())
     } else {
         internal_error(err.to_string())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::decode_upload_data_base64_with_limit;
+
+    #[test]
+    fn upload_decode_rejects_payloads_larger_than_limit() {
+        let err = decode_upload_data_base64_with_limit("QUJDRA==", 3)
+            .expect_err("payload should exceed the 3-byte limit");
+
+        assert_eq!(err.message, "fs/uploadFile accepts files up to 3 bytes");
     }
 }

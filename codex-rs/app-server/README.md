@@ -1132,7 +1132,7 @@ All filesystem paths in this section must be absolute.
 - `fs/createDirectory` defaults `recursive` to `true` when omitted.
 - `fs/remove` defaults both `recursive` and `force` to `true` when omitted.
 - `fs/readFile` always returns base64 bytes via `dataBase64`, and `fs/writeFile` always expects base64 bytes in `dataBase64`.
-- `fs/uploadFile` accepts a client-visible `fileName`, stores only its final path component, and chooses the destination under `$CODEX_HOME/uploads/<uuid>/` so clients do not pick arbitrary host paths.
+- `fs/uploadFile` accepts a client-visible `fileName`, stores only its final path component, chooses the destination under `$CODEX_HOME/uploads/<uuid>/`, and rejects files larger than 50 MiB so clients do not pick arbitrary host paths or send unbounded payloads.
 - `fs/copy` handles both file copies and directory-tree copies; it requires `recursive: true` when `sourcePath` is a directory. Recursive copies traverse regular files, directories, and symlinks; other entry types are skipped.
 
 ### Example: Filesystem watch
