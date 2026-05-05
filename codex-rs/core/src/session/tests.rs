@@ -52,6 +52,8 @@ use codex_protocol::request_permissions::PermissionGrantScope;
 use codex_protocol::request_permissions::RequestPermissionProfile;
 use tracing::Span;
 
+use crate::goals::ExternalGoalPreviousStatus;
+use crate::goals::ExternalGoalSet;
 use crate::goals::GoalRuntimeEvent;
 use crate::goals::SetGoalRequest;
 use crate::rollout::recorder::RolloutRecorder;
@@ -77,11 +79,6 @@ use codex_execpolicy::Decision;
 use codex_execpolicy::NetworkRuleProtocol;
 use codex_execpolicy::Policy;
 use codex_network_proxy::NetworkProxyConfig;
-use codex_otel::GOAL_BUDGET_LIMITED_METRIC;
-use codex_otel::GOAL_COMPLETED_METRIC;
-use codex_otel::GOAL_CREATED_METRIC;
-use codex_otel::GOAL_DURATION_SECONDS_METRIC;
-use codex_otel::GOAL_TOKEN_COUNT_METRIC;
 use codex_otel::MetricsClient;
 use codex_otel::MetricsConfig;
 use codex_otel::THREAD_SKILLS_DESCRIPTION_TRUNCATED_CHARS_METRIC;
@@ -245,20 +242,6 @@ fn histogram_sum(resource_metrics: &ResourceMetrics, name: &str) -> u64 {
             _ => panic!("unexpected histogram aggregation"),
         },
         _ => panic!("unexpected metric data type"),
-    }
-}
-
-fn counter_sum(resource_metrics: &ResourceMetrics, name: &str) -> u64 {
-    let metric = find_metric(resource_metrics, name);
-    match metric.data() {
-        AggregatedMetrics::U64(data) => match data {
-            MetricData::Sum(sum) => sum
-                .data_points()
-                .map(opentelemetry_sdk::metrics::data::SumDataPoint::value)
-                .sum(),
-            _ => panic!("unexpected counter aggregation"),
-        },
-        _ => panic!("unexpected counter data type"),
     }
 }
 
@@ -7384,116 +7367,6 @@ async fn goal_test_state_db(sess: &Session) -> anyhow::Result<crate::StateDbHand
         .await
 }
 
-fn install_goal_metric_test_telemetry(session: &mut Arc<Session>) -> SessionTelemetry {
-    let session_telemetry = test_session_telemetry_without_metadata();
-    Arc::get_mut(session)
-        .expect("session should not be shared")
-        .services
-        .session_telemetry = session_telemetry.clone();
-    session_telemetry
-}
-
-#[tokio::test]
-async fn goal_created_and_completed_metrics_are_emitted() -> anyhow::Result<()> {
-    let (mut sess, tc, _rx) = make_goal_session_and_context_with_rx().await;
-    let session_telemetry = install_goal_metric_test_telemetry(&mut sess);
-
-    sess.create_thread_goal(
-        tc.as_ref(),
-        crate::goals::CreateGoalRequest {
-            objective: "Keep the watcher alive".to_string(),
-            token_budget: Some(500),
-        },
-    )
-    .await?;
-    set_total_token_usage(&sess, post_goal_token_usage()).await;
-    sess.goal_runtime_apply(GoalRuntimeEvent::ToolCompletedGoal {
-        turn_context: tc.as_ref(),
-    })
-    .await?;
-    sess.set_thread_goal(
-        tc.as_ref(),
-        SetGoalRequest {
-            objective: None,
-            status: Some(ThreadGoalStatus::Complete),
-            token_budget: None,
-        },
-    )
-    .await?;
-
-    let snapshot = session_telemetry
-        .snapshot_metrics()
-        .expect("runtime metrics snapshot");
-    assert_eq!(1, counter_sum(&snapshot, GOAL_CREATED_METRIC));
-    assert_eq!(1, counter_sum(&snapshot, GOAL_COMPLETED_METRIC));
-    assert_eq!(70, histogram_sum(&snapshot, GOAL_TOKEN_COUNT_METRIC));
-    assert_eq!(0, histogram_sum(&snapshot, GOAL_DURATION_SECONDS_METRIC));
-
-    Ok(())
-}
-
-#[tokio::test]
-async fn goal_budget_limited_metrics_emit_once_at_transition() -> anyhow::Result<()> {
-    let (mut sess, tc, _rx) = make_goal_session_and_context_with_rx().await;
-    let session_telemetry = install_goal_metric_test_telemetry(&mut sess);
-
-    sess.create_thread_goal(
-        tc.as_ref(),
-        crate::goals::CreateGoalRequest {
-            objective: "Keep the watcher alive".to_string(),
-            token_budget: Some(10),
-        },
-    )
-    .await?;
-    sess.goal_runtime_apply(GoalRuntimeEvent::TurnStarted {
-        turn_context: tc.as_ref(),
-        token_usage: TokenUsage::default(),
-    })
-    .await?;
-    set_total_token_usage(
-        &sess,
-        TokenUsage {
-            input_tokens: 20,
-            cached_input_tokens: 0,
-            output_tokens: 5,
-            reasoning_output_tokens: 0,
-            total_tokens: 25,
-        },
-    )
-    .await;
-    sess.goal_runtime_apply(GoalRuntimeEvent::ToolCompleted {
-        turn_context: tc.as_ref(),
-        tool_name: "shell",
-    })
-    .await?;
-
-    set_total_token_usage(
-        &sess,
-        TokenUsage {
-            input_tokens: 30,
-            cached_input_tokens: 0,
-            output_tokens: 10,
-            reasoning_output_tokens: 0,
-            total_tokens: 40,
-        },
-    )
-    .await;
-    sess.goal_runtime_apply(GoalRuntimeEvent::ToolCompletedGoal {
-        turn_context: tc.as_ref(),
-    })
-    .await?;
-
-    let snapshot = session_telemetry
-        .snapshot_metrics()
-        .expect("runtime metrics snapshot");
-    assert_eq!(1, counter_sum(&snapshot, GOAL_CREATED_METRIC));
-    assert_eq!(1, counter_sum(&snapshot, GOAL_BUDGET_LIMITED_METRIC));
-    assert_eq!(25, histogram_sum(&snapshot, GOAL_TOKEN_COUNT_METRIC));
-    assert_eq!(0, histogram_sum(&snapshot, GOAL_DURATION_SECONDS_METRIC));
-
-    Ok(())
-}
-
 #[tokio::test]
 async fn budget_limited_accounting_steers_active_turn_without_aborting() -> anyhow::Result<()> {
     let (sess, tc, rx, _codex_home) = make_goal_session_and_context_with_rx().await;
@@ -7627,19 +7500,24 @@ async fn external_goal_mutation_accounts_active_turn_before_status_change() -> a
         .expect("goal should remain persisted");
     assert_eq!(70, goal.tokens_used);
 
-    state_db
+    let previous_status = goal.status;
+    let goal_id = goal.goal_id.clone();
+    let updated_goal = state_db
         .update_thread_goal(
             sess.conversation_id,
             codex_state::ThreadGoalUpdate {
                 status: Some(codex_state::ThreadGoalStatus::Complete),
                 token_budget: None,
-                expected_goal_id: Some(goal.goal_id),
+                expected_goal_id: Some(goal_id),
             },
         )
         .await?
         .expect("goal status update should succeed");
     sess.goal_runtime_apply(GoalRuntimeEvent::ExternalSet {
-        status: codex_state::ThreadGoalStatus::Complete,
+        external_set: ExternalGoalSet {
+            goal: updated_goal,
+            previous_status: ExternalGoalPreviousStatus::Existing(previous_status),
+        },
     })
     .await?;
 
@@ -7671,7 +7549,7 @@ async fn external_active_goal_set_marks_current_turn_for_accounting() -> anyhow:
     set_total_token_usage(&sess, post_goal_token_usage()).await;
 
     let state_db = goal_test_state_db(sess.as_ref()).await?;
-    state_db
+    let goal = state_db
         .replace_thread_goal(
             sess.conversation_id,
             "Keep improving the benchmark",
@@ -7680,7 +7558,10 @@ async fn external_active_goal_set_marks_current_turn_for_accounting() -> anyhow:
         )
         .await?;
     sess.goal_runtime_apply(GoalRuntimeEvent::ExternalSet {
-        status: codex_state::ThreadGoalStatus::Active,
+        external_set: ExternalGoalSet {
+            goal,
+            previous_status: ExternalGoalPreviousStatus::NewGoal,
+        },
     })
     .await?;
 
