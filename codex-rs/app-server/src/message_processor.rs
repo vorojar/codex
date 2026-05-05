@@ -1059,6 +1059,11 @@ impl MessageProcessor {
             ClientRequest::PluginShareSave { params, .. } => {
                 self.plugin_processor.plugin_share_save(params).await
             }
+            ClientRequest::PluginShareUpdateTargets { params, .. } => {
+                self.plugin_processor
+                    .plugin_share_update_targets(params)
+                    .await
+            }
             ClientRequest::PluginShareList { params, .. } => {
                 self.plugin_processor.plugin_share_list(params).await
             }
