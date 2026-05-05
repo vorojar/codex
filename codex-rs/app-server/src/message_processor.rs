@@ -194,10 +194,12 @@ async fn request_attestation_header_value_with_timeout(
         .min_by_key(|connection_id| connection_id.0)
         .copied()?;
 
+    let connection_ids = [connection_id];
     let (request_id, rx) = outgoing
-        .send_request_to_connection(
-            connection_id,
+        .send_request_to_connections(
+            Some(&connection_ids),
             ServerRequestPayload::AttestationGenerate(AttestationGenerateParams {}),
+            /*thread_id*/ None,
         )
         .await;
 
