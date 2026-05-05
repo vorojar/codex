@@ -334,7 +334,7 @@ fn run_bwrap_with_proc_fallback(
             file_system_sandbox_policy,
             network_mode,
         )
-        .unwrap_or_else(exit_with_bwrap_build_error)
+        .unwrap_or_else(|err| exit_with_bwrap_build_error(err))
     {
         // Keep the retry silent so sandbox-internal diagnostics do not leak into the
         // child process stderr stream.
@@ -353,7 +353,7 @@ fn run_bwrap_with_proc_fallback(
         command_cwd,
         options,
     )
-    .unwrap_or_else(exit_with_bwrap_build_error);
+    .unwrap_or_else(|err| exit_with_bwrap_build_error(err));
     apply_inner_command_argv0(&mut bwrap_args.args);
     run_or_exec_bwrap(bwrap_args);
 }
