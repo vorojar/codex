@@ -620,7 +620,15 @@ async fn sandbox_reports_codex_symlink_build_failure_without_panicking() {
         output
             .stderr
             .text
-            .contains("error building bubblewrap command: cannot enforce sandbox read-only path"),
+            .contains("error building bubblewrap command:"),
+        "stderr: {}",
+        output.stderr.text
+    );
+    assert!(
+        output
+            .stderr
+            .text
+            .contains("cannot enforce sandbox read-only path"),
         "stderr: {}",
         output.stderr.text
     );
