@@ -14988,6 +14988,13 @@
             ],
             "description": "Current runtime status for the thread."
           },
+          "threadSource": {
+            "description": "Optional analytics source classification for this thread.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "turns": {
             "description": "Only populated on `thread/resume`, `thread/rollback`, `thread/fork`, and `thread/read` (when `includeTurns` is true) responses. For all other responses and notifications returning a Thread, the turns field will be an empty list.",
             "items": {
@@ -15202,6 +15209,13 @@
           },
           "threadId": {
             "type": "string"
+          },
+          "threadSource": {
+            "description": "Optional analytics source classification for this forked thread.",
+            "type": [
+              "string",
+              "null"
+            ]
           }
         },
         "required": [
@@ -17015,6 +17029,13 @@
               {
                 "type": "null"
               }
+            ]
+          },
+          "threadSource": {
+            "description": "Optional analytics source classification for this thread.",
+            "type": [
+              "string",
+              "null"
             ]
           }
         },

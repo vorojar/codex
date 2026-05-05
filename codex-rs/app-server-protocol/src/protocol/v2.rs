@@ -3609,6 +3609,9 @@ pub struct ThreadStartParams {
     pub ephemeral: Option<bool>,
     #[ts(optional = nullable)]
     pub session_start_source: Option<ThreadStartSource>,
+    /// Optional analytics source classification for this thread.
+    #[ts(optional = nullable)]
+    pub thread_source: Option<String>,
     /// Optional sticky environments for this thread.
     ///
     /// Omitted selects the default environment when environment access is
@@ -3863,6 +3866,9 @@ pub struct ThreadForkParams {
     pub developer_instructions: Option<String>,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub ephemeral: bool,
+    /// Optional analytics source classification for this forked thread.
+    #[ts(optional = nullable)]
+    pub thread_source: Option<String>,
     /// When true, return only thread metadata and live fork state without
     /// populating `thread.turns`. This is useful when the client plans to call
     /// `thread/turns/list` immediately after forking.
@@ -5129,6 +5135,8 @@ pub struct Thread {
     pub cli_version: String,
     /// Origin of the thread (CLI, VSCode, codex exec, codex app-server, etc.).
     pub source: SessionSource,
+    /// Optional analytics source classification for this thread.
+    pub thread_source: Option<String>,
     /// Optional random unique nickname assigned to an AgentControl-spawned sub-agent.
     pub agent_nickname: Option<String>,
     /// Optional role (agent_role) assigned to an AgentControl-spawned sub-agent.

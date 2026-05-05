@@ -232,6 +232,13 @@
     },
     "threadId": {
       "type": "string"
+    },
+    "threadSource": {
+      "description": "Optional analytics source classification for this forked thread.",
+      "type": [
+        "string",
+        "null"
+      ]
     }
   },
   "required": [

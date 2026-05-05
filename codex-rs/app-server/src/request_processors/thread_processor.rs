@@ -742,6 +742,7 @@ impl ThreadRequestProcessor {
             personality,
             ephemeral,
             session_start_source,
+            thread_source,
             environments,
             persist_extended_history,
         } = params;
@@ -791,6 +792,7 @@ impl ThreadRequestProcessor {
                 typesafe_overrides,
                 dynamic_tools,
                 session_start_source,
+                thread_source,
                 environment_selections,
                 persist_extended_history,
                 service_name,
@@ -863,6 +865,7 @@ impl ThreadRequestProcessor {
         typesafe_overrides: ConfigOverrides,
         dynamic_tools: Option<Vec<ApiDynamicToolSpec>>,
         session_start_source: Option<codex_app_server_protocol::ThreadStartSource>,
+        thread_source: Option<String>,
         environments: Option<Vec<TurnEnvironmentSelection>>,
         persist_extended_history: bool,
         service_name: Option<String>,
@@ -980,6 +983,7 @@ impl ThreadRequestProcessor {
                     codex_app_server_protocol::ThreadStartSource::Clear => InitialHistory::Cleared,
                 },
                 session_source: None,
+                thread_source,
                 dynamic_tools: core_dynamic_tools,
                 persist_extended_history,
                 metrics_service_name: service_name,
@@ -2475,6 +2479,7 @@ impl ThreadRequestProcessor {
                         return Ok(());
                     }
                 };
+                thread.thread_source = codex_thread.config_snapshot().await.thread_source;
 
                 self.thread_watch_manager
                     .upsert_thread(thread.clone())
@@ -2952,6 +2957,7 @@ impl ThreadRequestProcessor {
             base_instructions,
             developer_instructions,
             ephemeral,
+            thread_source,
             exclude_turns,
             persist_extended_history,
         } = params;
@@ -3038,6 +3044,7 @@ impl ThreadRequestProcessor {
                     history: history_items.clone(),
                     rollout_path: source_thread.rollout_path.clone(),
                 }),
+                thread_source,
                 persist_extended_history,
                 self.request_trace_context(&request_id).await,
             )
@@ -3090,6 +3097,7 @@ impl ThreadRequestProcessor {
             }
             thread
         };
+        thread.thread_source = forked_thread.config_snapshot().await.thread_source;
 
         self.thread_watch_manager
             .upsert_thread_silently(thread.clone())
@@ -3769,6 +3777,7 @@ fn thread_from_stored_thread(
         agent_nickname: source.get_nickname(),
         agent_role: source.get_agent_role(),
         source: source.into(),
+        thread_source: thread.thread_source,
         git_info,
         name: thread.name,
         turns: Vec::new(),
@@ -3830,6 +3839,7 @@ fn summary_from_state_db_metadata(
     cwd: PathBuf,
     cli_version: String,
     source: String,
+    _thread_source: Option<String>,
     agent_nickname: Option<String>,
     agent_role: Option<String>,
     git_sha: Option<String>,
@@ -3879,6 +3889,7 @@ fn summary_from_thread_metadata(metadata: &ThreadMetadata) -> ConversationSummar
         metadata.cwd.clone(),
         metadata.cli_version.clone(),
         metadata.source.clone(),
+        metadata.thread_source.clone(),
         metadata.agent_nickname.clone(),
         metadata.agent_role.clone(),
         metadata.git_sha.clone(),
@@ -3962,6 +3973,7 @@ fn build_thread_from_snapshot(
         agent_nickname: config_snapshot.session_source.get_nickname(),
         agent_role: config_snapshot.session_source.get_agent_role(),
         source: config_snapshot.session_source.clone().into(),
+        thread_source: config_snapshot.thread_source.clone(),
         git_info: None,
         name: None,
         turns: Vec::new(),

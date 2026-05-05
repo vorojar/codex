@@ -312,6 +312,13 @@
           "type": "null"
         }
       ]
+    },
+    "threadSource": {
+      "description": "Optional analytics source classification for this thread.",
+      "type": [
+        "string",
+        "null"
+      ]
     }
   },
   "title": "ThreadStartParams",

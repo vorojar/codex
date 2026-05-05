@@ -90,6 +90,7 @@ async fn thread_fork_creates_new_thread_and_emits_started() -> Result<()> {
     let fork_id = mcp
         .send_thread_fork_request(ThreadForkParams {
             thread_id: conversation_id.clone(),
+            thread_source: Some("test_origin".to_string()),
             ..Default::default()
         })
         .await?;
@@ -128,6 +129,7 @@ async fn thread_fork_creates_new_thread_and_emits_started() -> Result<()> {
     assert_ne!(thread_path.as_path(), original_path);
     assert!(thread.cwd.as_path().is_absolute());
     assert_eq!(thread.source, SessionSource::VsCode);
+    assert_eq!(thread.thread_source.as_deref(), Some("test_origin"));
     assert_eq!(thread.name, None);
 
     assert_eq!(
@@ -187,6 +189,13 @@ async fn thread_fork_creates_new_thread_and_emits_started() -> Result<()> {
         started_thread_json.get("turns"),
         Some(&json!([])),
         "thread/started must not emit copied fork turns"
+    );
+    assert_eq!(
+        started_thread_json
+            .get("threadSource")
+            .and_then(Value::as_str),
+        Some("test_origin"),
+        "thread/started should preserve the caller-supplied fork origin"
     );
     let started: ThreadStartedNotification =
         serde_json::from_value(notif.params.expect("params must be present"))?;
@@ -299,6 +308,7 @@ async fn thread_fork_emits_restored_token_usage_before_next_turn() -> Result<()>
     let fork_id = mcp
         .send_thread_fork_request(ThreadForkParams {
             thread_id: conversation_id,
+            thread_source: Some("user".to_string()),
             ..Default::default()
         })
         .await?;
@@ -403,6 +413,7 @@ async fn thread_fork_tracks_thread_initialized_analytics() -> Result<()> {
     let fork_id = mcp
         .send_thread_fork_request(ThreadForkParams {
             thread_id: conversation_id,
+            thread_source: Some("user".to_string()),
             ..Default::default()
         })
         .await?;
@@ -415,7 +426,7 @@ async fn thread_fork_tracks_thread_initialized_analytics() -> Result<()> {
 
     let payload = wait_for_analytics_payload(&server, DEFAULT_READ_TIMEOUT).await?;
     let event = thread_initialized_event(&payload)?;
-    assert_basic_thread_initialized_event(event, &thread.id, "mock-model", "forked");
+    assert_basic_thread_initialized_event(event, &thread.id, "mock-model", "forked", "user");
     Ok(())
 }
 

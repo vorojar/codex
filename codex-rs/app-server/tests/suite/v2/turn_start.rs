@@ -115,6 +115,7 @@ async fn turn_start_sends_originator_header() -> Result<()> {
     let thread_req = mcp
         .send_thread_start_request(ThreadStartParams {
             model: Some("mock-model".to_string()),
+            thread_source: Some("user".to_string()),
             ..Default::default()
         })
         .await?;
@@ -182,6 +183,7 @@ async fn turn_start_emits_user_message_item_with_text_elements() -> Result<()> {
     let thread_req = mcp
         .send_thread_start_request(ThreadStartParams {
             model: Some("mock-model".to_string()),
+            thread_source: Some("user".to_string()),
             ..Default::default()
         })
         .await?;
@@ -463,6 +465,7 @@ async fn turn_start_tracks_turn_event_analytics() -> Result<()> {
     let thread_req = mcp
         .send_thread_start_request(ThreadStartParams {
             model: Some("mock-model".to_string()),
+            thread_source: Some("user".to_string()),
             ..Default::default()
         })
         .await?;

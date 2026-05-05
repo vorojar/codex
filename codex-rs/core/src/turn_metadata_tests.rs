@@ -3,8 +3,6 @@ use super::*;
 use crate::sandbox_tags::sandbox_tag;
 use codex_protocol::models::PermissionProfile;
 use codex_protocol::protocol::SandboxPolicy;
-use codex_protocol::protocol::SessionSource;
-use codex_protocol::protocol::SubAgentSource;
 use core_test_support::PathBufExt;
 use core_test_support::PathExt;
 use pretty_assertions::assert_eq;
@@ -87,7 +85,7 @@ fn turn_metadata_state_uses_platform_sandbox_tag() {
 
     let state = TurnMetadataState::new(
         "session-a".to_string(),
-        &SessionSource::Exec,
+        Some("user".to_string()),
         "turn-a".to_string(),
         cwd,
         &permission_profile,
@@ -109,15 +107,13 @@ fn turn_metadata_state_uses_platform_sandbox_tag() {
 }
 
 #[test]
-fn turn_metadata_state_classifies_subagent_thread_source() {
+fn turn_metadata_state_uses_explicit_subagent_thread_source() {
     let temp_dir = TempDir::new().expect("temp dir");
     let cwd = temp_dir.path().abs();
     let permission_profile = PermissionProfile::read_only();
-    let session_source = SessionSource::SubAgent(SubAgentSource::Review);
-
     let state = TurnMetadataState::new(
         "session-a".to_string(),
-        &session_source,
+        Some("subagent".to_string()),
         "turn-a".to_string(),
         cwd,
         &permission_profile,
@@ -140,7 +136,7 @@ fn turn_metadata_state_includes_turn_started_at_unix_ms_after_start() {
 
     let state = TurnMetadataState::new(
         "session-a".to_string(),
-        &SessionSource::Exec,
+        Some("user".to_string()),
         "turn-a".to_string(),
         cwd,
         &permission_profile,
@@ -166,7 +162,7 @@ fn turn_metadata_state_ignores_client_turn_started_at_unix_ms_before_start() {
 
     let state = TurnMetadataState::new(
         "session-a".to_string(),
-        &SessionSource::Exec,
+        Some("user".to_string()),
         "turn-a".to_string(),
         cwd,
         &permission_profile,
@@ -192,7 +188,7 @@ fn turn_metadata_state_merges_client_metadata_without_replacing_reserved_fields(
 
     let state = TurnMetadataState::new(
         "session-a".to_string(),
-        &SessionSource::Exec,
+        Some("user".to_string()),
         "turn-a".to_string(),
         cwd,
         &permission_profile,

@@ -3536,6 +3536,13 @@
         },
         "threadId": {
           "type": "string"
+        },
+        "threadSource": {
+          "description": "Optional analytics source classification for this forked thread.",
+          "type": [
+            "string",
+            "null"
+          ]
         }
       },
       "required": [
@@ -4142,6 +4149,13 @@
             {
               "type": "null"
             }
+          ]
+        },
+        "threadSource": {
+          "description": "Optional analytics source classification for this thread.",
+          "type": [
+            "string",
+            "null"
           ]
         }
       },

@@ -59,6 +59,7 @@ pub struct ThreadConfigSnapshot {
     pub reasoning_effort: Option<ReasoningEffort>,
     pub personality: Option<Personality>,
     pub session_source: SessionSource,
+    pub thread_source: Option<String>,
 }
 
 impl ThreadConfigSnapshot {

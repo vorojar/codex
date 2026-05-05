@@ -2527,6 +2527,18 @@ impl InitialHistory {
             }),
         }
     }
+
+    pub fn get_resumed_thread_source(&self) -> Option<String> {
+        match self {
+            InitialHistory::New | InitialHistory::Cleared | InitialHistory::Forked(_) => None,
+            InitialHistory::Resumed(resumed) => {
+                resumed.history.iter().find_map(|item| match item {
+                    RolloutItem::SessionMeta(meta_line) => meta_line.meta.thread_source.clone(),
+                    _ => None,
+                })
+            }
+        }
+    }
 }
 
 fn session_cwd_from_items(items: &[RolloutItem]) -> Option<PathBuf> {
@@ -2610,16 +2622,6 @@ impl SessionSource {
             "unknown" => SessionSource::Unknown,
             _ => SessionSource::Custom(normalized),
         })
-    }
-
-    /// Low cardinality thread source label for analytics.
-    pub fn thread_source_name(&self) -> Option<&'static str> {
-        match self {
-            SessionSource::Cli | SessionSource::VSCode | SessionSource::Exec => Some("user"),
-            SessionSource::Internal(_) => Some("internal"),
-            SessionSource::SubAgent(_) => Some("subagent"),
-            SessionSource::Mcp | SessionSource::Custom(_) | SessionSource::Unknown => None,
-        }
     }
 
     pub fn is_internal(&self) -> bool {
@@ -2722,6 +2724,9 @@ pub struct SessionMeta {
     pub cli_version: String,
     #[serde(default)]
     pub source: SessionSource,
+    /// Optional analytics source classification for this thread.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub thread_source: Option<String>,
     /// Optional random unique nickname assigned to an AgentControl-spawned sub-agent.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub agent_nickname: Option<String>,
@@ -2752,6 +2757,7 @@ impl Default for SessionMeta {
             originator: String::new(),
             cli_version: String::new(),
             source: SessionSource::default(),
+            thread_source: None,
             agent_nickname: None,
             agent_role: None,
             agent_path: None,
@@ -3454,6 +3460,9 @@ pub struct SessionConfiguredEvent {
     pub session_id: ThreadId,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub forked_from_id: Option<ThreadId>,
+    /// Optional analytics source classification for this thread.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub thread_source: Option<String>,
 
     /// Optional user-facing thread name (may be unset).
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -3525,6 +3534,8 @@ impl<'de> Deserialize<'de> for SessionConfiguredEvent {
             session_id: ThreadId,
             forked_from_id: Option<ThreadId>,
             #[serde(default)]
+            thread_source: Option<String>,
+            #[serde(default)]
             thread_name: Option<String>,
             model: String,
             model_provider_id: String,
@@ -3563,6 +3574,7 @@ impl<'de> Deserialize<'de> for SessionConfiguredEvent {
         Ok(Self {
             session_id: wire.session_id,
             forked_from_id: wire.forked_from_id,
+            thread_source: wire.thread_source,
             thread_name: wire.thread_name,
             model: wire.model,
             model_provider_id: wire.model_provider_id,
@@ -4050,28 +4062,6 @@ mod tests {
             SessionSource::from_startup_arg(" Atlas ").unwrap(),
             SessionSource::Custom("atlas".to_string())
         );
-    }
-
-    #[test]
-    fn session_source_thread_source_name_classifies_user_and_subagent_sources() {
-        for (source, expected) in [
-            (SessionSource::Cli, Some("user")),
-            (SessionSource::VSCode, Some("user")),
-            (SessionSource::Exec, Some("user")),
-            (
-                SessionSource::Internal(InternalSessionSource::MemoryConsolidation),
-                Some("internal"),
-            ),
-            (
-                SessionSource::SubAgent(SubAgentSource::Review),
-                Some("subagent"),
-            ),
-            (SessionSource::Mcp, None),
-            (SessionSource::Custom("atlas".to_string()), None),
-            (SessionSource::Unknown, None),
-        ] {
-            assert_eq!(source.thread_source_name(), expected);
-        }
     }
 
     #[test]
@@ -5279,6 +5269,7 @@ mod tests {
             msg: EventMsg::SessionConfigured(SessionConfiguredEvent {
                 session_id: conversation_id,
                 forked_from_id: None,
+                thread_source: None,
                 thread_name: None,
                 model: "codex-mini-latest".to_string(),
                 model_provider_id: "openai".to_string(),

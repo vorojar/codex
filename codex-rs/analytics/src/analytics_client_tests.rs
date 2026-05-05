@@ -112,14 +112,11 @@ use std::sync::Arc;
 use std::sync::Mutex;
 use tokio::sync::mpsc;
 
-fn sample_thread(thread_id: &str, ephemeral: bool) -> Thread {
-    sample_thread_with_source(thread_id, ephemeral, AppServerSessionSource::Exec)
-}
-
-fn sample_thread_with_source(
+fn sample_thread_with_metadata(
     thread_id: &str,
     ephemeral: bool,
     source: AppServerSessionSource,
+    thread_source: Option<&str>,
 ) -> Thread {
     Thread {
         id: thread_id.to_string(),
@@ -134,6 +131,7 @@ fn sample_thread_with_source(
         cwd: test_path_buf("/tmp").abs(),
         cli_version: "0.0.0".to_string(),
         source,
+        thread_source: thread_source.map(ToString::to_string),
         agent_nickname: None,
         agent_role: None,
         git_info: None,
@@ -148,7 +146,12 @@ fn sample_thread_start_response(
     model: &str,
 ) -> ClientResponsePayload {
     ClientResponsePayload::ThreadStart(ThreadStartResponse {
-        thread: sample_thread(thread_id, ephemeral),
+        thread: sample_thread_with_metadata(
+            thread_id,
+            ephemeral,
+            AppServerSessionSource::Exec,
+            Some("user"),
+        ),
         model: model.to_string(),
         model_provider: "openai".to_string(),
         service_tier: None,
@@ -192,6 +195,7 @@ fn sample_thread_resume_response(
         ephemeral,
         model,
         AppServerSessionSource::Exec,
+        Some("user"),
     )
 }
 
@@ -200,9 +204,10 @@ fn sample_thread_resume_response_with_source(
     ephemeral: bool,
     model: &str,
     source: AppServerSessionSource,
+    thread_source: Option<&str>,
 ) -> ClientResponsePayload {
     ClientResponsePayload::ThreadResume(ThreadResumeResponse {
-        thread: sample_thread_with_source(thread_id, ephemeral, source),
+        thread: sample_thread_with_metadata(thread_id, ephemeral, source, thread_source),
         model: model.to_string(),
         model_provider: "openai".to_string(),
         service_tier: None,
@@ -744,7 +749,7 @@ fn compaction_event_serializes_expected_shape() {
             },
             sample_app_server_client_metadata(),
             sample_runtime_metadata(),
-            Some("user"),
+            Some("user".to_string()),
             /*subagent_source*/ None,
             /*parent_thread_id*/ None,
         ),
@@ -843,7 +848,7 @@ fn thread_initialized_event_serializes_expected_shape() {
             },
             model: "gpt-5".to_string(),
             ephemeral: true,
-            thread_source: Some("user"),
+            thread_source: Some("test_origin".to_string()),
             initialization_mode: ThreadInitializationMode::New,
             subagent_source: None,
             parent_thread_id: None,
@@ -874,7 +879,7 @@ fn thread_initialized_event_serializes_expected_shape() {
                 },
                 "model": "gpt-5",
                 "ephemeral": true,
-                "thread_source": "user",
+                "thread_source": "test_origin",
                 "initialization_mode": "new",
                 "subagent_source": null,
                 "parent_thread_id": null,
@@ -1090,6 +1095,7 @@ async fn compaction_event_ingests_custom_fact() {
                         agent_nickname: None,
                         agent_role: None,
                     }),
+                    Some("subagent"),
                 )),
             },
             &mut events,

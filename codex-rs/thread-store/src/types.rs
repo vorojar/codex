@@ -48,6 +48,8 @@ pub struct CreateThreadParams {
     pub forked_from_id: Option<ThreadId>,
     /// Runtime source for the thread.
     pub source: SessionSource,
+    /// Optional analytics source classification for this thread.
+    pub thread_source: Option<String>,
     /// Base instructions persisted in session metadata.
     pub base_instructions: BaseInstructions,
     /// Dynamic tools available to the thread at startup.
@@ -211,6 +213,8 @@ pub struct StoredThread {
     pub cli_version: String,
     /// Runtime source for the thread.
     pub source: SessionSource,
+    /// Optional analytics source classification for this thread.
+    pub thread_source: Option<String>,
     /// Optional random nickname for thread-spawn sub-agents.
     pub agent_nickname: Option<String>,
     /// Optional role for thread-spawn sub-agents.
