@@ -48,8 +48,6 @@ pub struct StatelessHookOutcome {
 #[derive(Debug)]
 pub struct PreCompactOutcome {
     pub hook_events: Vec<HookCompletedEvent>,
-    pub should_block: bool,
-    pub block_reason: Option<String>,
     pub should_stop: bool,
     pub stop_reason: Option<String>,
 }
@@ -81,8 +79,6 @@ pub(crate) async fn run_pre(
     if matched.is_empty() {
         return PreCompactOutcome {
             hook_events: Vec::new(),
-            should_block: false,
-            block_reason: None,
             should_stop: false,
             stop_reason: None,
         };
@@ -97,8 +93,6 @@ pub(crate) async fn run_pre(
                     Some(request.turn_id),
                     format!("failed to serialize pre compact hook input: {error}"),
                 ),
-                should_block: false,
-                block_reason: None,
                 should_stop: false,
                 stop_reason: None,
             };
@@ -114,18 +108,12 @@ pub(crate) async fn run_pre(
         parse_pre_completed,
     )
     .await;
-    let should_block = results.iter().any(|result| result.data.should_block);
-    let block_reason = results
-        .iter()
-        .find_map(|result| result.data.block_reason.clone());
     let should_stop = results.iter().any(|result| result.data.should_stop);
     let stop_reason = results
         .iter()
         .find_map(|result| result.data.stop_reason.clone());
     PreCompactOutcome {
         hook_events: results.into_iter().map(|result| result.completed).collect(),
-        should_block,
-        block_reason,
         should_stop,
         stop_reason,
     }
@@ -224,8 +212,6 @@ fn post_command_input_json(request: &PostCompactRequest) -> Result<String, serde
 
 #[derive(Default)]
 struct CompactHandlerData {
-    should_block: bool,
-    block_reason: Option<String>,
     should_stop: bool,
     stop_reason: Option<String>,
 }
@@ -237,8 +223,6 @@ fn parse_pre_completed(
 ) -> dispatcher::ParsedHandler<CompactHandlerData> {
     let mut entries = Vec::new();
     let mut status = HookRunStatus::Completed;
-    let mut should_block = false;
-    let mut block_reason = None;
     let mut should_stop = false;
     let mut stop_reason = None;
 
@@ -279,45 +263,12 @@ fn parse_pre_completed(
                             kind: HookOutputEntryKind::Error,
                             text: invalid_reason,
                         });
-                    } else if let Some(invalid_block_reason) = parsed.invalid_block_reason {
-                        status = HookRunStatus::Failed;
-                        entries.push(HookOutputEntry {
-                            kind: HookOutputEntryKind::Error,
-                            text: invalid_block_reason,
-                        });
-                    } else if parsed.should_block {
-                        status = HookRunStatus::Blocked;
-                        should_block = true;
-                        if let Some(reason) = parsed.reason {
-                            block_reason = Some(reason.clone());
-                            entries.push(HookOutputEntry {
-                                kind: HookOutputEntryKind::Feedback,
-                                text: reason,
-                            });
-                        }
                     }
                 } else if output_parser::looks_like_json(&run_result.stdout) {
                     status = HookRunStatus::Failed;
                     entries.push(HookOutputEntry {
                         kind: HookOutputEntryKind::Error,
                         text: "hook returned invalid PreCompact hook JSON output".to_string(),
-                    });
-                }
-            }
-            Some(2) => {
-                if let Some(reason) = common::trimmed_non_empty(&run_result.stderr) {
-                    status = HookRunStatus::Blocked;
-                    should_block = true;
-                    block_reason = Some(reason.clone());
-                    entries.push(HookOutputEntry {
-                        kind: HookOutputEntryKind::Feedback,
-                        text: reason,
-                    });
-                } else {
-                    status = HookRunStatus::Failed;
-                    entries.push(HookOutputEntry {
-                        kind: HookOutputEntryKind::Error,
-                        text: "PreCompact hook exited with code 2 but did not write a blocking reason to stderr".to_string(),
                     });
                 }
             }
@@ -345,8 +296,6 @@ fn parse_pre_completed(
             run: dispatcher::completed_summary(handler, &run_result, status, entries),
         },
         data: CompactHandlerData {
-            should_block,
-            block_reason,
             should_stop,
             stop_reason,
         },
@@ -451,7 +400,6 @@ fn parse_completed(
         data: CompactHandlerData {
             should_stop,
             stop_reason,
-            ..Default::default()
         },
     }
 }
@@ -516,7 +464,7 @@ mod tests {
     }
 
     #[test]
-    fn block_decision_stops_compaction() {
+    fn block_decision_is_not_supported_for_pre_compact() {
         let parsed = parse_pre_completed(
             &handler(HookEventName::PreCompact),
             run_result(
@@ -527,17 +475,12 @@ mod tests {
             Some("turn-1".to_string()),
         );
 
-        assert_eq!(parsed.completed.run.status, HookRunStatus::Blocked);
-        assert_eq!(parsed.data.should_block, true);
-        assert_eq!(
-            parsed.data.block_reason,
-            Some("policy blocked compaction".to_string())
-        );
+        assert_eq!(parsed.completed.run.status, HookRunStatus::Failed);
         assert_eq!(
             parsed.completed.run.entries,
             vec![HookOutputEntry {
-                kind: HookOutputEntryKind::Feedback,
-                text: "policy blocked compaction".to_string(),
+                kind: HookOutputEntryKind::Error,
+                text: "hook returned invalid PreCompact hook JSON output".to_string(),
             }]
         );
     }
@@ -553,7 +496,6 @@ mod tests {
         assert_eq!(parsed.completed.run.status, HookRunStatus::Stopped);
         assert_eq!(parsed.data.should_stop, true);
         assert_eq!(parsed.data.stop_reason, Some("nope".to_string()));
-        assert_eq!(parsed.data.should_block, false);
         assert_eq!(
             parsed.completed.run.entries,
             vec![HookOutputEntry {
@@ -600,8 +542,6 @@ mod tests {
 
         assert_eq!(parsed.completed.run.status, HookRunStatus::Completed);
         assert_eq!(parsed.completed.run.entries, Vec::new());
-        assert_eq!(parsed.data.should_block, false);
-        assert_eq!(parsed.data.block_reason, None);
     }
 
     #[test]
@@ -643,7 +583,6 @@ mod tests {
     fn handler(event_name: HookEventName) -> ConfiguredHandler {
         ConfiguredHandler {
             event_name,
-            is_managed: false,
             matcher: None,
             command: "python3 compact_hook.py".to_string(),
             timeout_sec: 5,

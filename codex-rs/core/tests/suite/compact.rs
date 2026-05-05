@@ -140,7 +140,7 @@ fn python_hook_command(script_path: &Path) -> String {
     format!("python3 \"{}\"", script_path.display())
 }
 
-fn write_blocking_pre_compact_hook(home: &Path) {
+fn write_unsupported_blocking_pre_compact_hook(home: &Path) {
     let script_path = home.join("pre_compact_block.py");
     let log_path = home.join("pre_compact_block_log.jsonl");
     let script = format!(
@@ -544,7 +544,7 @@ async fn summarize_context_three_requests_and_instructions() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn manual_pre_compact_hook_blocks_compaction() {
+async fn manual_pre_compact_block_decision_does_not_block_compaction() {
     skip_if_no_network!();
 
     let server = start_mock_server().await;
@@ -552,11 +552,15 @@ async fn manual_pre_compact_hook_blocks_compaction() {
         ev_assistant_message("m0", FIRST_REPLY),
         ev_completed_with_tokens("r0", /*total_tokens*/ 80),
     ]);
-    let request_log = mount_sse_sequence(&server, vec![first_turn]).await;
+    let compact_turn = sse(vec![
+        ev_assistant_message("m1", SUMMARY_TEXT),
+        ev_completed_with_tokens("r1", /*total_tokens*/ 100),
+    ]);
+    let request_log = mount_sse_sequence(&server, vec![first_turn, compact_turn]).await;
 
     let model_provider = non_openai_model_provider(&server);
     let mut builder = test_codex()
-        .with_pre_build_hook(write_blocking_pre_compact_hook)
+        .with_pre_build_hook(write_unsupported_blocking_pre_compact_hook)
         .with_config(move |config| {
             config.model_provider = model_provider;
             config
@@ -593,23 +597,15 @@ async fn manual_pre_compact_hook_blocks_compaction() {
         _ => None,
     })
     .await;
-    assert_eq!(completed.run.status, HookRunStatus::Blocked);
-    let error = wait_for_event_match(&codex, |ev| match ev {
-        EventMsg::Error(error) => Some(error.clone()),
-        _ => None,
-    })
-    .await;
-    assert_eq!(
-        error.message,
-        "Compaction blocked by PreCompact hook: blocked by policy"
-    );
+    assert_eq!(completed.run.status, HookRunStatus::Failed);
+    wait_for_event(&codex, |ev| matches!(ev, EventMsg::Warning(_))).await;
     wait_for_event(&codex, |ev| matches!(ev, EventMsg::TurnComplete(_))).await;
 
     let requests = request_log.requests();
     assert_eq!(
         requests.len(),
-        1,
-        "blocked compaction should not issue a compact request"
+        2,
+        "unsupported PreCompact block output should not prevent the compact request"
     );
 
     let hook_inputs = read_hook_inputs(&test.codex_home_path().join("pre_compact_block_log.jsonl"));
@@ -2404,16 +2400,6 @@ async fn manual_compact_retries_after_context_window_error() {
     wait_for_event(&codex, |ev| matches!(ev, EventMsg::TurnComplete(_))).await;
 
     codex.submit(Op::Compact).await.unwrap();
-    let EventMsg::BackgroundEvent(event) =
-        wait_for_event(&codex, |ev| matches!(ev, EventMsg::BackgroundEvent(_))).await
-    else {
-        panic!("expected background event after compact retry");
-    };
-    assert!(
-        event.message.contains("Trimmed 1 older thread item"),
-        "background event should mention trimmed item count: {}",
-        event.message
-    );
     let warning_event = wait_for_event(&codex, |ev| matches!(ev, EventMsg::Warning(_))).await;
     let EventMsg::Warning(WarningEvent { message }) = warning_event else {
         panic!("expected warning event after compact retry");

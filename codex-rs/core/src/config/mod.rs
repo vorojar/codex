@@ -23,7 +23,9 @@ use codex_config::ResidencyRequirement;
 use codex_config::SandboxModeRequirement;
 use codex_config::Sourced;
 use codex_config::ThreadConfigLoader;
+use codex_config::config_toml::ConfigLockfileToml;
 use codex_config::config_toml::ConfigToml;
+use codex_config::config_toml::DEFAULT_PROJECT_DOC_MAX_BYTES;
 use codex_config::config_toml::ProjectConfig;
 use codex_config::config_toml::RealtimeAudioConfig;
 use codex_config::config_toml::RealtimeConfig;
@@ -54,6 +56,7 @@ use codex_config::types::TuiKeymap;
 use codex_config::types::TuiNotificationSettings;
 use codex_config::types::UriBasedFileOpener;
 use codex_config::types::WindowsSandboxModeToml;
+use codex_core_plugins::PluginsConfigInput;
 use codex_exec_server::ExecutorFileSystem;
 use codex_exec_server::LOCAL_FS;
 use codex_features::AppsMcpPathOverrideConfigToml;
@@ -86,6 +89,8 @@ use codex_protocol::config_types::Verbosity;
 use codex_protocol::config_types::WebSearchConfig;
 use codex_protocol::config_types::WebSearchMode;
 use codex_protocol::config_types::WindowsSandboxLevel;
+use codex_protocol::models::ActivePermissionProfile;
+use codex_protocol::models::ActivePermissionProfileModification;
 use codex_protocol::models::PermissionProfile;
 use codex_protocol::models::SandboxEnforcement;
 use codex_protocol::openai_models::ModelsResponse;
@@ -97,6 +102,7 @@ use codex_protocol::protocol::SandboxPolicy;
 use codex_utils_absolute_path::AbsolutePathBuf;
 use codex_utils_absolute_path::AbsolutePathBufGuard;
 use serde::Deserialize;
+use serde::Serialize;
 use std::collections::BTreeMap;
 use std::collections::HashMap;
 use std::collections::HashSet;
@@ -105,12 +111,16 @@ use std::path::Path;
 use std::path::PathBuf;
 use std::sync::Arc;
 
+use crate::config::permissions::BUILT_IN_WORKSPACE_PROFILE;
 use crate::config::permissions::builtin_permission_profile;
 use crate::config::permissions::compile_permission_profile_selection;
 use crate::config::permissions::default_builtin_permission_profile_name;
 use crate::config::permissions::get_readable_roots_required_for_codex_runtime;
 use crate::config::permissions::network_proxy_config_for_profile_selection;
 use crate::config::permissions::validate_user_permission_profile_names;
+use crate::config_lock::config_without_lock_controls;
+use crate::config_lock::lock_layer_from_config;
+use crate::config_lock::read_config_lock_from_path;
 use codex_network_proxy::NetworkProxyConfig;
 use toml::Value as TomlValue;
 use toml_edit::DocumentMut;
@@ -122,6 +132,7 @@ mod network_proxy_spec;
 mod permissions;
 #[cfg(test)]
 mod schema;
+pub(crate) mod template_interpolation;
 pub use codex_config::Constrained;
 pub use codex_config::ConstraintError;
 pub use codex_config::ConstraintResult;
@@ -158,7 +169,7 @@ impl Default for GhostSnapshotConfig {
 /// Maximum number of bytes of the documentation that will be embedded. Larger
 /// files are *silently truncated* to this size so we do not take up too much of
 /// the context window.
-pub(crate) const AGENTS_MD_MAX_BYTES: usize = 32 * 1024; // 32 KiB
+pub(crate) const AGENTS_MD_MAX_BYTES: usize = DEFAULT_PROJECT_DOC_MAX_BYTES; // 32 KiB
 pub(crate) const DEFAULT_AGENT_MAX_THREADS: Option<usize> = Some(6);
 pub(crate) const DEFAULT_MULTI_AGENT_V2_MAX_CONCURRENT_THREADS_PER_SESSION: usize = 4;
 pub(crate) const DEFAULT_MULTI_AGENT_V2_MIN_WAIT_TIMEOUT_MS: i64 = 10_000;
@@ -229,6 +240,9 @@ pub struct Permissions {
     /// Canonical effective runtime permissions after config requirements and
     /// runtime readable-root additions have been applied.
     pub permission_profile: Constrained<PermissionProfile>,
+    /// Named or implicit built-in profile selected by config, rather than an
+    /// ad-hoc override.
+    pub active_permission_profile: Option<ActivePermissionProfile>,
     /// Effective network configuration applied to all spawned processes.
     pub network: Option<NetworkProxySpec>,
     /// Whether the model may request a login shell for shell-based tools.
@@ -254,6 +268,11 @@ impl Permissions {
     /// readable-root additions have been applied.
     pub fn permission_profile(&self) -> PermissionProfile {
         self.permission_profile.get().clone()
+    }
+
+    /// Named profile selected by config, if the current profile has one.
+    pub fn active_permission_profile(&self) -> Option<ActivePermissionProfile> {
+        self.active_permission_profile.clone()
     }
 
     /// Effective filesystem sandbox policy derived from the canonical profile.
@@ -314,6 +333,7 @@ impl Permissions {
         );
 
         self.permission_profile.set(permission_profile)?;
+        self.active_permission_profile = None;
         Ok(())
     }
 
@@ -322,9 +342,23 @@ impl Permissions {
         &mut self,
         permission_profile: PermissionProfile,
     ) -> ConstraintResult<()> {
+        self.set_permission_profile_with_active_profile(
+            permission_profile,
+            /*active_permission_profile*/ None,
+        )
+    }
+
+    /// Replace permissions from the canonical profile and record the named
+    /// source profile, if one is known.
+    pub fn set_permission_profile_with_active_profile(
+        &mut self,
+        permission_profile: PermissionProfile,
+        active_permission_profile: Option<ActivePermissionProfile>,
+    ) -> ConstraintResult<()> {
         self.permission_profile.can_set(&permission_profile)?;
 
         self.permission_profile.set(permission_profile)?;
+        self.active_permission_profile = active_permission_profile;
         Ok(())
     }
 }
@@ -349,8 +383,7 @@ pub enum ThreadStoreConfig {
     Local,
     /// Persist threads through the remote thread-store service.
     Remote { endpoint: String },
-    /// Test-only in-memory thread store.
-    #[cfg(debug_assertions)]
+    /// In-memory thread store for test and debug configurations.
     InMemory { id: String },
 }
 
@@ -447,7 +480,7 @@ pub struct Config {
     /// - `Some("...")`: use the provided attribution text verbatim
     pub commit_attribution: Option<String>,
 
-    /// Optional external notifier command. When set, Codex will spawn this
+    /// Deprecated optional external notifier command. When set, Codex will spawn this
     /// program after each completed *turn* (i.e. when the agent finishes
     /// processing a user submission). The value must be the full command
     /// broken into argv tokens **without** the trailing JSON argument - Codex
@@ -466,7 +499,7 @@ pub struct Config {
     /// notify-send Codex '{"type":"agent-turn-complete","turn-id":"12345"}'
     /// ```
     ///
-    /// If unset the feature is disabled.
+    /// If unset the feature is disabled. Use lifecycle hooks for new automation.
     pub notify: Option<Vec<String>>,
 
     /// TUI notification settings, including enabled events, delivery method, and focus condition.
@@ -481,6 +514,9 @@ pub struct Config {
     /// Persisted startup availability NUX state for model tooltips.
     pub model_availability_nux: ModelAvailabilityNuxConfig,
 
+    /// Start the composer in Vim mode (`Normal`) by default.
+    pub tui_vim_mode_default: bool,
+
     /// Start the TUI in the specified collaboration mode (plan/default).
 
     /// Controls whether the TUI uses the terminal's alternate screen buffer.
@@ -494,6 +530,9 @@ pub struct Config {
     ///
     /// When unset, the TUI defaults to: `model-with-reasoning` and `current-dir`.
     pub tui_status_line: Option<Vec<String>>,
+
+    /// Whether to color status line items with colors from the active syntax theme.
+    pub tui_status_line_use_colors: bool,
 
     /// Ordered list of terminal title item identifiers for the TUI.
     ///
@@ -590,6 +629,20 @@ pub struct Config {
 
     /// Directory where Codex writes log files (defaults to `$CODEX_HOME/log`).
     pub log_dir: PathBuf,
+
+    /// Directory where Codex writes effective session config lock files.
+    pub config_lock_export_dir: Option<AbsolutePathBuf>,
+
+    /// Whether config lock replay ignores Codex version drift between the
+    /// lock metadata and the regenerated lock.
+    pub config_lock_allow_codex_version_mismatch: bool,
+
+    /// Whether config lock creation saves values resolved from the model
+    /// catalog/session configuration.
+    pub config_lock_save_fields_resolved_from_model_catalog: bool,
+
+    /// Effective config lock used for strict replay validation.
+    pub config_lock_toml: Option<Arc<ConfigLockfileToml>>,
 
     /// Settings that govern if and what will be written to `~/.codex/history.jsonl`.
     pub history: History,
@@ -760,7 +813,7 @@ pub struct Config {
     pub otel: codex_config::types::OtelConfig,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct MultiAgentV2Config {
     pub max_concurrent_threads_per_session: usize,
     pub min_wait_timeout_ms: i64,
@@ -871,6 +924,11 @@ impl ConfigBuilder {
     }
 
     pub async fn build(self) -> std::io::Result<Config> {
+        // Keep the large config-loading future off small runtime thread stacks.
+        Box::pin(self.build_inner()).await
+    }
+
+    async fn build_inner(self) -> std::io::Result<Config> {
         let Self {
             codex_home,
             cli_overrides,
@@ -929,6 +987,42 @@ impl ConfigBuilder {
                 return Err(std::io::Error::new(std::io::ErrorKind::InvalidData, err));
             }
         };
+        let config_lock_settings = config_toml
+            .debug
+            .as_ref()
+            .and_then(|debug| debug.config_lockfile.as_ref());
+        if let Some(config_lock_load_path) =
+            config_lock_settings.and_then(|config_lock| config_lock.load_path.as_ref())
+        {
+            let allow_codex_version_mismatch = config_lock_settings
+                .and_then(|config_lock| config_lock.allow_codex_version_mismatch)
+                .unwrap_or(false);
+            let save_fields_resolved_from_model_catalog = config_lock_settings
+                .and_then(|config_lock| config_lock.save_fields_resolved_from_model_catalog)
+                .unwrap_or(true);
+            let lockfile_toml = read_config_lock_from_path(config_lock_load_path).await?;
+            let expected_lock_config = lockfile_toml.clone();
+            let lock_layer = lock_layer_from_config(config_lock_load_path, &lockfile_toml)?;
+            let lock_config_toml = config_without_lock_controls(&lockfile_toml.config);
+            let lock_config_layer_stack = ConfigLayerStack::new(
+                vec![lock_layer],
+                config_layer_stack.requirements().clone(),
+                config_layer_stack.requirements_toml().clone(),
+            )?;
+            let mut config = Config::load_config_with_layer_stack(
+                LOCAL_FS.as_ref(),
+                lock_config_toml,
+                harness_overrides,
+                codex_home,
+                lock_config_layer_stack,
+            )
+            .await?;
+            config.config_lock_toml = Some(Arc::new(expected_lock_config));
+            config.config_lock_allow_codex_version_mismatch = allow_codex_version_mismatch;
+            config.config_lock_save_fields_resolved_from_model_catalog =
+                save_fields_resolved_from_model_catalog;
+            return Ok(config);
+        }
         Config::load_config_with_layer_stack(
             LOCAL_FS.as_ref(),
             config_toml,
@@ -970,11 +1064,23 @@ impl Config {
         }
     }
 
+    /// Build the plugin-manager input from the effective config.
+    pub fn plugins_config_input(&self) -> PluginsConfigInput {
+        PluginsConfigInput::new(
+            self.config_layer_stack.clone(),
+            self.features.enabled(Feature::Plugins),
+            self.features.enabled(Feature::RemotePlugin),
+            self.features.enabled(Feature::PluginHooks),
+            self.chatgpt_base_url.clone(),
+        )
+    }
+
     pub async fn to_mcp_config(
         &self,
-        plugins_manager: &crate::plugins::PluginsManager,
+        plugins_manager: &codex_core_plugins::PluginsManager,
     ) -> McpConfig {
-        let loaded_plugins = plugins_manager.plugins_for_config(self).await;
+        let plugins_input = self.plugins_config_input();
+        let loaded_plugins = plugins_manager.plugins_for_config(&plugins_input).await;
         let mut configured_mcp_servers = self.mcp_servers.get().clone();
         for plugin in loaded_plugins
             .plugins()
@@ -1254,7 +1360,7 @@ fn apply_requirement_constrained_value<T>(
     configured_value: T,
     constrained_value: &mut ConstrainedWithSource<T>,
     startup_warnings: &mut Vec<String>,
-) -> std::io::Result<()>
+) -> std::io::Result<bool>
 where
     T: Clone + std::fmt::Debug + Send + Sync,
 {
@@ -1279,9 +1385,10 @@ where
                 ),
             )
         })?;
+        return Ok(true);
     }
 
-    Ok(())
+    Ok(false)
 }
 
 fn mcp_server_matches_requirement(
@@ -1559,7 +1666,6 @@ fn thread_store_config(
     match thread_store {
         Some(ThreadStoreToml::Local {}) => ThreadStoreConfig::Local,
         Some(ThreadStoreToml::Remote { endpoint }) => ThreadStoreConfig::Remote { endpoint },
-        #[cfg(debug_assertions)]
         Some(ThreadStoreToml::InMemory { id }) => ThreadStoreConfig::InMemory { id },
         None => legacy_remote_endpoint.map_or(ThreadStoreConfig::Local, |endpoint| {
             ThreadStoreConfig::Remote { endpoint }
@@ -1681,6 +1787,7 @@ pub struct ConfigOverrides {
     pub approvals_reviewer: Option<ApprovalsReviewer>,
     pub sandbox_mode: Option<SandboxMode>,
     pub permission_profile: Option<PermissionProfile>,
+    pub default_permissions: Option<String>,
     pub model_provider: Option<String>,
     pub service_tier: Option<Option<ServiceTier>>,
     pub config_profile: Option<String>,
@@ -1910,6 +2017,63 @@ impl Config {
         codex_home: AbsolutePathBuf,
         config_layer_stack: ConfigLayerStack,
     ) -> std::io::Result<Self> {
+        let config = Self::build_config_with_layer_stack(
+            fs,
+            cfg.clone(),
+            overrides.clone(),
+            codex_home.clone(),
+            config_layer_stack.clone(),
+        )
+        .await?;
+        let mut interpolation_source_cfg = cfg.clone();
+        template_interpolation::apply_resolved_config_fields(
+            &config,
+            &mut interpolation_source_cfg,
+        )
+        .map_err(|err| {
+            std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                format!("failed to materialize config for interpolation: {err}"),
+            )
+        })?;
+        let interpolation_source =
+            toml::Value::try_from(interpolation_source_cfg).map_err(|err| {
+                std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    format!("failed to serialize config for interpolation: {err}"),
+                )
+            })?;
+        let mut interpolated_cfg = cfg;
+        let interpolated = template_interpolation::interpolate_config_string_fields(
+            &mut interpolated_cfg,
+            &interpolation_source,
+        )
+        .map_err(|err| {
+            std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                format!("failed to interpolate config template fields: {err}"),
+            )
+        })?;
+        if interpolated {
+            return Self::build_config_with_layer_stack(
+                fs,
+                interpolated_cfg,
+                overrides,
+                codex_home,
+                config_layer_stack,
+            )
+            .await;
+        }
+        Ok(config)
+    }
+
+    async fn build_config_with_layer_stack(
+        fs: &dyn ExecutorFileSystem,
+        cfg: ConfigToml,
+        overrides: ConfigOverrides,
+        codex_home: AbsolutePathBuf,
+        config_layer_stack: ConfigLayerStack,
+    ) -> std::io::Result<Self> {
         // Keep the large config-construction future off small test thread stacks.
         Box::pin(async move {
         validate_model_providers(&cfg.model_providers)
@@ -1934,7 +2098,10 @@ impl Config {
 
         let user_instructions = AgentsMdManager::load_global_instructions(Some(&codex_home))
             .map(|loaded| loaded.contents);
-        let mut startup_warnings = Vec::new();
+        let mut startup_warnings = config_layer_stack
+            .startup_warnings()
+            .unwrap_or_default()
+            .to_vec();
 
         // Destructure ConfigOverrides fully to ensure all overrides are applied.
         let ConfigOverrides {
@@ -1945,6 +2112,7 @@ impl Config {
             approvals_reviewer: approvals_reviewer_override,
             sandbox_mode,
             permission_profile,
+            default_permissions: default_permissions_override,
             model_provider,
             service_tier: service_tier_override,
             config_profile: config_profile_key,
@@ -1967,6 +2135,18 @@ impl Config {
             return Err(std::io::Error::new(
                 std::io::ErrorKind::InvalidInput,
                 "`sandbox_mode` and `permission_profile` overrides cannot both be set",
+            ));
+        }
+        if sandbox_mode.is_some() && default_permissions_override.is_some() {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "`sandbox_mode` and `default_permissions` overrides cannot both be set",
+            ));
+        }
+        if permission_profile.is_some() && default_permissions_override.is_some() {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "`permission_profile` and `default_permissions` overrides cannot both be set",
             ));
         }
 
@@ -2040,6 +2220,7 @@ impl Config {
             .into_iter()
             .map(|path| AbsolutePathBuf::resolve_path_against_base(path, resolved_cwd.as_path()))
             .collect();
+        let requested_additional_writable_roots = additional_writable_roots.clone();
         let repo_root = resolve_root_git_project_for_trust(fs, &resolved_cwd).await;
         let active_project = cfg
             .get_active_project(
@@ -2057,13 +2238,16 @@ impl Config {
             .permissions
             .as_ref()
             .is_some_and(|profiles| !profiles.is_empty());
+        let default_permissions = default_permissions_override
+            .as_deref()
+            .or(cfg.default_permissions.as_deref());
         validate_user_permission_profile_names(cfg.permissions.as_ref())?;
         if has_permission_profiles
             && !matches!(
                 permission_config_syntax,
                 Some(PermissionConfigSyntax::Legacy)
             )
-            && cfg.default_permissions.is_none()
+            && default_permissions.is_none()
         {
             return Err(std::io::Error::new(
                 std::io::ErrorKind::InvalidInput,
@@ -2085,15 +2269,19 @@ impl Config {
             additional_writable_roots.push(memories_root);
         }
 
-        let profiles_are_active = matches!(
-            permission_config_syntax,
-            Some(PermissionConfigSyntax::Profiles)
-        ) || permission_config_syntax.is_none();
-        let using_implicit_builtin_profile = permission_config_syntax.is_none();
+        let profiles_are_active = default_permissions_override.is_some()
+            || matches!(
+                permission_config_syntax,
+                Some(PermissionConfigSyntax::Profiles)
+            )
+            || permission_config_syntax.is_none();
+        let using_implicit_builtin_profile =
+            permission_config_syntax.is_none() && default_permissions.is_none();
         let (
             configured_network_proxy_config,
             permission_profile,
             file_system_sandbox_policy,
+            mut active_permission_profile,
         ) = if let Some(mut permission_profile) = permission_profile {
             let (mut file_system_sandbox_policy, network_sandbox_policy) =
                 permission_profile.to_runtime_permissions();
@@ -2104,7 +2292,7 @@ impl Config {
                     // PermissionProfile carries the active network sandbox bit, not the configured
                     // proxy/allowlist policy. Keep that config so active profiles can round-trip
                     // without broadening network behavior.
-                    let default_permissions = cfg.default_permissions.as_deref().unwrap_or_else(|| {
+                    let default_permissions = default_permissions.unwrap_or_else(|| {
                         default_builtin_permission_profile_name(
                             &active_project,
                             windows_sandbox_level,
@@ -2139,11 +2327,17 @@ impl Config {
                 configured_network_proxy_config,
                 permission_profile,
                 file_system_sandbox_policy,
+                None,
             )
         } else if profiles_are_active {
-            let default_permissions = cfg.default_permissions.as_deref().unwrap_or_else(|| {
+            let default_permissions = default_permissions.unwrap_or_else(|| {
                 default_builtin_permission_profile_name(&active_project, windows_sandbox_level)
             });
+            let builtin_workspace_write_settings = if using_implicit_builtin_profile {
+                cfg.sandbox_workspace_write.as_ref()
+            } else {
+                None
+            };
             let configured_network_proxy_config = network_proxy_config_for_profile_selection(
                 cfg.permissions.as_ref(),
                 default_permissions,
@@ -2152,12 +2346,12 @@ impl Config {
                 compile_permission_profile_selection(
                     cfg.permissions.as_ref(),
                     default_permissions,
-                    cfg.sandbox_workspace_write.as_ref(),
+                    builtin_workspace_write_settings,
                     resolved_cwd.as_path(),
                     &mut startup_warnings,
                 )?;
             let mut permission_profile = if let Some(permission_profile) =
-                builtin_permission_profile(default_permissions, cfg.sandbox_workspace_write.as_ref())
+                builtin_permission_profile(default_permissions, builtin_workspace_write_settings)
             {
                 permission_profile
             } else {
@@ -2188,11 +2382,51 @@ impl Config {
                     &file_system_sandbox_policy,
                     network_sandbox_policy,
                 );
+            } else if matches!(permission_profile, PermissionProfile::Managed { .. })
+                && !requested_additional_writable_roots.is_empty()
+            {
+                file_system_sandbox_policy = file_system_sandbox_policy.with_additional_writable_roots(
+                    resolved_cwd.as_path(),
+                    &requested_additional_writable_roots,
+                );
+                permission_profile = PermissionProfile::from_runtime_permissions(
+                    &file_system_sandbox_policy,
+                    network_sandbox_policy,
+                );
             }
+            let active_permission_profile = if using_implicit_builtin_profile
+                && default_permissions == BUILT_IN_WORKSPACE_PROFILE
+                && cfg.sandbox_workspace_write.is_some()
+            {
+                // The implicit built-in profile preserves legacy
+                // `[sandbox_workspace_write]` customizations, but explicitly
+                // selecting `:workspace` intentionally ignores those legacy
+                // settings. Do not advertise a re-selectable active profile
+                // when doing so would lose roots, network, or tmp settings.
+                None
+            } else {
+                let active_permission_profile = if !requested_additional_writable_roots.is_empty()
+                    && matches!(permission_profile, PermissionProfile::Managed { .. })
+                {
+                    ActivePermissionProfile::new(default_permissions).with_modifications(
+                        requested_additional_writable_roots
+                            .iter()
+                            .cloned()
+                            .map(|path| {
+                                ActivePermissionProfileModification::AdditionalWritableRoot { path }
+                            })
+                            .collect(),
+                    )
+                } else {
+                    ActivePermissionProfile::new(default_permissions)
+                };
+                Some(active_permission_profile)
+            };
             (
                 configured_network_proxy_config,
                 permission_profile,
                 file_system_sandbox_policy,
+                active_permission_profile,
             )
         } else {
             let configured_network_proxy_config = NetworkProxyConfig::default();
@@ -2254,6 +2488,7 @@ impl Config {
                 configured_network_proxy_config,
                 permission_profile,
                 file_system_sandbox_policy,
+                None,
             )
         };
         let approval_policy_was_explicit = approval_policy_override.is_some()
@@ -2514,7 +2749,9 @@ impl Config {
             "model instructions file",
         )
         .await?;
-        let base_instructions = base_instructions.or(file_base_instructions);
+        let base_instructions = base_instructions
+            .or(file_base_instructions)
+            .or(cfg.instructions.clone());
         let developer_instructions = developer_instructions.or(cfg.developer_instructions);
         let include_permissions_instructions = config_profile
             .include_permissions_instructions
@@ -2633,12 +2870,17 @@ impl Config {
             &mut constrained_approvals_reviewer,
             &mut startup_warnings,
         )?;
-        apply_requirement_constrained_value(
+        let permission_profile_was_constrained = apply_requirement_constrained_value(
             "permission_profile",
             permission_profile,
             &mut constrained_permission_profile,
             &mut startup_warnings,
         )?;
+        if permission_profile_was_constrained {
+            // The selected profile no longer describes the effective
+            // permissions after requirements forced a fallback.
+            active_permission_profile = None;
+        }
         apply_requirement_constrained_value(
             "web_search_mode",
             web_search_mode,
@@ -2721,6 +2963,7 @@ impl Config {
             permissions: Permissions {
                 approval_policy: constrained_approval_policy.value,
                 permission_profile: constrained_permission_profile.value,
+                active_permission_profile,
                 network,
                 allow_login_shell,
                 shell_environment_policy,
@@ -2780,6 +3023,24 @@ impl Config {
             codex_home,
             sqlite_home,
             log_dir,
+            config_lock_export_dir: cfg
+                .debug
+                .as_ref()
+                .and_then(|debug| debug.config_lockfile.as_ref())
+                .and_then(|config_lock| config_lock.export_dir.clone()),
+            config_lock_allow_codex_version_mismatch: cfg
+                .debug
+                .as_ref()
+                .and_then(|debug| debug.config_lockfile.as_ref())
+                .and_then(|config_lock| config_lock.allow_codex_version_mismatch)
+                .unwrap_or(false),
+            config_lock_save_fields_resolved_from_model_catalog: cfg
+                .debug
+                .as_ref()
+                .and_then(|debug| debug.config_lockfile.as_ref())
+                .and_then(|config_lock| config_lock.save_fields_resolved_from_model_catalog)
+                .unwrap_or(true),
+            config_lock_toml: None,
             config_layer_stack,
             history,
             ephemeral: ephemeral.unwrap_or_default(),
@@ -2881,12 +3142,22 @@ impl Config {
                 .as_ref()
                 .map(|t| t.model_availability_nux.clone())
                 .unwrap_or_default(),
+            tui_vim_mode_default: cfg
+                .tui
+                .as_ref()
+                .map(|t| t.vim_mode_default)
+                .unwrap_or(false),
             tui_alternate_screen: cfg
                 .tui
                 .as_ref()
                 .map(|t| t.alternate_screen)
                 .unwrap_or_default(),
             tui_status_line: cfg.tui.as_ref().and_then(|t| t.status_line.clone()),
+            tui_status_line_use_colors: cfg
+                .tui
+                .as_ref()
+                .map(|t| t.status_line_use_colors)
+                .unwrap_or(true),
             tui_terminal_title: cfg.tui.as_ref().and_then(|t| t.terminal_title.clone()),
             tui_theme: cfg.tui.as_ref().and_then(|t| t.theme.clone()),
             terminal_resize_reflow,

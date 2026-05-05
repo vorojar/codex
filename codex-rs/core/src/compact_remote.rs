@@ -28,7 +28,6 @@ use codex_protocol::items::TurnItem;
 use codex_protocol::models::BaseInstructions;
 use codex_protocol::models::ResponseItem;
 use codex_protocol::protocol::CompactedItem;
-use codex_protocol::protocol::ErrorEvent;
 use codex_protocol::protocol::EventMsg;
 use codex_protocol::protocol::TurnStartedEvent;
 use codex_rollout_trace::CompactionCheckpointTracePayload;
@@ -43,7 +42,7 @@ pub(crate) async fn run_inline_remote_auto_compact_task(
     initial_context_injection: InitialContextInjection,
     reason: CompactionReason,
     phase: CompactionPhase,
-) -> CodexResult<bool> {
+) -> CodexResult<()> {
     run_remote_compact_task_inner(
         &sess,
         &turn_context,
@@ -52,7 +51,8 @@ pub(crate) async fn run_inline_remote_auto_compact_task(
         reason,
         phase,
     )
-    .await
+    .await?;
+    Ok(())
 }
 
 pub(crate) async fn run_remote_compact_task(
@@ -86,7 +86,7 @@ async fn run_remote_compact_task_inner(
     trigger: CompactionTrigger,
     reason: CompactionReason,
     phase: CompactionPhase,
-) -> CodexResult<bool> {
+) -> CodexResult<()> {
     let attempt = CompactionAnalyticsAttempt::begin(
         sess.as_ref(),
         turn_context.as_ref(),
@@ -110,27 +110,6 @@ async fn run_remote_compact_task_inner(
                 .await;
             return Err(CodexErr::TurnAborted);
         }
-        PreCompactHookOutcome::Blocked { reason } => {
-            let error = format!("Compaction blocked by PreCompact hook: {reason}");
-            if matches!(trigger, CompactionTrigger::Manual) {
-                sess.send_event(
-                    turn_context,
-                    EventMsg::Error(ErrorEvent {
-                        message: error.clone(),
-                        codex_error_info: None,
-                    }),
-                )
-                .await;
-            }
-            attempt
-                .track(
-                    sess.as_ref(),
-                    codex_analytics::CompactionStatus::Interrupted,
-                    Some(error),
-                )
-                .await;
-            return Ok(false);
-        }
     }
     let result =
         run_remote_compact_task_inner_impl(sess, turn_context, initial_context_injection).await;
@@ -151,7 +130,7 @@ async fn run_remote_compact_task_inner(
         sess.send_event(turn_context, event).await;
         return Err(err);
     }
-    Ok(true)
+    Ok(())
 }
 
 async fn run_remote_compact_task_inner_impl(
@@ -312,7 +291,7 @@ fn should_keep_compacted_history_item(item: &ResponseItem) -> bool {
         }
         ResponseItem::Message { role, .. } if role == "assistant" => true,
         ResponseItem::Message { .. } => false,
-        ResponseItem::Compaction { .. } => true,
+        ResponseItem::Compaction { .. } | ResponseItem::ContextCompaction { .. } => true,
         ResponseItem::Reasoning { .. }
         | ResponseItem::LocalShellCall { .. }
         | ResponseItem::FunctionCall { .. }
@@ -328,11 +307,11 @@ fn should_keep_compacted_history_item(item: &ResponseItem) -> bool {
 }
 
 #[derive(Debug)]
-struct CompactRequestLogData {
+pub(crate) struct CompactRequestLogData {
     failing_compaction_request_model_visible_bytes: i64,
 }
 
-fn build_compact_request_log_data(
+pub(crate) fn build_compact_request_log_data(
     input: &[ResponseItem],
     instructions: &str,
 ) -> CompactRequestLogData {
@@ -349,7 +328,7 @@ fn build_compact_request_log_data(
     }
 }
 
-fn log_remote_compact_failure(
+pub(crate) fn log_remote_compact_failure(
     turn_context: &TurnContext,
     log_data: &CompactRequestLogData,
     total_usage_breakdown: TotalTokenUsageBreakdown,
@@ -368,7 +347,7 @@ fn log_remote_compact_failure(
     );
 }
 
-fn trim_function_call_history_to_fit_context_window(
+pub(crate) fn trim_function_call_history_to_fit_context_window(
     history: &mut ContextManager,
     turn_context: &TurnContext,
     base_instructions: &BaseInstructions,

@@ -30,7 +30,6 @@ use codex_protocol::models::ContentItem;
 use codex_protocol::models::ResponseInputItem;
 use codex_protocol::models::ResponseItem;
 use codex_protocol::protocol::CompactedItem;
-use codex_protocol::protocol::ErrorEvent;
 use codex_protocol::protocol::EventMsg;
 use codex_protocol::protocol::TurnStartedEvent;
 use codex_protocol::protocol::WarningEvent;
@@ -73,7 +72,7 @@ pub(crate) async fn run_inline_auto_compact_task(
     initial_context_injection: InitialContextInjection,
     reason: CompactionReason,
     phase: CompactionPhase,
-) -> CodexResult<bool> {
+) -> CodexResult<()> {
     let prompt = turn_context.compact_prompt().to_string();
     let input = vec![UserInput::Text {
         text: prompt,
@@ -90,7 +89,8 @@ pub(crate) async fn run_inline_auto_compact_task(
         reason,
         phase,
     )
-    .await
+    .await?;
+    Ok(())
 }
 
 pub(crate) async fn run_compact_task(
@@ -126,7 +126,7 @@ async fn run_compact_task_inner(
     trigger: CompactionTrigger,
     reason: CompactionReason,
     phase: CompactionPhase,
-) -> CodexResult<bool> {
+) -> CodexResult<()> {
     let attempt = CompactionAnalyticsAttempt::begin(
         sess.as_ref(),
         turn_context.as_ref(),
@@ -146,23 +146,6 @@ async fn run_compact_task_inner(
                 .await;
             return Err(CodexErr::TurnAborted);
         }
-        PreCompactHookOutcome::Blocked { reason } => {
-            let error = format!("Compaction blocked by PreCompact hook: {reason}");
-            if matches!(trigger, CompactionTrigger::Manual) {
-                sess.send_event(
-                    &turn_context,
-                    EventMsg::Error(ErrorEvent {
-                        message: error.clone(),
-                        codex_error_info: None,
-                    }),
-                )
-                .await;
-            }
-            attempt
-                .track(sess.as_ref(), CompactionStatus::Interrupted, Some(error))
-                .await;
-            return Ok(false);
-        }
     }
     let result = run_compact_task_inner_impl(
         Arc::clone(&sess),
@@ -181,7 +164,7 @@ async fn run_compact_task_inner(
         }
     }
     attempt.track(sess.as_ref(), status, error).await;
-    result.map(|_| true)
+    result.map(|_| ())
 }
 
 async fn run_compact_task_inner_impl(
@@ -200,8 +183,6 @@ async fn run_compact_task_inner_impl(
         &[initial_input_for_turn.into()],
         turn_context.truncation_policy,
     );
-
-    let mut truncated_count = 0usize;
 
     let max_retries = turn_context.provider.info().stream_max_retries();
     let mut retries = 0;
@@ -234,15 +215,6 @@ async fn run_compact_task_inner_impl(
 
         match attempt_result {
             Ok(()) => {
-                if truncated_count > 0 {
-                    sess.notify_background_event(
-                        turn_context.as_ref(),
-                        format!(
-                            "Trimmed {truncated_count} older thread item(s) before compacting so the prompt fits the model context window."
-                        ),
-                    )
-                    .await;
-                }
                 break;
             }
             Err(CodexErr::Interrupted) => {
@@ -255,7 +227,6 @@ async fn run_compact_task_inner_impl(
                         "Context window exceeded while compacting; removing oldest history item. Error: {e}"
                     );
                     history.remove_first_item();
-                    truncated_count += 1;
                     retries = 0;
                     continue;
                 }
@@ -468,7 +439,13 @@ pub(crate) fn insert_initial_context_before_last_real_user_or_summary(
         .iter()
         .enumerate()
         .rev()
-        .find_map(|(i, item)| matches!(item, ResponseItem::Compaction { .. }).then_some(i));
+        .find_map(|(i, item)| {
+            matches!(
+                item,
+                ResponseItem::Compaction { .. } | ResponseItem::ContextCompaction { .. }
+            )
+            .then_some(i)
+        });
     let insertion_index = last_real_user_index
         .or(last_user_or_summary_index)
         .or(last_compaction_index);

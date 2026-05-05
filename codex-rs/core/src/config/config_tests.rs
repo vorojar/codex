@@ -4,7 +4,6 @@ use crate::config::ThreadStoreConfig;
 use crate::config::edit::ConfigEdit;
 use crate::config::edit::ConfigEditsBuilder;
 use crate::config::edit::apply_blocking;
-use crate::plugins::PluginsManager;
 use assert_matches::assert_matches;
 use codex_config::CONFIG_TOML_FILE;
 use codex_config::RequirementSource;
@@ -53,6 +52,7 @@ use codex_config::types::TuiKeymap;
 use codex_config::types::TuiNotificationSettings;
 use codex_config::types::WindowsSandboxModeToml;
 use codex_config::types::WindowsToml;
+use codex_core_plugins::PluginsManager;
 use codex_exec_server::LOCAL_FS;
 use codex_features::Feature;
 use codex_features::FeaturesToml;
@@ -60,6 +60,8 @@ use codex_model_provider_info::LMSTUDIO_OSS_PROVIDER_ID;
 use codex_model_provider_info::OLLAMA_OSS_PROVIDER_ID;
 use codex_model_provider_info::WireApi;
 use codex_models_manager::bundled_models_response;
+use codex_protocol::models::ActivePermissionProfile;
+use codex_protocol::models::ActivePermissionProfileModification;
 use codex_protocol::models::ManagedFileSystemPermissions;
 use codex_protocol::models::PermissionProfile;
 use codex_protocol::models::SandboxEnforcement;
@@ -547,8 +549,10 @@ fn config_toml_deserializes_model_availability_nux() {
             notification_settings: TuiNotificationSettings::default(),
             animations: true,
             show_tooltips: true,
+            vim_mode_default: false,
             alternate_screen: AltScreenMode::default(),
             status_line: None,
+            status_line_use_colors: true,
             terminal_title: None,
             theme: None,
             keymap: TuiKeymap::default(),
@@ -560,6 +564,37 @@ fn config_toml_deserializes_model_availability_nux() {
             },
             terminal_resize_reflow_max_rows: None,
         }
+    );
+}
+
+#[test]
+fn config_toml_status_line_use_colors_defaults_to_enabled() {
+    let toml = r#"
+[tui]
+"#;
+    let cfg: ConfigToml =
+        toml::from_str(toml).expect("TOML deserialization should succeed for TUI config");
+
+    assert!(
+        cfg.tui
+            .expect("tui config should deserialize")
+            .status_line_use_colors
+    );
+}
+
+#[test]
+fn config_toml_deserializes_status_line_use_colors_disabled() {
+    let toml = r#"
+[tui]
+status_line_use_colors = false
+"#;
+    let cfg: ConfigToml =
+        toml::from_str(toml).expect("TOML deserialization should succeed for TUI config");
+
+    assert!(
+        !cfg.tui
+            .expect("tui config should deserialize")
+            .status_line_use_colors
     );
 }
 
@@ -593,6 +628,35 @@ async fn runtime_config_defaults_model_availability_nux() {
     assert_eq!(
         cfg.model_availability_nux,
         ModelAvailabilityNuxConfig::default()
+    );
+}
+
+#[test]
+fn test_tui_vim_mode_default_defaults_to_false() {
+    let toml = r#"
+        [tui]
+    "#;
+    let parsed: ConfigToml = toml::from_str(toml).expect("deserialize empty [tui] table");
+    assert!(
+        !parsed
+            .tui
+            .expect("config should include tui section")
+            .vim_mode_default
+    );
+}
+
+#[test]
+fn test_tui_vim_mode_default_true() {
+    let toml = r#"
+        [tui]
+        vim_mode_default = true
+    "#;
+    let parsed: ConfigToml = toml::from_str(toml).expect("deserialize vim_mode_default=true");
+    assert!(
+        parsed
+            .tui
+            .expect("config should include tui section")
+            .vim_mode_default
     );
 }
 
@@ -907,6 +971,14 @@ async fn default_permissions_profile_populates_runtime_sandbox_policy() -> std::
         config.permissions.network_sandbox_policy(),
         NetworkSandboxPolicy::Restricted
     );
+    assert_eq!(
+        config
+            .permissions
+            .active_permission_profile()
+            .as_ref()
+            .map(|active| active.id.as_str()),
+        Some("workspace")
+    );
     Ok(())
 }
 
@@ -928,6 +1000,7 @@ async fn permission_profile_override_populates_runtime_permissions() -> std::io:
     .await?;
 
     assert_eq!(config.permissions.permission_profile(), permission_profile);
+    assert_eq!(config.permissions.active_permission_profile(), None);
     assert_eq!(
         &config.legacy_sandbox_policy(),
         &SandboxPolicy::DangerFullAccess
@@ -1267,6 +1340,14 @@ async fn default_permissions_can_select_builtin_profile_without_permissions_tabl
     .await?;
 
     let policy = config.permissions.file_system_sandbox_policy();
+    assert_eq!(
+        config
+            .permissions
+            .active_permission_profile()
+            .as_ref()
+            .map(|active| active.id.as_str()),
+        Some(":workspace")
+    );
     assert!(
         policy.can_write_path_with_cwd(cwd.path(), cwd.path()),
         "expected :workspace to allow writing the project root, policy: {policy:?}"
@@ -1274,6 +1355,86 @@ async fn default_permissions_can_select_builtin_profile_without_permissions_tabl
     assert!(
         !policy.can_write_path_with_cwd(&cwd.path().join(".git"), cwd.path()),
         "expected :workspace to protect project metadata, policy: {policy:?}"
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn default_permissions_read_only_applies_additional_writable_roots_as_modifications()
+-> std::io::Result<()> {
+    let codex_home = TempDir::new()?;
+    let cwd = TempDir::new()?;
+    let extra_root = TempDir::new()?;
+    let extra_root = extra_root.path().abs();
+
+    let config = Config::load_from_base_config_with_overrides(
+        ConfigToml {
+            default_permissions: Some(":read-only".to_string()),
+            ..Default::default()
+        },
+        ConfigOverrides {
+            cwd: Some(cwd.path().to_path_buf()),
+            additional_writable_roots: vec![extra_root.to_path_buf()],
+            ..Default::default()
+        },
+        codex_home.abs(),
+    )
+    .await?;
+
+    let policy = config.permissions.file_system_sandbox_policy();
+    assert!(
+        policy.can_write_path_with_cwd(extra_root.as_path(), cwd.path()),
+        "expected additional writable root to modify :read-only, policy: {policy:?}"
+    );
+    assert_eq!(
+        config.permissions.active_permission_profile(),
+        Some(
+            ActivePermissionProfile::new(":read-only").with_modifications(vec![
+                ActivePermissionProfileModification::AdditionalWritableRoot { path: extra_root },
+            ])
+        )
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn explicit_builtin_workspace_profile_ignores_legacy_workspace_write_settings()
+-> std::io::Result<()> {
+    let codex_home = TempDir::new()?;
+    let cwd = TempDir::new()?;
+    let extra_root = TempDir::new()?;
+
+    let config = Config::load_from_base_config_with_overrides(
+        ConfigToml {
+            default_permissions: Some(":workspace".to_string()),
+            sandbox_workspace_write: Some(SandboxWorkspaceWrite {
+                writable_roots: vec![extra_root.path().abs()],
+                network_access: true,
+                exclude_tmpdir_env_var: true,
+                exclude_slash_tmp: true,
+            }),
+            ..Default::default()
+        },
+        ConfigOverrides {
+            cwd: Some(cwd.path().to_path_buf()),
+            ..Default::default()
+        },
+        codex_home.abs(),
+    )
+    .await?;
+
+    let policy = config.permissions.file_system_sandbox_policy();
+    assert_eq!(
+        config.permissions.network_sandbox_policy(),
+        NetworkSandboxPolicy::Restricted
+    );
+    assert!(
+        !policy.entries.iter().any(|entry| matches!(
+            &entry.path,
+            FileSystemPath::Path { path } if path.as_path() == extra_root.path()
+        )),
+        "explicit :workspace should not inherit sandbox_workspace_write roots as concrete grants, \
+         policy: {policy:?}"
     );
     Ok(())
 }
@@ -1303,6 +1464,18 @@ async fn empty_config_defaults_to_builtin_profile_for_trusted_project() -> std::
     .await?;
 
     let policy = config.permissions.file_system_sandbox_policy();
+    assert_eq!(
+        config
+            .permissions
+            .active_permission_profile()
+            .as_ref()
+            .map(|active| active.id.as_str()),
+        Some(if cfg!(target_os = "windows") {
+            ":read-only"
+        } else {
+            ":workspace"
+        })
+    );
     if cfg!(target_os = "windows") {
         assert!(
             !policy.can_write_path_with_cwd(cwd.path(), cwd.path()),
@@ -1366,6 +1539,12 @@ async fn implicit_builtin_workspace_profile_preserves_sandbox_workspace_write_se
     assert_eq!(
         config.permissions.network_sandbox_policy(),
         NetworkSandboxPolicy::Enabled
+    );
+    assert_eq!(
+        config.permissions.active_permission_profile(),
+        None,
+        "implicit :workspace cannot be faithfully re-selected when it includes \
+         legacy sandbox_workspace_write settings"
     );
     match config.legacy_sandbox_policy() {
         SandboxPolicy::WorkspaceWrite {
@@ -1483,6 +1662,14 @@ async fn default_permissions_can_select_builtin_no_sandbox_profile() -> std::io:
     assert_eq!(
         config.permissions.permission_profile(),
         PermissionProfile::Disabled
+    );
+    assert_eq!(
+        config
+            .permissions
+            .active_permission_profile()
+            .as_ref()
+            .map(|active| active.id.as_str()),
+        Some(":danger-no-sandbox")
     );
     Ok(())
 }
@@ -1937,8 +2124,10 @@ fn tui_config_missing_notifications_field_defaults_to_enabled() {
             notification_settings: TuiNotificationSettings::default(),
             animations: true,
             show_tooltips: true,
+            vim_mode_default: false,
             alternate_screen: AltScreenMode::Auto,
             status_line: None,
+            status_line_use_colors: true,
             terminal_title: None,
             theme: None,
             keymap: TuiKeymap::default(),
@@ -3002,7 +3191,7 @@ fn web_search_mode_for_turn_falls_back_when_live_is_disallowed() -> anyhow::Resu
 }
 
 #[tokio::test]
-async fn project_profile_overrides_user_profile() -> std::io::Result<()> {
+async fn project_profiles_are_ignored() -> std::io::Result<()> {
     let codex_home = TempDir::new()?;
     let workspace = TempDir::new()?;
     let workspace_key = workspace.path().to_string_lossy().replace('\\', "\\\\");
@@ -3029,6 +3218,9 @@ trust_level = "trusted"
         project_config_dir.join(CONFIG_TOML_FILE),
         r#"
 profile = "project"
+
+[profiles.project]
+model = "gpt-project-local"
 "#,
     )?;
 
@@ -3041,8 +3233,19 @@ profile = "project"
         .build()
         .await?;
 
-    assert_eq!(config.active_profile.as_deref(), Some("project"));
-    assert_eq!(config.model.as_deref(), Some("gpt-project"));
+    assert_eq!(config.active_profile.as_deref(), Some("global"));
+    assert_eq!(config.model.as_deref(), Some("gpt-global"));
+    assert!(
+        config.startup_warnings.iter().any(|warning| {
+            warning.contains("profile")
+                && warning.contains("profiles")
+                && warning.contains(
+                    "If you want these settings to apply, manually set them in your user-level config.toml."
+                )
+        }),
+        "expected warning for ignored project-local profile keys: {:?}",
+        config.startup_warnings
+    );
 
     Ok(())
 }
@@ -6151,6 +6354,7 @@ async fn test_precedence_fixture_with_o3_profile() -> std::io::Result<()> {
             permissions: Permissions {
                 approval_policy: Constrained::allow_any(AskForApproval::Never),
                 permission_profile: Constrained::allow_any(PermissionProfile::read_only()),
+                active_permission_profile: Some(ActivePermissionProfile::new(":read-only")),
                 network: None,
                 allow_login_shell: true,
                 shell_environment_policy: ShellEnvironmentPolicy::default(),
@@ -6183,6 +6387,10 @@ async fn test_precedence_fixture_with_o3_profile() -> std::io::Result<()> {
             codex_home: fixture.codex_home(),
             sqlite_home: fixture.codex_home().to_path_buf(),
             log_dir: fixture.codex_home().join("log").to_path_buf(),
+            config_lock_export_dir: None,
+            config_lock_allow_codex_version_mismatch: false,
+            config_lock_save_fields_resolved_from_model_catalog: true,
+            config_lock_toml: None,
             config_layer_stack: Default::default(),
             startup_warnings: Vec::new(),
             history: History::default(),
@@ -6241,6 +6449,8 @@ async fn test_precedence_fixture_with_o3_profile() -> std::io::Result<()> {
             tui_notifications: Default::default(),
             animations: true,
             show_tooltips: true,
+            tui_vim_mode_default: false,
+            tui_keymap: TuiKeymap::default(),
             model_availability_nux: ModelAvailabilityNuxConfig::default(),
             terminal_resize_reflow: TerminalResizeReflowConfig::default(),
             analytics_enabled: Some(true),
@@ -6248,9 +6458,9 @@ async fn test_precedence_fixture_with_o3_profile() -> std::io::Result<()> {
             tool_suggest: ToolSuggestConfig::default(),
             tui_alternate_screen: AltScreenMode::Auto,
             tui_status_line: None,
+            tui_status_line_use_colors: true,
             tui_terminal_title: None,
             tui_theme: None,
-            tui_keymap: TuiKeymap::default(),
             otel: OtelConfig::default(),
         },
         o3_profile_config
@@ -6346,6 +6556,7 @@ async fn test_precedence_fixture_with_gpt3_profile() -> std::io::Result<()> {
         permissions: Permissions {
             approval_policy: Constrained::allow_any(AskForApproval::UnlessTrusted),
             permission_profile: Constrained::allow_any(PermissionProfile::read_only()),
+            active_permission_profile: Some(ActivePermissionProfile::new(":read-only")),
             network: None,
             allow_login_shell: true,
             shell_environment_policy: ShellEnvironmentPolicy::default(),
@@ -6378,6 +6589,10 @@ async fn test_precedence_fixture_with_gpt3_profile() -> std::io::Result<()> {
         codex_home: fixture.codex_home(),
         sqlite_home: fixture.codex_home().to_path_buf(),
         log_dir: fixture.codex_home().join("log").to_path_buf(),
+        config_lock_export_dir: None,
+        config_lock_allow_codex_version_mismatch: false,
+        config_lock_save_fields_resolved_from_model_catalog: true,
+        config_lock_toml: None,
         config_layer_stack: Default::default(),
         startup_warnings: Vec::new(),
         history: History::default(),
@@ -6436,6 +6651,8 @@ async fn test_precedence_fixture_with_gpt3_profile() -> std::io::Result<()> {
         tui_notifications: Default::default(),
         animations: true,
         show_tooltips: true,
+        tui_vim_mode_default: false,
+        tui_keymap: TuiKeymap::default(),
         model_availability_nux: ModelAvailabilityNuxConfig::default(),
         terminal_resize_reflow: TerminalResizeReflowConfig::default(),
         analytics_enabled: Some(true),
@@ -6443,9 +6660,9 @@ async fn test_precedence_fixture_with_gpt3_profile() -> std::io::Result<()> {
         tool_suggest: ToolSuggestConfig::default(),
         tui_alternate_screen: AltScreenMode::Auto,
         tui_status_line: None,
+        tui_status_line_use_colors: true,
         tui_terminal_title: None,
         tui_theme: None,
-        tui_keymap: TuiKeymap::default(),
         otel: OtelConfig::default(),
     };
 
@@ -6495,6 +6712,7 @@ async fn test_precedence_fixture_with_zdr_profile() -> std::io::Result<()> {
         permissions: Permissions {
             approval_policy: Constrained::allow_any(AskForApproval::OnFailure),
             permission_profile: Constrained::allow_any(PermissionProfile::read_only()),
+            active_permission_profile: Some(ActivePermissionProfile::new(":read-only")),
             network: None,
             allow_login_shell: true,
             shell_environment_policy: ShellEnvironmentPolicy::default(),
@@ -6527,6 +6745,10 @@ async fn test_precedence_fixture_with_zdr_profile() -> std::io::Result<()> {
         codex_home: fixture.codex_home(),
         sqlite_home: fixture.codex_home().to_path_buf(),
         log_dir: fixture.codex_home().join("log").to_path_buf(),
+        config_lock_export_dir: None,
+        config_lock_allow_codex_version_mismatch: false,
+        config_lock_save_fields_resolved_from_model_catalog: true,
+        config_lock_toml: None,
         config_layer_stack: Default::default(),
         startup_warnings: Vec::new(),
         history: History::default(),
@@ -6585,6 +6807,8 @@ async fn test_precedence_fixture_with_zdr_profile() -> std::io::Result<()> {
         tui_notifications: Default::default(),
         animations: true,
         show_tooltips: true,
+        tui_vim_mode_default: false,
+        tui_keymap: TuiKeymap::default(),
         model_availability_nux: ModelAvailabilityNuxConfig::default(),
         terminal_resize_reflow: TerminalResizeReflowConfig::default(),
         analytics_enabled: Some(false),
@@ -6592,9 +6816,9 @@ async fn test_precedence_fixture_with_zdr_profile() -> std::io::Result<()> {
         tool_suggest: ToolSuggestConfig::default(),
         tui_alternate_screen: AltScreenMode::Auto,
         tui_status_line: None,
+        tui_status_line_use_colors: true,
         tui_terminal_title: None,
         tui_theme: None,
-        tui_keymap: TuiKeymap::default(),
         otel: OtelConfig::default(),
     };
 
@@ -6629,6 +6853,7 @@ async fn test_precedence_fixture_with_gpt5_profile() -> std::io::Result<()> {
         permissions: Permissions {
             approval_policy: Constrained::allow_any(AskForApproval::OnFailure),
             permission_profile: Constrained::allow_any(PermissionProfile::read_only()),
+            active_permission_profile: Some(ActivePermissionProfile::new(":read-only")),
             network: None,
             allow_login_shell: true,
             shell_environment_policy: ShellEnvironmentPolicy::default(),
@@ -6661,6 +6886,10 @@ async fn test_precedence_fixture_with_gpt5_profile() -> std::io::Result<()> {
         codex_home: fixture.codex_home(),
         sqlite_home: fixture.codex_home().to_path_buf(),
         log_dir: fixture.codex_home().join("log").to_path_buf(),
+        config_lock_export_dir: None,
+        config_lock_allow_codex_version_mismatch: false,
+        config_lock_save_fields_resolved_from_model_catalog: true,
+        config_lock_toml: None,
         config_layer_stack: Default::default(),
         startup_warnings: Vec::new(),
         history: History::default(),
@@ -6719,6 +6948,8 @@ async fn test_precedence_fixture_with_gpt5_profile() -> std::io::Result<()> {
         tui_notifications: Default::default(),
         animations: true,
         show_tooltips: true,
+        tui_vim_mode_default: false,
+        tui_keymap: TuiKeymap::default(),
         model_availability_nux: ModelAvailabilityNuxConfig::default(),
         terminal_resize_reflow: TerminalResizeReflowConfig::default(),
         analytics_enabled: Some(true),
@@ -6726,9 +6957,9 @@ async fn test_precedence_fixture_with_gpt5_profile() -> std::io::Result<()> {
         tool_suggest: ToolSuggestConfig::default(),
         tui_alternate_screen: AltScreenMode::Auto,
         tui_status_line: None,
+        tui_status_line_use_colors: true,
         tui_terminal_title: None,
         tui_theme: None,
-        tui_keymap: TuiKeymap::default(),
         otel: OtelConfig::default(),
     };
 
@@ -7519,6 +7750,41 @@ async fn permission_profile_override_falls_back_when_disallowed_by_requirements(
 }
 
 #[tokio::test]
+async fn active_profile_is_cleared_when_requirements_force_fallback() -> std::io::Result<()> {
+    let codex_home = TempDir::new()?;
+    let requirements = codex_config::ConfigRequirementsToml {
+        allowed_sandbox_modes: Some(vec![codex_config::SandboxModeRequirement::ReadOnly]),
+        ..Default::default()
+    };
+
+    let config = ConfigBuilder::without_managed_config_for_tests()
+        .codex_home(codex_home.path().to_path_buf())
+        .fallback_cwd(Some(codex_home.path().to_path_buf()))
+        .harness_overrides(ConfigOverrides {
+            default_permissions: Some(":danger-no-sandbox".to_string()),
+            ..Default::default()
+        })
+        .cloud_requirements(CloudRequirementsLoader::new(async move {
+            Ok(Some(requirements))
+        }))
+        .build()
+        .await?;
+
+    assert_eq!(
+        config.permissions.permission_profile(),
+        PermissionProfile::read_only()
+    );
+    assert_eq!(config.permissions.active_permission_profile(), None);
+    assert!(
+        config.startup_warnings.iter().any(|warning| warning
+            .contains("Configured value for `permission_profile` is disallowed by requirements")),
+        "{:?}",
+        config.startup_warnings
+    );
+    Ok(())
+}
+
+#[tokio::test]
 async fn permission_profile_override_preserves_split_write_roots() -> std::io::Result<()> {
     let codex_home = TempDir::new()?;
     let cwd = codex_home.path().join("workspace");
@@ -7750,6 +8016,77 @@ async fn browser_feature_requirements_are_valid() -> std::io::Result<()> {
 
     assert!(!config.features.enabled(Feature::InAppBrowser));
     assert!(!config.features.enabled(Feature::BrowserUse));
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn debug_config_lockfile_export_settings_load_from_nested_table() -> std::io::Result<()> {
+    let codex_home = TempDir::new()?;
+    std::fs::write(
+        codex_home.path().join(CONFIG_TOML_FILE),
+        r#"[debug.config_lockfile]
+export_dir = "locks"
+allow_codex_version_mismatch = true
+save_fields_resolved_from_model_catalog = false
+"#,
+    )?;
+
+    let config = ConfigBuilder::without_managed_config_for_tests()
+        .codex_home(codex_home.path().to_path_buf())
+        .fallback_cwd(Some(codex_home.path().to_path_buf()))
+        .build()
+        .await?;
+
+    assert_eq!(
+        config.config_lock_export_dir,
+        Some(AbsolutePathBuf::resolve_path_against_base(
+            "locks",
+            codex_home.path()
+        ))
+    );
+    assert!(config.config_lock_allow_codex_version_mismatch);
+    assert!(!config.config_lock_save_fields_resolved_from_model_catalog);
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn debug_config_lockfile_load_path_loads_lock_from_nested_table() -> std::io::Result<()> {
+    let codex_home = TempDir::new()?;
+    let lock_path = codex_home.path().join("session.config.lock.toml");
+    std::fs::write(
+        &lock_path,
+        format!(
+            r#"version = {}
+codex_version = "older-version"
+
+[config]
+"#,
+            crate::config_lock::CONFIG_LOCK_VERSION
+        ),
+    )?;
+    std::fs::write(
+        codex_home.path().join(CONFIG_TOML_FILE),
+        format!(
+            r#"[debug.config_lockfile]
+load_path = '{}'
+allow_codex_version_mismatch = true
+save_fields_resolved_from_model_catalog = false
+"#,
+            lock_path.display()
+        ),
+    )?;
+
+    let config = ConfigBuilder::without_managed_config_for_tests()
+        .codex_home(codex_home.path().to_path_buf())
+        .fallback_cwd(Some(codex_home.path().to_path_buf()))
+        .build()
+        .await?;
+
+    assert!(config.config_lock_toml.is_some());
+    assert!(config.config_lock_allow_codex_version_mismatch);
+    assert!(!config.config_lock_save_fields_resolved_from_model_catalog);
 
     Ok(())
 }
@@ -8129,6 +8466,68 @@ hide_spawn_agent_metadata = true
     assert!(config.multi_agent_v2.hide_spawn_agent_metadata);
 
     Ok(())
+}
+
+#[tokio::test]
+async fn multi_agent_v2_usage_hint_templates_use_materialized_config_values() -> std::io::Result<()>
+{
+    let codex_home = TempDir::new()?;
+    std::fs::write(
+        codex_home.path().join(CONFIG_TOML_FILE),
+        r#"[features.multi_agent_v2]
+enabled = true
+usage_hint_text = "Limit {{ features.multi_agent_v2.max_concurrent_threads_per_session }}"
+root_agent_usage_hint_text = "Root {{ features.multi_agent_v2.max_concurrent_threads_per_session }}"
+subagent_usage_hint_text = "Subagent {{ features.multi_agent_v2.max_concurrent_threads_per_session }}"
+"#,
+    )?;
+
+    let config = ConfigBuilder::without_managed_config_for_tests()
+        .codex_home(codex_home.path().to_path_buf())
+        .fallback_cwd(Some(codex_home.path().to_path_buf()))
+        .build()
+        .await?;
+
+    assert_eq!(
+        config.multi_agent_v2.usage_hint_text.as_deref(),
+        Some("Limit 4")
+    );
+    assert_eq!(
+        config.multi_agent_v2.root_agent_usage_hint_text.as_deref(),
+        Some("Root 4")
+    );
+    assert_eq!(
+        config.multi_agent_v2.subagent_usage_hint_text.as_deref(),
+        Some("Subagent 4")
+    );
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn multi_agent_v2_usage_hint_templates_fail_when_placeholder_is_missing() {
+    let codex_home = TempDir::new().expect("create codex home");
+    std::fs::write(
+        codex_home.path().join(CONFIG_TOML_FILE),
+        r#"[features.multi_agent_v2]
+enabled = true
+usage_hint_text = "{{ features.multi_agent_v2.does_not_exist }}"
+"#,
+    )
+    .expect("write config");
+
+    let err = ConfigBuilder::without_managed_config_for_tests()
+        .codex_home(codex_home.path().to_path_buf())
+        .fallback_cwd(Some(codex_home.path().to_path_buf()))
+        .build()
+        .await
+        .expect_err("config load should fail");
+
+    assert!(
+        err.to_string()
+            .contains("features.multi_agent_v2.does_not_exist"),
+        "unexpected error: {err}",
+    );
 }
 
 #[tokio::test]

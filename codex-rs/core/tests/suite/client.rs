@@ -14,7 +14,6 @@ use codex_model_provider_info::ModelProviderInfo;
 use codex_model_provider_info::WireApi;
 use codex_model_provider_info::built_in_model_providers;
 use codex_models_manager::bundled_models_response;
-use codex_models_manager::collaboration_mode_presets::CollaborationModesConfig;
 use codex_otel::SessionTelemetry;
 use codex_otel::TelemetryAuthMode;
 use codex_protocol::ThreadId;
@@ -771,10 +770,15 @@ async fn includes_conversation_id_and_model_headers_in_request() {
     let installation_id =
         std::fs::read_to_string(test.codex_home_path().join(INSTALLATION_ID_FILENAME))
             .expect("read installation id");
+    let session_id_string = session_id.to_string();
 
-    assert_eq!(request_session_id, session_id.to_string());
+    assert_eq!(request_session_id, session_id_string);
     assert_eq!(request_originator, originator().value);
     assert_eq!(request_authorization, "Bearer Test API Key");
+    assert_eq!(
+        request_body["prompt_cache_key"].as_str(),
+        Some(session_id_string.as_str())
+    );
     assert_eq!(
         request_body["client_metadata"]["x-codex-installation-id"].as_str(),
         Some(installation_id.as_str())
@@ -1106,16 +1110,13 @@ async fn prefers_apikey_when_config_prefers_apikey_even_with_chatgpt_tokens() {
         &config,
         auth_manager,
         SessionSource::Exec,
-        CollaborationModesConfig {
-            default_mode_request_user_input: config
-                .features
-                .enabled(Feature::DefaultModeRequestUserInput),
-        },
         Arc::new(codex_exec_server::EnvironmentManager::default_for_tests()),
         /*analytics_events_client*/ None,
+        thread_store_from_config(&config, /*state_db*/ None),
+        /*state_db*/ None,
     );
     let NewThread { thread: codex, .. } = thread_manager
-        .start_thread(config.clone(), thread_store_from_config(&config))
+        .start_thread(config.clone())
         .await
         .expect("create new conversation");
 

@@ -62,9 +62,6 @@ pub(crate) struct StopOutput {
 #[derive(Debug, Clone)]
 pub(crate) struct PreCompactOutput {
     pub universal: UniversalOutput,
-    pub should_block: bool,
-    pub reason: Option<String>,
-    pub invalid_block_reason: Option<String>,
     pub invalid_reason: Option<String>,
 }
 
@@ -208,24 +205,8 @@ pub(crate) fn parse_post_tool_use(stdout: &str) -> Option<PostToolUseOutput> {
 pub(crate) fn parse_pre_compact(stdout: &str) -> Option<PreCompactOutput> {
     let wire: PreCompactCommandOutputWire = parse_json(stdout)?;
     let universal = UniversalOutput::from(wire.universal);
-    let should_block = matches!(wire.decision, Some(BlockDecisionWire::Block));
-    let invalid_block_reason = if should_block
-        && universal.continue_processing
-        && match wire.reason.as_deref() {
-            Some(reason) => reason.trim().is_empty(),
-            None => true,
-        } {
-        Some(invalid_block_message("PreCompact"))
-    } else if !should_block && universal.continue_processing && wire.reason.is_some() {
-        Some("PreCompact hook returned reason without decision".to_string())
-    } else {
-        None
-    };
     Some(PreCompactOutput {
         universal,
-        should_block: should_block && invalid_block_reason.is_none(),
-        reason: wire.reason,
-        invalid_block_reason,
         invalid_reason: None,
     })
 }

@@ -139,12 +139,6 @@ pub(crate) struct PermissionRequestCommandOutputWire {
 pub(crate) struct PreCompactCommandOutputWire {
     #[serde(flatten)]
     pub universal: HookUniversalOutputWire,
-    #[serde(default)]
-    pub decision: Option<BlockDecisionWire>,
-    /// Claude requires `reason` when `decision` is `block`; we enforce that
-    /// semantic rule during output parsing rather than in the JSON schema.
-    #[serde(default)]
-    pub reason: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
