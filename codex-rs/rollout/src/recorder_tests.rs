@@ -5,6 +5,9 @@ use crate::config::RolloutConfig;
 use chrono::TimeZone;
 use codex_protocol::ThreadId;
 use codex_protocol::config_types::ReasoningSummary as ReasoningSummaryConfig;
+use codex_protocol::models::FunctionCallOutputBody;
+use codex_protocol::models::FunctionCallOutputContentItem;
+use codex_protocol::models::FunctionCallOutputPayload;
 use codex_protocol::models::ResponseItem;
 use codex_protocol::protocol::AgentMessageEvent;
 use codex_protocol::protocol::AskForApproval;
@@ -67,6 +70,80 @@ fn write_session_file(root: &Path, ts: &str, uuid: Uuid) -> std::io::Result<Path
     });
     writeln!(file, "{user_event}")?;
     Ok(path)
+}
+
+#[test]
+fn sanitize_rollout_item_truncates_large_function_call_output() {
+    let large_output = format!("{}{}{}", "a".repeat(80_000), "middle", "z".repeat(80_000));
+    let item = RolloutItem::ResponseItem(ResponseItem::FunctionCallOutput {
+        call_id: "call_1".to_string(),
+        output: FunctionCallOutputPayload::from_text(large_output.clone()),
+    });
+
+    let sanitized = sanitize_rollout_item_for_persistence(item, EventPersistenceMode::Limited);
+
+    let RolloutItem::ResponseItem(ResponseItem::FunctionCallOutput { output, .. }) = sanitized
+    else {
+        panic!("expected function_call_output");
+    };
+    let FunctionCallOutputBody::Text(text) = output.body else {
+        panic!("expected text output");
+    };
+    assert!(
+        text.len() < large_output.len(),
+        "persisted function output should be truncated"
+    );
+    assert!(
+        text.contains("truncated"),
+        "truncated output should carry an explicit marker"
+    );
+    assert!(
+        text.starts_with('a') && text.ends_with('z'),
+        "truncated output should preserve prefix and suffix"
+    );
+}
+
+#[test]
+fn sanitize_rollout_item_truncates_structured_text_function_output() {
+    let large_text = format!("{}{}", "prefix ".repeat(20_000), "suffix");
+    let item = RolloutItem::ResponseItem(ResponseItem::CustomToolCallOutput {
+        call_id: "call_2".to_string(),
+        name: Some("custom".to_string()),
+        output: FunctionCallOutputPayload::from_content_items(vec![
+            FunctionCallOutputContentItem::InputText {
+                text: large_text.clone(),
+            },
+            FunctionCallOutputContentItem::InputImage {
+                image_url: "data:image/png;base64,abc".to_string(),
+                detail: None,
+            },
+        ]),
+    });
+
+    let sanitized = sanitize_rollout_item_for_persistence(item, EventPersistenceMode::Limited);
+
+    let RolloutItem::ResponseItem(ResponseItem::CustomToolCallOutput { output, .. }) = sanitized
+    else {
+        panic!("expected custom_tool_call_output");
+    };
+    let FunctionCallOutputBody::ContentItems(items) = output.body else {
+        panic!("expected structured output");
+    };
+    let FunctionCallOutputContentItem::InputText { text } = &items[0] else {
+        panic!("expected leading text item");
+    };
+    assert!(
+        text.len() < large_text.len(),
+        "persisted structured text output should be truncated"
+    );
+    assert!(
+        text.contains("truncated"),
+        "truncated structured text should carry an explicit marker"
+    );
+    assert!(
+        matches!(items[1], FunctionCallOutputContentItem::InputImage { .. }),
+        "non-text content items should be preserved"
+    );
 }
 
 #[tokio::test]

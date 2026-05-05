@@ -52,6 +52,10 @@ use crate::default_client::originator;
 use crate::state_db;
 use crate::state_db::StateDbHandle;
 use codex_git_utils::collect_git_info;
+use codex_protocol::models::FunctionCallOutputBody;
+use codex_protocol::models::FunctionCallOutputContentItem;
+use codex_protocol::models::FunctionCallOutputPayload;
+use codex_protocol::models::ResponseItem;
 use codex_protocol::protocol::EventMsg;
 use codex_protocol::protocol::GitInfo as ProtocolGitInfo;
 use codex_protocol::protocol::InitialHistory;
@@ -187,17 +191,20 @@ impl RolloutRecorderParams {
 }
 
 const PERSISTED_EXEC_AGGREGATED_OUTPUT_MAX_BYTES: usize = 10_000;
+const PERSISTED_RESPONSE_OUTPUT_MAX_BYTES: usize = 64 * 1024;
 
 fn sanitize_rollout_item_for_persistence(
     item: RolloutItem,
     mode: EventPersistenceMode,
 ) -> RolloutItem {
-    if mode != EventPersistenceMode::Extended {
-        return item;
-    }
-
     match item {
+        RolloutItem::ResponseItem(item) => {
+            RolloutItem::ResponseItem(sanitize_response_item_for_persistence(item))
+        }
         RolloutItem::EventMsg(EventMsg::ExecCommandEnd(mut event)) => {
+            if mode != EventPersistenceMode::Extended {
+                return RolloutItem::EventMsg(EventMsg::ExecCommandEnd(event));
+            }
             // Persist only a bounded aggregated summary of command output.
             event.aggregated_output = truncate_middle_chars(
                 &event.aggregated_output,
@@ -210,6 +217,52 @@ fn sanitize_rollout_item_for_persistence(
             RolloutItem::EventMsg(EventMsg::ExecCommandEnd(event))
         }
         _ => item,
+    }
+}
+
+fn sanitize_response_item_for_persistence(item: ResponseItem) -> ResponseItem {
+    match item {
+        ResponseItem::FunctionCallOutput {
+            call_id,
+            mut output,
+        } => {
+            truncate_function_call_output_payload(&mut output);
+            ResponseItem::FunctionCallOutput { call_id, output }
+        }
+        ResponseItem::CustomToolCallOutput {
+            call_id,
+            name,
+            mut output,
+        } => {
+            truncate_function_call_output_payload(&mut output);
+            ResponseItem::CustomToolCallOutput {
+                call_id,
+                name,
+                output,
+            }
+        }
+        other => other,
+    }
+}
+
+fn truncate_function_call_output_payload(output: &mut FunctionCallOutputPayload) {
+    match &mut output.body {
+        FunctionCallOutputBody::Text(text) => {
+            truncate_text_for_persisted_response_output(text);
+        }
+        FunctionCallOutputBody::ContentItems(items) => {
+            for item in items {
+                if let FunctionCallOutputContentItem::InputText { text } = item {
+                    truncate_text_for_persisted_response_output(text);
+                }
+            }
+        }
+    }
+}
+
+fn truncate_text_for_persisted_response_output(text: &mut String) {
+    if text.len() > PERSISTED_RESPONSE_OUTPUT_MAX_BYTES {
+        *text = truncate_middle_chars(text, PERSISTED_RESPONSE_OUTPUT_MAX_BYTES);
     }
 }
 
