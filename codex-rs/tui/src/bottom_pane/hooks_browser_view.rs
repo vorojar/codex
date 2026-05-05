@@ -1344,7 +1344,7 @@ mod tests {
         view.handle_key_event(KeyEvent::from(KeyCode::Char('t')));
 
         let hook = view.hooks.first().expect("trusted hook");
-        assert_eq!(hook.enabled, false);
+        assert!(!hook.enabled);
         assert_eq!(hook.trust_status, HookTrustStatus::Trusted);
         match rx.try_recv().expect("trust event") {
             AppEvent::TrustHook {
