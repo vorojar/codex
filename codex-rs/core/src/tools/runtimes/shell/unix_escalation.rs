@@ -35,6 +35,7 @@ use codex_protocol::exec_output::ExecToolCallOutput;
 use codex_protocol::exec_output::StreamOutput;
 use codex_protocol::models::AdditionalPermissionProfile;
 use codex_protocol::models::PermissionProfile;
+use codex_protocol::models::SandboxEnforcement;
 use codex_protocol::permissions::FileSystemSandboxPolicy;
 use codex_protocol::permissions::NetworkSandboxPolicy;
 use codex_protocol::protocol::AskForApproval;
@@ -364,20 +365,47 @@ impl CoreShellActionProvider {
         })
     }
 
+    /// Returns the widened profile that keeps admin deny-read overlays, if any.
+    ///
+    /// User-selected deny entries may be bypassed by trusted unsandboxed
+    /// execution. Admin deny-read requirements are installed as normalizers on
+    /// the constrained profile, so they reappear when a maximally widened
+    /// managed profile is normalized.
+    fn widened_permission_profile_preserving_managed_deny_read(&self) -> Option<PermissionProfile> {
+        let widened_permission_profile = self
+            .turn
+            .config
+            .permissions
+            .permission_profile
+            .normalized_value(
+                PermissionProfile::from_runtime_permissions_with_enforcement(
+                    SandboxEnforcement::Managed,
+                    &FileSystemSandboxPolicy::unrestricted(),
+                    self.permission_profile.network_sandbox_policy(),
+                ),
+            );
+        widened_permission_profile
+            .file_system_sandbox_policy()
+            .has_denied_read_restrictions()
+            .then_some(widened_permission_profile)
+    }
+
     fn shell_request_escalation_execution(
+        &self,
         sandbox_permissions: SandboxPermissions,
-        permission_profile: &PermissionProfile,
         additional_permissions: Option<&AdditionalPermissionProfile>,
     ) -> EscalationExecution {
-        let preserve_deny_read_across_escalation = permission_profile
-            .file_system_sandbox_policy()
-            .preserves_deny_read_across_escalation();
         match sandbox_permissions {
             SandboxPermissions::UseDefault => EscalationExecution::TurnDefault,
-            SandboxPermissions::RequireEscalated if preserve_deny_read_across_escalation => {
-                EscalationExecution::TurnDefault
-            }
-            SandboxPermissions::RequireEscalated => EscalationExecution::Unsandboxed,
+            SandboxPermissions::RequireEscalated => self
+                .widened_permission_profile_preserving_managed_deny_read()
+                .map_or(EscalationExecution::Unsandboxed, |permission_profile| {
+                    EscalationExecution::Permissions(
+                        EscalationPermissions::ResolvedPermissionProfile(
+                            ResolvedPermissionProfile { permission_profile },
+                        ),
+                    )
+                }),
             SandboxPermissions::WithAdditionalPermissions => additional_permissions
                 .map(|_| {
                     // Shell request additional permissions were already normalized and
@@ -626,17 +654,17 @@ impl EscalationPolicy for CoreShellActionProvider {
             DecisionSource::UnmatchedCommandFallback
         };
         let escalation_execution = match decision_source {
-            DecisionSource::PrefixRule
-                if self
-                    .file_system_sandbox_policy
-                    .preserves_deny_read_across_escalation() =>
-            {
-                EscalationExecution::TurnDefault
-            }
-            DecisionSource::PrefixRule => EscalationExecution::Unsandboxed,
-            DecisionSource::UnmatchedCommandFallback => Self::shell_request_escalation_execution(
+            DecisionSource::PrefixRule => self
+                .widened_permission_profile_preserving_managed_deny_read()
+                .map_or(EscalationExecution::Unsandboxed, |permission_profile| {
+                    EscalationExecution::Permissions(
+                        EscalationPermissions::ResolvedPermissionProfile(
+                            ResolvedPermissionProfile { permission_profile },
+                        ),
+                    )
+                }),
+            DecisionSource::UnmatchedCommandFallback => self.shell_request_escalation_execution(
                 self.sandbox_permissions,
-                &self.permission_profile,
                 self.prompt_permissions.as_ref(),
             ),
         };

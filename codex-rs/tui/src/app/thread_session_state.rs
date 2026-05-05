@@ -264,7 +264,6 @@ mod tests {
                         access: FileSystemAccessMode::None,
                     },
                 ],
-                preserve_deny_read_across_escalation: false,
                 glob_scan_max_depth: None,
             },
         }

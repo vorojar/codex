@@ -2006,9 +2006,6 @@
                 "null"
               ]
             },
-            "preserveDenyReadAcrossEscalation": {
-              "type": "boolean"
-            },
             "type": {
               "enum": [
                 "restricted"

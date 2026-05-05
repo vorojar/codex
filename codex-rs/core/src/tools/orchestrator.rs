@@ -31,6 +31,9 @@ use codex_otel::ToolDecisionSource;
 use codex_protocol::error::CodexErr;
 use codex_protocol::error::SandboxErr;
 use codex_protocol::exec_output::ExecToolCallOutput;
+use codex_protocol::models::PermissionProfile;
+use codex_protocol::models::SandboxEnforcement;
+use codex_protocol::permissions::FileSystemSandboxPolicy;
 use codex_protocol::protocol::AskForApproval;
 use codex_protocol::protocol::NetworkPolicyRuleAction;
 use codex_protocol::protocol::ReviewDecision;
@@ -214,28 +217,58 @@ impl ToolOrchestrator {
 
         // 2) First attempt under the selected sandbox.
         let managed_network_active = turn_ctx.network.is_some();
-        let initial_sandbox = match tool.sandbox_mode_for_first_attempt(req) {
-            SandboxOverride::BypassSandboxFirstAttempt
-                if !file_system_sandbox_policy.preserves_deny_read_across_escalation() =>
-            {
-                SandboxType::None
-            }
-            SandboxOverride::BypassSandboxFirstAttempt | SandboxOverride::NoOverride => {
-                self.sandbox.select_initial(
-                    &file_system_sandbox_policy,
+        // Managed requirements are encoded as permission-profile normalizers.
+        // Probe a maximally widened managed profile through the same constraint
+        // path to see whether an admin deny-read overlay must survive sandbox
+        // bypass and retry flows.
+        let widened_permission_profile = turn_ctx
+            .config
+            .permissions
+            .permission_profile
+            .normalized_value(
+                PermissionProfile::from_runtime_permissions_with_enforcement(
+                    SandboxEnforcement::Managed,
+                    &FileSystemSandboxPolicy::unrestricted(),
                     network_sandbox_policy,
-                    tool.sandbox_preference(),
-                    turn_ctx.windows_sandbox_level,
-                    managed_network_active,
-                )
-            }
-        };
+                ),
+            );
+        let widened_file_system_sandbox_policy =
+            widened_permission_profile.file_system_sandbox_policy();
+        let widened_network_sandbox_policy = widened_permission_profile.network_sandbox_policy();
+        let widening_preserves_deny_read =
+            widened_file_system_sandbox_policy.has_denied_read_restrictions();
+        let (initial_sandbox, initial_permission_profile) =
+            match tool.sandbox_mode_for_first_attempt(req) {
+                SandboxOverride::BypassSandboxFirstAttempt if !widening_preserves_deny_read => {
+                    (SandboxType::None, turn_ctx.permission_profile.clone())
+                }
+                SandboxOverride::BypassSandboxFirstAttempt => (
+                    self.sandbox.select_initial(
+                        &widened_file_system_sandbox_policy,
+                        widened_network_sandbox_policy,
+                        tool.sandbox_preference(),
+                        turn_ctx.windows_sandbox_level,
+                        managed_network_active,
+                    ),
+                    widened_permission_profile.clone(),
+                ),
+                SandboxOverride::NoOverride => (
+                    self.sandbox.select_initial(
+                        &file_system_sandbox_policy,
+                        network_sandbox_policy,
+                        tool.sandbox_preference(),
+                        turn_ctx.windows_sandbox_level,
+                        managed_network_active,
+                    ),
+                    turn_ctx.permission_profile.clone(),
+                ),
+            };
 
         // Platform-specific flag gating is handled by SandboxManager::select_initial.
         let use_legacy_landlock = turn_ctx.features.use_legacy_landlock();
         let initial_attempt = SandboxAttempt {
             sandbox: initial_sandbox,
-            permissions: &turn_ctx.permission_profile,
+            permissions: &initial_permission_profile,
             enforce_managed_network: managed_network_active,
             manager: &self.sandbox,
             sandbox_cwd: &turn_ctx.cwd,
@@ -283,12 +316,6 @@ impl ToolOrchestrator {
                     })));
                 }
                 if !tool.escalate_on_failure() {
-                    return Err(ToolError::Codex(CodexErr::Sandbox(SandboxErr::Denied {
-                        output,
-                        network_policy_decision,
-                    })));
-                }
-                if file_system_sandbox_policy.preserves_deny_read_across_escalation() {
                     return Err(ToolError::Codex(CodexErr::Sandbox(SandboxErr::Denied {
                         output,
                         network_policy_decision,
@@ -357,13 +384,32 @@ impl ToolOrchestrator {
                         .await?;
                 }
 
+                let (
+                    escalated_sandbox,
+                    escalated_permission_profile,
+                    escalated_codex_linux_sandbox_exe,
+                ) = if widening_preserves_deny_read {
+                    (
+                        self.sandbox.select_initial(
+                            &widened_file_system_sandbox_policy,
+                            widened_network_sandbox_policy,
+                            tool.sandbox_preference(),
+                            turn_ctx.windows_sandbox_level,
+                            managed_network_active,
+                        ),
+                        widened_permission_profile,
+                        turn_ctx.codex_linux_sandbox_exe.as_ref(),
+                    )
+                } else {
+                    (SandboxType::None, turn_ctx.permission_profile.clone(), None)
+                };
                 let escalated_attempt = SandboxAttempt {
-                    sandbox: SandboxType::None,
-                    permissions: &turn_ctx.permission_profile,
+                    sandbox: escalated_sandbox,
+                    permissions: &escalated_permission_profile,
                     enforce_managed_network: managed_network_active,
                     manager: &self.sandbox,
                     sandbox_cwd: &turn_ctx.cwd,
-                    codex_linux_sandbox_exe: None,
+                    codex_linux_sandbox_exe: escalated_codex_linux_sandbox_exe,
                     use_legacy_landlock,
                     windows_sandbox_level: turn_ctx.windows_sandbox_level,
                     windows_sandbox_private_desktop: turn_ctx

@@ -194,10 +194,6 @@ pub enum FileSystemSandboxKind {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
 pub struct FileSystemSandboxPolicy {
     pub kind: FileSystemSandboxKind,
-    /// Keep deny-read entries active when a command would otherwise leave the
-    /// sandbox during escalation.
-    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
-    pub preserve_deny_read_across_escalation: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub glob_scan_max_depth: Option<usize>,
@@ -320,7 +316,6 @@ impl Default for FileSystemSandboxPolicy {
     fn default() -> Self {
         Self {
             kind: FileSystemSandboxKind::Restricted,
-            preserve_deny_read_across_escalation: false,
             glob_scan_max_depth: None,
             entries: vec![FileSystemSandboxEntry {
                 path: FileSystemPath::Special {
@@ -336,7 +331,6 @@ impl FileSystemSandboxPolicy {
     pub fn unrestricted() -> Self {
         Self {
             kind: FileSystemSandboxKind::Unrestricted,
-            preserve_deny_read_across_escalation: false,
             glob_scan_max_depth: None,
             entries: Vec::new(),
         }
@@ -345,7 +339,6 @@ impl FileSystemSandboxPolicy {
     pub fn external_sandbox() -> Self {
         Self {
             kind: FileSystemSandboxKind::ExternalSandbox,
-            preserve_deny_read_across_escalation: false,
             glob_scan_max_depth: None,
             entries: Vec::new(),
         }
@@ -354,7 +347,6 @@ impl FileSystemSandboxPolicy {
     pub fn restricted(entries: Vec<FileSystemSandboxEntry>) -> Self {
         Self {
             kind: FileSystemSandboxKind::Restricted,
-            preserve_deny_read_across_escalation: false,
             glob_scan_max_depth: None,
             entries,
         }
@@ -379,10 +371,6 @@ impl FileSystemSandboxPolicy {
                 .any(|entry| entry.access == FileSystemAccessMode::None)
     }
 
-    pub fn preserves_deny_read_across_escalation(&self) -> bool {
-        self.preserve_deny_read_across_escalation && self.has_denied_read_restrictions()
-    }
-
     pub fn from_legacy_sandbox_policy_preserving_deny_entries(
         sandbox_policy: &SandboxPolicy,
         cwd: &Path,
@@ -393,8 +381,6 @@ impl FileSystemSandboxPolicy {
             return rebuilt;
         }
         rebuilt.glob_scan_max_depth = existing.glob_scan_max_depth;
-        rebuilt.preserve_deny_read_across_escalation =
-            existing.preserve_deny_read_across_escalation;
 
         for deny_entry in existing
             .entries
@@ -432,7 +418,6 @@ impl FileSystemSandboxPolicy {
         if self.glob_scan_max_depth.is_none() {
             self.glob_scan_max_depth = existing.glob_scan_max_depth;
         }
-        self.preserve_deny_read_across_escalation |= existing.preserve_deny_read_across_escalation;
 
         for deny_entry in existing
             .entries
@@ -2777,13 +2762,12 @@ mod tests {
     #[test]
     fn legacy_bridge_preserves_explicit_deny_entries() {
         let denied = AbsolutePathBuf::try_from("/tmp/private").expect("absolute path");
-        let mut existing = FileSystemSandboxPolicy::restricted(vec![FileSystemSandboxEntry {
+        let existing = FileSystemSandboxPolicy::restricted(vec![FileSystemSandboxEntry {
             path: FileSystemPath::Path {
                 path: denied.clone(),
             },
             access: FileSystemAccessMode::None,
         }]);
-        existing.preserve_deny_read_across_escalation = true;
 
         let rebuilt = FileSystemSandboxPolicy::from_legacy_sandbox_policy_preserving_deny_entries(
             &SandboxPolicy::new_workspace_write_policy(),
@@ -2801,10 +2785,6 @@ mod tests {
             }),
             "expected explicit deny entry to be preserved"
         );
-        assert!(
-            rebuilt.preserve_deny_read_across_escalation,
-            "expected escalation-preservation marker to be preserved"
-        );
     }
 
     #[test]
@@ -2812,7 +2792,6 @@ mod tests {
         let deny_entry = unreadable_glob_entry("/tmp/project/**/*.env".to_string());
         let mut existing = FileSystemSandboxPolicy::restricted(vec![deny_entry.clone()]);
         existing.glob_scan_max_depth = Some(2);
-        existing.preserve_deny_read_across_escalation = true;
         let mut replacement = FileSystemSandboxPolicy::unrestricted();
 
         replacement.preserve_deny_read_restrictions_from(&existing);
@@ -2827,7 +2806,6 @@ mod tests {
             deny_entry,
         ]);
         expected.glob_scan_max_depth = Some(2);
-        expected.preserve_deny_read_across_escalation = true;
         assert_eq!(replacement, expected);
     }
 

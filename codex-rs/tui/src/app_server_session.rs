@@ -1687,7 +1687,6 @@ mod tests {
                         access: FileSystemAccessMode::Write,
                     },
                 ],
-                preserve_deny_read_across_escalation: false,
                 glob_scan_max_depth: None,
             },
         }
@@ -1719,7 +1718,6 @@ mod tests {
                         access: FileSystemAccessMode::Write,
                     },
                 ],
-                preserve_deny_read_across_escalation: false,
                 glob_scan_max_depth: None,
             },
         }
@@ -1906,7 +1904,6 @@ mod tests {
                         access: FileSystemAccessMode::None,
                     },
                 ],
-                preserve_deny_read_across_escalation: false,
                 glob_scan_max_depth: None,
             },
             network: PermissionProfileNetworkPermissions { enabled: false },

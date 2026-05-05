@@ -138,6 +138,16 @@ impl<T: Send + Sync> Constrained<T> {
         (self.validator)(candidate)
     }
 
+    /// Returns the value this constraint would store after normalization,
+    /// without mutating the current value.
+    pub fn normalized_value(&self, value: T) -> T {
+        if let Some(normalizer) = &self.normalizer {
+            normalizer(value)
+        } else {
+            value
+        }
+    }
+
     /// Composes an additional validator onto the current constraint.
     ///
     /// The existing value must satisfy the combined validator before it is installed.
@@ -159,12 +169,40 @@ impl<T: Send + Sync> Constrained<T> {
         Ok(())
     }
 
+    /// Composes an additional normalizer onto the current constraint.
+    ///
+    /// The current value is normalized immediately so callers never observe a
+    /// value that predates the newly installed rule.
+    pub fn add_normalizer(
+        &mut self,
+        normalizer: impl Fn(T) -> T + Send + Sync + 'static,
+    ) -> ConstraintResult<()>
+    where
+        T: Clone + 'static,
+    {
+        let existing_normalizer = self.normalizer.clone();
+        let additional_normalizer: Arc<ConstraintNormalizer<T>> = Arc::new(normalizer);
+        let additional_normalizer_for_combined = additional_normalizer.clone();
+        let combined_normalizer: Arc<ConstraintNormalizer<T>> = Arc::new(move |value| {
+            let value = if let Some(existing_normalizer) = &existing_normalizer {
+                existing_normalizer(value)
+            } else {
+                value
+            };
+            additional_normalizer_for_combined(value)
+        });
+
+        // `self.value` already reflects the previously installed normalizer,
+        // so only apply the newly added rule when updating the stored value.
+        let normalized_value = additional_normalizer(self.value.clone());
+        (self.validator)(&normalized_value)?;
+        self.value = normalized_value;
+        self.normalizer = Some(combined_normalizer);
+        Ok(())
+    }
+
     pub fn set(&mut self, value: T) -> ConstraintResult<()> {
-        let value = if let Some(normalizer) = &self.normalizer {
-            normalizer(value)
-        } else {
-            value
-        };
+        let value = self.normalized_value(value);
         (self.validator)(&value)?;
         self.value = value;
         Ok(())
@@ -245,6 +283,19 @@ mod tests {
         assert_eq!(constrained.value(), 0);
         constrained.set(/*value*/ 10)?;
         assert_eq!(constrained.value(), 10);
+        Ok(())
+    }
+
+    #[test]
+    fn constrained_add_normalizer_composes_with_existing_normalizer() -> anyhow::Result<()> {
+        let mut constrained = Constrained::normalized(/*initial_value*/ 3, |value| value * 2)?;
+        constrained.add_normalizer(|value| value + 1)?;
+
+        assert_eq!(constrained.value(), 7);
+        assert_eq!(constrained.normalized_value(4), 9);
+
+        constrained.set(5)?;
+        assert_eq!(constrained.value(), 11);
         Ok(())
     }
 

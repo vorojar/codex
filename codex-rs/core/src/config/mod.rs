@@ -1750,8 +1750,7 @@ fn apply_managed_filesystem_constraints(
     file_system_sandbox_policy: &mut FileSystemSandboxPolicy,
     filesystem_constraints: &codex_config::FilesystemConstraints,
 ) {
-    file_system_sandbox_policy.preserve_deny_read_across_escalation |=
-        !filesystem_constraints.deny_read.is_empty();
+    let mut managed_deny_read_policy = FileSystemSandboxPolicy::restricted(Vec::new());
     for deny_read in &filesystem_constraints.deny_read {
         let deny_entry = if deny_read.contains_glob() {
             codex_protocol::permissions::FileSystemSandboxEntry {
@@ -1769,14 +1768,34 @@ fn apply_managed_filesystem_constraints(
                 access: codex_protocol::permissions::FileSystemAccessMode::None,
             }
         };
-        if !file_system_sandbox_policy
+        if !managed_deny_read_policy
             .entries
             .iter()
             .any(|existing| existing == &deny_entry)
         {
-            file_system_sandbox_policy.entries.push(deny_entry);
+            managed_deny_read_policy.entries.push(deny_entry);
         }
     }
+    file_system_sandbox_policy.preserve_deny_read_restrictions_from(&managed_deny_read_policy);
+}
+
+fn apply_managed_filesystem_constraints_to_permission_profile(
+    permission_profile: PermissionProfile,
+    filesystem_constraints: &codex_config::FilesystemConstraints,
+) -> PermissionProfile {
+    if !matches!(permission_profile, PermissionProfile::Managed { .. }) {
+        return permission_profile;
+    }
+
+    let enforcement = permission_profile.enforcement();
+    let (mut file_system_sandbox_policy, network_sandbox_policy) =
+        permission_profile.to_runtime_permissions();
+    apply_managed_filesystem_constraints(&mut file_system_sandbox_policy, filesystem_constraints);
+    PermissionProfile::from_runtime_permissions_with_enforcement(
+        enforcement,
+        &file_system_sandbox_policy,
+        network_sandbox_policy,
+    )
 }
 
 /// Optional overrides for user configuration (e.g., from CLI flags).
@@ -2839,6 +2858,17 @@ impl Config {
         }) = filesystem_requirements.as_ref()
             && !filesystem_requirements.deny_read.is_empty()
         {
+            let filesystem_requirements_for_normalizer = filesystem_requirements.clone();
+            constrained_permission_profile
+                .value
+                .add_normalizer(move |permission_profile| {
+                    apply_managed_filesystem_constraints_to_permission_profile(
+                        permission_profile,
+                        &filesystem_requirements_for_normalizer,
+                    )
+                })
+                .map_err(std::io::Error::from)?;
+
             let requirement_source = filesystem_requirements_source.clone();
             constrained_permission_profile
                 .value
@@ -2930,16 +2960,6 @@ impl Config {
         if effective_permission_profile != original_permission_profile {
             effective_file_system_sandbox_policy
                 .preserve_deny_read_restrictions_from(&file_system_sandbox_policy);
-        }
-        if let Some(Sourced {
-            value: filesystem_requirements,
-            ..
-        }) = filesystem_requirements.as_ref()
-        {
-            apply_managed_filesystem_constraints(
-                &mut effective_file_system_sandbox_policy,
-                filesystem_requirements,
-            );
         }
         let effective_file_system_sandbox_policy = effective_file_system_sandbox_policy
             .with_additional_readable_roots(resolved_cwd.as_path(), &helper_readable_roots);

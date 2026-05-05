@@ -1071,7 +1071,6 @@ fn root_read_only_permission_profile() -> PermissionProfile {
                 },
                 access: FileSystemAccessMode::Read,
             }],
-            preserve_deny_read_across_escalation: false,
             glob_scan_max_depth: None,
         },
     }

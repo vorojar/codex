@@ -19,6 +19,7 @@ use codex_hooks::HooksConfig;
 use codex_protocol::models::AdditionalPermissionProfile;
 use codex_protocol::models::FileSystemPermissions;
 use codex_protocol::models::PermissionProfile;
+use codex_protocol::models::SandboxEnforcement;
 use codex_protocol::permissions::FileSystemAccessMode;
 use codex_protocol::permissions::FileSystemPath;
 use codex_protocol::permissions::FileSystemSandboxEntry;
@@ -69,6 +70,33 @@ fn read_only_file_system_sandbox_policy() -> FileSystemSandboxPolicy {
 
 fn permission_profile_from_sandbox_policy(sandbox_policy: &SandboxPolicy) -> PermissionProfile {
     PermissionProfile::from_legacy_sandbox_policy(sandbox_policy)
+}
+
+fn add_managed_deny_read_normalizer(
+    turn_context: &mut crate::session::turn_context::TurnContext,
+    deny_entry: FileSystemSandboxEntry,
+) {
+    Arc::make_mut(&mut turn_context.config)
+        .permissions
+        .permission_profile
+        .add_normalizer(move |permission_profile| {
+            if !matches!(permission_profile, PermissionProfile::Managed { .. }) {
+                return permission_profile;
+            }
+
+            let enforcement = permission_profile.enforcement();
+            let (mut file_system_sandbox_policy, network_sandbox_policy) =
+                permission_profile.to_runtime_permissions();
+            file_system_sandbox_policy.preserve_deny_read_restrictions_from(
+                &FileSystemSandboxPolicy::restricted(vec![deny_entry.clone()]),
+            );
+            PermissionProfile::from_runtime_permissions_with_enforcement(
+                enforcement,
+                &file_system_sandbox_policy,
+                network_sandbox_policy,
+            )
+        })
+        .expect("install managed deny-read normalizer");
 }
 
 fn test_sandbox_cwd() -> AbsolutePathBuf {
@@ -264,8 +292,9 @@ fn map_exec_result_preserves_stdout_and_stderr() {
     assert_eq!(out.aggregated_output.text, "outerr");
 }
 
-#[test]
-fn shell_request_escalation_execution_is_explicit() {
+#[tokio::test]
+async fn shell_request_escalation_execution_is_explicit() {
+    let (session, turn_context) = make_session_and_context().await;
     let requested_permissions = AdditionalPermissionProfile {
         file_system: Some(FileSystemPermissions::from_read_write_roots(
             /*read*/ None,
@@ -275,7 +304,7 @@ fn shell_request_escalation_execution_is_explicit() {
         )),
         ..Default::default()
     };
-    let mut file_system_sandbox_policy = FileSystemSandboxPolicy::restricted(vec![
+    let file_system_sandbox_policy = FileSystemSandboxPolicy::restricted(vec![
         FileSystemSandboxEntry {
             path: FileSystemPath::Path {
                 path: AbsolutePathBuf::from_absolute_path("/tmp/original/output").unwrap(),
@@ -294,41 +323,39 @@ fn shell_request_escalation_execution_is_explicit() {
         &file_system_sandbox_policy,
         network_sandbox_policy,
     );
+    let provider = CoreShellActionProvider {
+        policy: std::sync::Arc::new(RwLock::new(Default::default())),
+        session: std::sync::Arc::new(session),
+        turn: std::sync::Arc::new(turn_context),
+        call_id: "shell-escalation-execution".to_string(),
+        tool_name: GuardianCommandSource::Shell,
+        approval_policy: AskForApproval::OnRequest,
+        permission_profile: permission_profile.clone(),
+        file_system_sandbox_policy,
+        sandbox_policy_cwd: test_sandbox_cwd(),
+        sandbox_permissions: SandboxPermissions::UseDefault,
+        approval_sandbox_permissions: SandboxPermissions::UseDefault,
+        prompt_permissions: None,
+        stopwatch: codex_shell_escalation::Stopwatch::new(Duration::from_secs(1)),
+    };
 
     assert_eq!(
-        CoreShellActionProvider::shell_request_escalation_execution(
+        provider.shell_request_escalation_execution(
             crate::sandboxing::SandboxPermissions::UseDefault,
-            &permission_profile,
             /*additional_permissions*/ None,
         ),
         EscalationExecution::TurnDefault,
     );
     assert_eq!(
-        CoreShellActionProvider::shell_request_escalation_execution(
+        provider.shell_request_escalation_execution(
             crate::sandboxing::SandboxPermissions::RequireEscalated,
-            &permission_profile,
             /*additional_permissions*/ None,
         ),
         EscalationExecution::Unsandboxed,
     );
-
-    file_system_sandbox_policy.preserve_deny_read_across_escalation = true;
-    let escalation_preserving_permission_profile = PermissionProfile::from_runtime_permissions(
-        &file_system_sandbox_policy,
-        network_sandbox_policy,
-    );
     assert_eq!(
-        CoreShellActionProvider::shell_request_escalation_execution(
-            crate::sandboxing::SandboxPermissions::RequireEscalated,
-            &escalation_preserving_permission_profile,
-            /*additional_permissions*/ None,
-        ),
-        EscalationExecution::TurnDefault,
-    );
-    assert_eq!(
-        CoreShellActionProvider::shell_request_escalation_execution(
+        provider.shell_request_escalation_execution(
             crate::sandboxing::SandboxPermissions::WithAdditionalPermissions,
-            &permission_profile,
             Some(&requested_permissions),
         ),
         EscalationExecution::Permissions(EscalationPermissions::ResolvedPermissionProfile(
@@ -414,8 +441,17 @@ async fn prefix_rule_preserves_managed_deny_read_escalation() -> anyhow::Result<
             },
             access: FileSystemAccessMode::None,
         });
-    file_system_sandbox_policy.preserve_deny_read_across_escalation = true;
     turn_context.approval_policy = Constrained::allow_any(AskForApproval::OnRequest);
+    add_managed_deny_read_normalizer(
+        &mut turn_context,
+        FileSystemSandboxEntry {
+            path: FileSystemPath::Path {
+                path: AbsolutePathBuf::from_absolute_path("/tmp/private")
+                    .expect("/tmp/private is absolute"),
+            },
+            access: FileSystemAccessMode::None,
+        },
+    );
     turn_context.permission_profile = PermissionProfile::from_runtime_permissions(
         &file_system_sandbox_policy,
         NetworkSandboxPolicy::Restricted,
@@ -450,7 +486,29 @@ async fn prefix_rule_preserves_managed_deny_read_escalation() -> anyhow::Result<
 
     assert_eq!(
         action,
-        codex_shell_escalation::EscalationDecision::Escalate(EscalationExecution::TurnDefault)
+        codex_shell_escalation::EscalationDecision::Escalate(EscalationExecution::Permissions(
+            EscalationPermissions::ResolvedPermissionProfile(ResolvedPermissionProfile {
+                permission_profile: PermissionProfile::from_runtime_permissions_with_enforcement(
+                    SandboxEnforcement::Managed,
+                    &FileSystemSandboxPolicy::restricted(vec![
+                        FileSystemSandboxEntry {
+                            path: FileSystemPath::Special {
+                                value: FileSystemSpecialPath::Root,
+                            },
+                            access: FileSystemAccessMode::Write,
+                        },
+                        FileSystemSandboxEntry {
+                            path: FileSystemPath::Path {
+                                path: AbsolutePathBuf::from_absolute_path("/tmp/private")
+                                    .expect("/tmp/private is absolute"),
+                            },
+                            access: FileSystemAccessMode::None,
+                        },
+                    ]),
+                    NetworkSandboxPolicy::Restricted,
+                ),
+            },)
+        ),)
     );
 
     Ok(())

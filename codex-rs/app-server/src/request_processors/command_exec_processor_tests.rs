@@ -26,7 +26,6 @@ fn command_profile_preserves_configured_deny_read_restrictions() {
     let mut configured_file_system_sandbox_policy =
         FileSystemSandboxPolicy::restricted(vec![deny_entry.clone()]);
     configured_file_system_sandbox_policy.glob_scan_max_depth = Some(2);
-    configured_file_system_sandbox_policy.preserve_deny_read_across_escalation = true;
 
     CommandExecRequestProcessor::preserve_configured_deny_read_restrictions(
         &mut file_system_sandbox_policy,
@@ -35,6 +34,5 @@ fn command_profile_preserves_configured_deny_read_restrictions() {
 
     let mut expected = FileSystemSandboxPolicy::restricted(vec![readable_entry, deny_entry]);
     expected.glob_scan_max_depth = Some(2);
-    expected.preserve_deny_read_across_escalation = true;
     assert_eq!(file_system_sandbox_policy, expected);
 }
