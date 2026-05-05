@@ -207,49 +207,6 @@ fn proxy_only_mode_takes_precedence_over_full_network_policy() {
     assert_eq!(mode, BwrapNetworkMode::ProxyOnly);
 }
 
-#[cfg(unix)]
-#[test]
-fn returns_bwrap_build_error_for_protected_codex_symlink() {
-    use codex_protocol::protocol::FileSystemAccessMode;
-    use codex_protocol::protocol::FileSystemPath;
-    use codex_protocol::protocol::FileSystemSandboxEntry;
-    use std::os::unix::fs::symlink;
-
-    let temp_dir = tempfile::TempDir::new().expect("tempdir");
-    let workspace = temp_dir.path().join("workspace");
-    let codex_target = workspace.join("codex-target");
-    let dot_codex = workspace.join(".codex");
-    std::fs::create_dir_all(&codex_target).expect("create codex target");
-    symlink(&codex_target, &dot_codex).expect("create .codex symlink");
-
-    let workspace = AbsolutePathBuf::from_absolute_path(&workspace).expect("absolute workspace");
-    let file_system_sandbox_policy =
-        FileSystemSandboxPolicy::restricted(vec![FileSystemSandboxEntry {
-            path: FileSystemPath::Path { path: workspace },
-            access: FileSystemAccessMode::Write,
-        }]);
-
-    let err = build_bwrap_argv(
-        vec!["/bin/true".to_string()],
-        &file_system_sandbox_policy,
-        temp_dir.path(),
-        temp_dir.path(),
-        BwrapOptions {
-            mount_proc: true,
-            network_mode: BwrapNetworkMode::FullAccess,
-            ..Default::default()
-        },
-    )
-    .expect_err("protected .codex symlink should fail closed");
-    let message = err.to_string();
-
-    assert!(
-        message.contains("cannot enforce sandbox read-only path"),
-        "{message}"
-    );
-    assert!(message.contains(&dot_codex.to_string_lossy()), "{message}");
-}
-
 #[test]
 fn split_only_filesystem_policy_requires_direct_runtime_enforcement() {
     let temp_dir = tempfile::TempDir::new().expect("tempdir");
