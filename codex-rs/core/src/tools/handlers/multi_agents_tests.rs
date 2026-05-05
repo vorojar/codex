@@ -1736,8 +1736,7 @@ async fn spawn_agent_reapplies_runtime_sandbox_after_role_config() {
     turn.approval_policy
         .set(AskForApproval::OnRequest)
         .expect("approval policy should be set");
-    turn.permission_profile =
-        codex_config::Constrained::allow_any(expected_permission_profile.clone());
+    turn.permission_profile = expected_permission_profile.clone();
     assert_ne!(
         expected_permission_profile,
         turn.config.permissions.permission_profile(),
@@ -3399,7 +3398,7 @@ async fn build_agent_spawn_config_uses_turn_context_values() {
         &file_system_sandbox_policy,
         network_sandbox_policy,
     );
-    turn.permission_profile = codex_config::Constrained::allow_any(permission_profile.clone());
+    turn.permission_profile = permission_profile.clone();
     turn.approval_policy
         .set(AskForApproval::OnRequest)
         .expect("approval policy set");

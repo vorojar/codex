@@ -99,6 +99,7 @@ fn root_write_managed_profile_with_enabled_network_is_untagged() {
                 },
                 access: FileSystemAccessMode::Write,
             }],
+            preserve_deny_read_across_escalation: false,
             glob_scan_max_depth: None,
         },
         network: NetworkSandboxPolicy::Enabled,
@@ -142,6 +143,7 @@ fn profile_policy_tag_reports_closest_legacy_mode() {
     let profile = PermissionProfile::from_runtime_permissions(
         &FileSystemSandboxPolicy {
             kind: FileSystemSandboxKind::Restricted,
+            preserve_deny_read_across_escalation: false,
             glob_scan_max_depth: None,
             entries: vec![FileSystemSandboxEntry {
                 path: FileSystemPath::Path {

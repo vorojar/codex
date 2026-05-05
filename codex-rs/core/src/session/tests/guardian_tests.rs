@@ -273,8 +273,7 @@ async fn guardian_allows_shell_additional_permissions_requests_past_policy_valid
         .features
         .enable(Feature::ExecPermissionApprovals)
         .expect("test setup should allow enabling request permissions");
-    turn_context_raw.permission_profile =
-        codex_config::Constrained::allow_any(codex_protocol::models::PermissionProfile::Disabled);
+    turn_context_raw.permission_profile = codex_protocol::models::PermissionProfile::Disabled;
     let mut config = (*turn_context_raw.config).clone();
     config.model_provider.base_url = Some(format!("{}/v1", server.uri()));
     let config = Arc::new(config);
@@ -419,8 +418,7 @@ async fn strict_auto_review_turn_grant_forces_guardian_for_shell_policy_skip() {
         .approval_policy
         .set(AskForApproval::OnFailure)
         .expect("test setup should allow updating approval policy");
-    turn_context_raw.permission_profile =
-        codex_config::Constrained::allow_any(codex_protocol::models::PermissionProfile::Disabled);
+    turn_context_raw.permission_profile = codex_protocol::models::PermissionProfile::Disabled;
     let mut config = (*turn_context_raw.config).clone();
     config.approvals_reviewer = ApprovalsReviewer::User;
     config.model_provider.base_url = Some(format!("{}/v1", server.uri()));

@@ -247,6 +247,7 @@ async fn session_configured_syncs_widget_config_permissions_and_cwd() {
                     access: FileSystemAccessMode::None,
                 },
             ],
+            preserve_deny_read_across_escalation: false,
             glob_scan_max_depth: None,
         },
     };

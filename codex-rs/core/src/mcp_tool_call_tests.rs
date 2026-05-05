@@ -2577,8 +2577,7 @@ async fn full_access_mode_skips_arc_monitor_for_all_approval_modes() {
         .approval_policy
         .set(AskForApproval::Never)
         .expect("test setup should allow updating approval policy");
-    turn_context.permission_profile =
-        crate::config::Constrained::allow_any(PermissionProfile::Disabled);
+    turn_context.permission_profile = PermissionProfile::Disabled;
     let mut config = (*turn_context.config).clone();
     config.chatgpt_base_url = server.uri();
     turn_context.config = Arc::new(config);

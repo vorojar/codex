@@ -39,7 +39,7 @@ pub(super) async fn spawn_review_thread(
         )),
         web_search_mode: Some(review_web_search_mode),
         session_source: parent_turn_context.session_source.clone(),
-        permission_profile: parent_turn_context.permission_profile.get(),
+        permission_profile: &parent_turn_context.permission_profile,
         windows_sandbox_level: parent_turn_context.windows_sandbox_level,
     })
     .with_namespace_tools_capability(provider_capabilities.namespace_tools)
@@ -106,7 +106,7 @@ pub(super) async fn spawn_review_thread(
         &session_source,
         review_turn_id.clone(),
         parent_turn_context.cwd.clone(),
-        parent_turn_context.permission_profile.get(),
+        &parent_turn_context.permission_profile,
         parent_turn_context.windows_sandbox_level,
         parent_turn_context.network.is_some(),
     ));
@@ -136,7 +136,7 @@ pub(super) async fn spawn_review_thread(
         collaboration_mode: parent_turn_context.collaboration_mode.clone(),
         personality: parent_turn_context.personality,
         approval_policy: parent_turn_context.approval_policy.clone(),
-        permission_profile: parent_turn_context.permission_profile.clone(),
+        permission_profile: parent_turn_context.permission_profile(),
         network: parent_turn_context.network.clone(),
         windows_sandbox_level: parent_turn_context.windows_sandbox_level,
         shell_environment_policy: parent_turn_context.shell_environment_policy.clone(),

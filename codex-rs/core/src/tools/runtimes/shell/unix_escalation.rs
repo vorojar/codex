@@ -367,12 +367,14 @@ impl CoreShellActionProvider {
     fn shell_request_escalation_execution(
         sandbox_permissions: SandboxPermissions,
         permission_profile: &PermissionProfile,
-        allows_unsandboxed_escalation: bool,
         additional_permissions: Option<&AdditionalPermissionProfile>,
     ) -> EscalationExecution {
+        let preserve_deny_read_across_escalation = permission_profile
+            .file_system_sandbox_policy()
+            .preserves_deny_read_across_escalation();
         match sandbox_permissions {
             SandboxPermissions::UseDefault => EscalationExecution::TurnDefault,
-            SandboxPermissions::RequireEscalated if !allows_unsandboxed_escalation => {
+            SandboxPermissions::RequireEscalated if preserve_deny_read_across_escalation => {
                 EscalationExecution::TurnDefault
             }
             SandboxPermissions::RequireEscalated => EscalationExecution::Unsandboxed,
@@ -624,14 +626,17 @@ impl EscalationPolicy for CoreShellActionProvider {
             DecisionSource::UnmatchedCommandFallback
         };
         let escalation_execution = match decision_source {
-            DecisionSource::PrefixRule if !self.turn.allows_unsandboxed_escalation() => {
+            DecisionSource::PrefixRule
+                if self
+                    .file_system_sandbox_policy
+                    .preserves_deny_read_across_escalation() =>
+            {
                 EscalationExecution::TurnDefault
             }
             DecisionSource::PrefixRule => EscalationExecution::Unsandboxed,
             DecisionSource::UnmatchedCommandFallback => Self::shell_request_escalation_execution(
                 self.sandbox_permissions,
                 &self.permission_profile,
-                self.turn.allows_unsandboxed_escalation(),
                 self.prompt_permissions.as_ref(),
             ),
         };

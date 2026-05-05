@@ -74,7 +74,7 @@ pub(crate) struct TurnContext {
     pub(crate) collaboration_mode: CollaborationMode,
     pub(crate) personality: Option<Personality>,
     pub(crate) approval_policy: Constrained<AskForApproval>,
-    pub(crate) permission_profile: Constrained<PermissionProfile>,
+    pub(crate) permission_profile: PermissionProfile,
     pub(crate) network: Option<NetworkProxy>,
     pub(crate) windows_sandbox_level: WindowsSandboxLevel,
     pub(crate) shell_environment_policy: ShellEnvironmentPolicy,
@@ -95,21 +95,15 @@ pub(crate) struct TurnContext {
 }
 impl TurnContext {
     pub(crate) fn permission_profile(&self) -> PermissionProfile {
-        self.permission_profile.get().clone()
+        self.permission_profile.clone()
     }
 
     pub(crate) fn file_system_sandbox_policy(&self) -> FileSystemSandboxPolicy {
-        self.permission_profile.get().file_system_sandbox_policy()
+        self.permission_profile.file_system_sandbox_policy()
     }
 
     pub(crate) fn network_sandbox_policy(&self) -> NetworkSandboxPolicy {
-        self.permission_profile.get().network_sandbox_policy()
-    }
-
-    pub(crate) fn allows_unsandboxed_escalation(&self) -> bool {
-        self.permission_profile
-            .can_set(&PermissionProfile::Disabled)
-            .is_ok()
+        self.permission_profile.network_sandbox_policy()
     }
 
     pub(crate) fn primary_environment(&self) -> Option<&TurnEnvironment> {
@@ -120,7 +114,7 @@ impl TurnContext {
         let file_system_sandbox_policy = self.file_system_sandbox_policy();
         let network_sandbox_policy = self.network_sandbox_policy();
         compatibility_sandbox_policy_for_permission_profile(
-            self.permission_profile.get(),
+            &self.permission_profile,
             &file_system_sandbox_policy,
             network_sandbox_policy,
             &self.cwd,
@@ -195,7 +189,7 @@ impl TurnContext {
             ),
             web_search_mode: self.tools_config.web_search_mode,
             session_source: self.session_source.clone(),
-            permission_profile: self.permission_profile.get(),
+            permission_profile: &self.permission_profile,
             windows_sandbox_level: self.windows_sandbox_level,
         })
         .with_namespace_tools_capability(provider_capabilities.namespace_tools)
@@ -286,7 +280,7 @@ impl TurnContext {
         additional_permissions: Option<AdditionalPermissionProfile>,
     ) -> FileSystemSandboxContext {
         let (base_file_system_sandbox_policy, base_network_sandbox_policy) =
-            self.permission_profile.get().to_runtime_permissions();
+            self.permission_profile.to_runtime_permissions();
         let file_system_sandbox_policy = effective_file_system_sandbox_policy(
             &base_file_system_sandbox_policy,
             additional_permissions.as_ref(),
@@ -296,7 +290,7 @@ impl TurnContext {
             additional_permissions.as_ref(),
         );
         let permissions = PermissionProfile::from_runtime_permissions_with_enforcement(
-            self.permission_profile.get().enforcement(),
+            self.permission_profile.enforcement(),
             &file_system_sandbox_policy,
             network_sandbox_policy,
         );
@@ -541,7 +535,7 @@ impl Session {
             collaboration_mode: session_configuration.collaboration_mode.clone(),
             personality: session_configuration.personality,
             approval_policy: session_configuration.approval_policy.clone(),
-            permission_profile: session_configuration.permission_profile.clone(),
+            permission_profile: session_configuration.permission_profile(),
             network,
             windows_sandbox_level: session_configuration.windows_sandbox_level,
             shell_environment_policy: per_turn_config.permissions.shell_environment_policy.clone(),
